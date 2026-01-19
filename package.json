@@ -1,0 +1,44 @@
+{
+  "name": "dalila",
+  "version": "0.1.0",
+  "description": "DOM-first reactive framework based on signals",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "serve": "node scripts/dev-server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "framework",
+    "reactive",
+    "signals",
+    "dom",
+    "typescript",
+    "spa"
+  ],
+  "author": "Everton Da Silva Vieira",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.5.0",
+    "jest-environment-jsdom": "^29.5.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/evertondsvieira/dalila.git"
+  },
+  "bugs": {
+    "url": "https://github.com/evertondsvieira/dalila/issues"
+  },
+  "homepage": "https://github.com/evertondsvieira/dalila/blob/main/README.md"
+}
