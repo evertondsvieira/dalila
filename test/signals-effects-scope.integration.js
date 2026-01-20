@@ -1,184 +1,198 @@
 import { createScope, withScope } from '../dist/core/scope.js';
 import { signal, effect, computed, effectAsync } from '../dist/core/signal.js';
 
-// Note: build to `dist/` before running this file (it imports from dist).
+const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
-console.log('=== Core Reactivity Integration ===');
+function logStep(title) {
+  console.log(`\n=== ${title} ===`);
+}
 
-// Test 1
-console.log('\nTest 1: Basic signal and effect (coalescing)');
-const count = signal(0);
-let effectRuns = 0;
+async function testCoalescedEffect() {
+  logStep('Coalescing: multiple updates in one effect');
+  const count = signal(0);
+  let runs = 0;
 
-const dispose = effect(() => {
-  effectRuns++;
-  console.log(`Effect run ${effectRuns}, count: ${count()}`);
-});
+  const dispose = effect(() => {
+    runs++;
+    console.log(`Coalesced effect run #${runs}, value: ${count()}`);
+  });
 
-count.set(1);
-count.set(2);
+  count.set(1);
+  count.set(2);
+  await tick(30);
 
-setTimeout(() => {
-  console.log('After changes - effect runs:', effectRuns, '(expected 1 due to coalescing)');
-
-  // Test 2
-  console.log('\nTest 2: Manual disposal');
+  console.log('Expected runs: 1 | observed:', runs);
   dispose();
-  console.log('Effect disposed');
+}
 
+async function testManualDisposal() {
+  logStep('Manual disposal stops the effect');
+  const count = signal(0);
+  let runs = 0;
+
+  const dispose = effect(() => {
+    runs++;
+    console.log(`Manual effect run #${runs}, value: ${count()}`);
+  });
+
+  count.set(1);
+  count.set(2);
+  await tick(30);
+
+  dispose();
   count.set(3);
   count.set(4);
+  await tick(30);
 
-  setTimeout(() => {
-    console.log('After disposal - effect runs:', effectRuns, '(should be unchanged)');
+  console.log('After dispose, run count remains at:', runs);
+}
 
-    // Test 3
-    console.log('\nTest 3: Scope integration');
-    const scope = createScope();
-    let scopedRuns = 0;
+async function testScopeLifecycle() {
+  logStep('Scope disposal stops nested effects');
+  const scope = createScope();
+  let scopedRuns = 0;
 
-    const scopedSignal = withScope(scope, () => {
-      const s = signal(100);
-      effect(() => {
-        scopedRuns++;
-        console.log(`Scoped effect run ${scopedRuns}, value: ${s()}`);
-      });
-      return s;
+  const scopedSignal = withScope(scope, () => {
+    const s = signal(100);
+    effect(() => {
+      scopedRuns++;
+      console.log(`Scoped effect run #${scopedRuns}, s=${s()}`);
     });
+    return s;
+  });
 
-    scopedSignal.set(101);
-    scopedSignal.set(102);
+  scopedSignal.set(101);
+  scopedSignal.set(102);
+  await tick(30);
 
-    setTimeout(() => {
-      console.log('Before scope dispose - scoped runs:', scopedRuns);
-      scope.dispose();
-      console.log('Scope disposed');
+  console.log('Before scope dispose:', scopedRuns);
+  scope.dispose();
+  console.log('Scope disposed');
 
-      scopedSignal.set(103);
-      scopedSignal.set(104);
+  scopedSignal.set(103);
+  scopedSignal.set(104);
+  await tick(30);
+  console.log('After disposing scope, run count stays at:', scopedRuns);
+}
 
-      setTimeout(() => {
-        console.log('After scope dispose - scoped runs:', scopedRuns, '(should be unchanged)');
+async function testComputedSignals() {
+  logStep('Computed reruns when dependencies change');
+  const base = signal(10);
+  const doubled = computed(() => base() * 2);
+  let computedRuns = 0;
 
-        // Test 4
-        console.log('\nTest 4: Computed signals');
-        const base = signal(10);
-        const doubled = computed(() => base() * 2);
-        let computedRuns = 0;
+  const dispose = effect(() => {
+    computedRuns++;
+    console.log(`Computed run #${computedRuns}, value: ${doubled()}`);
+  });
 
-        effect(() => {
-          computedRuns++;
-          console.log(`Computed effect run ${computedRuns}, doubled: ${doubled()}`);
-        });
+  base.set(20);
+  base.set(30);
+  await tick(30);
 
-        base.set(20);
-        base.set(30);
+  console.log('Computed runs observed:', computedRuns);
+  dispose();
+}
 
-        setTimeout(() => {
-          console.log('After base changes - computed runs:', computedRuns, '(likely 1 due to coalescing)');
+async function testWithScopeHelper() {
+  logStep('withScope creates a temporary scope');
+  const scope = createScope();
+  let runs = 0;
 
-          // Test 5
-          console.log('\nTest 5: withScope');
-          const scope2 = createScope();
-          let withScopeRuns = 0;
+  const result = withScope(scope, () => {
+    const local = signal('original');
+    effect(() => {
+      runs++;
+      console.log(`withScope effect run #${runs}, value: ${local()}`);
+    });
+    local.set('changed');
+    return 'result from scoped execution';
+  });
 
-          const result = withScope(scope2, () => {
-            const scopedSignal2 = signal('test');
-            effect(() => {
-              withScopeRuns++;
-              console.log(`withScope effect run ${withScopeRuns}, value: ${scopedSignal2()}`);
-            });
-            scopedSignal2.set('changed');
-            return 'result';
-          });
+  await tick(30);
+  console.log('withScope returned:', result);
+  scope.dispose();
+}
 
-          console.log('withScope result:', result);
+async function testDynamicDependencies() {
+  logStep('Dynamic dependencies track active signal');
+  const signalA = signal('A');
+  const signalB = signal('B');
+  const useA = signal(true);
+  const dynamicScope = createScope();
+  let dynamicRuns = 0;
 
-          setTimeout(() => {
-            console.log('After withScope - runs:', withScopeRuns);
-            scope2.dispose();
+  withScope(dynamicScope, () => {
+    effect(() => {
+      dynamicRuns++;
+      const value = useA() ? signalA() : signalB();
+      console.log(`Dynamic dependency run #${dynamicRuns}, useA=${useA()}, value=${value}`);
+    });
+  });
 
-            // Test 6
-            console.log('\nTest 6: Dynamic dependencies');
-            const dynamicScope = createScope();
-            let dynamicRuns = 0;
+  signalA.set('A1');
+  signalB.set('B1');
+  await tick(30);
 
-            const signalA = signal('A');
-            const signalB = signal('B');
-            const useA = signal(true);
+  useA.set(false);
+  await tick(30);
 
-            withScope(dynamicScope, () => {
-              effect(() => {
-                dynamicRuns++;
-                const value = useA() ? signalA() : signalB();
-                console.log(`Dynamic effect run ${dynamicRuns}, useA=${useA()}, value: ${value}`);
-              });
-            });
+  signalA.set('A2');
+  signalB.set('B2');
+  await tick(30);
 
-            signalA.set('A1');
-            signalB.set('B1'); // should not trigger while useA=true
+  console.log('Total dynamic runs:', dynamicRuns);
+  dynamicScope.dispose();
+}
 
-            setTimeout(() => {
-              console.log('Before switch - dynamic runs:', dynamicRuns);
-              useA.set(false); // should trigger a run
+async function testEffectAsyncAbortBehavior() {
+  logStep('effectAsync aborts previous executions');
+  const asyncScope = createScope();
+  const trigger = signal(0);
+  let completed = 0;
+  let aborted = 0;
 
-              setTimeout(() => {
-                signalA.set('A2'); // should NOT trigger now
-                signalB.set('B2'); // should trigger now
+  withScope(asyncScope, () => {
+    effectAsync((abortSignal) => {
+      const id = trigger();
+      console.log(`effectAsync started for trigger=${id}`);
+      const timer = setTimeout(() => {
+        completed++;
+        console.log(`effectAsync completed for trigger=${id}`);
+      }, 80);
 
-                setTimeout(() => {
-                  console.log('After switch - dynamic runs:', dynamicRuns);
-                  dynamicScope.dispose();
+      abortSignal.addEventListener('abort', () => {
+        aborted++;
+        clearTimeout(timer);
+        console.log(`effectAsync aborted for trigger=${id}`);
+      });
+    });
+  });
 
-                  // Test 7
-                  console.log('\nTest 7: effectAsync abort on re-run');
-                  const asyncScope = createScope();
-                  const trigger = signal(0);
-                  let completed = 0;
-                  let aborted = 0;
+  trigger.set(1);
+  await tick(10);
+  trigger.set(2);
+  await tick(10);
+  trigger.set(3);
+  await tick(250);
 
-                  withScope(asyncScope, () => {
-                    effectAsync((abortSignal) => {
-                      const id = trigger();
+  console.log('effectAsync completions:', completed);
+  console.log('effectAsync aborts:', aborted);
+  asyncScope.dispose();
+}
 
-                      const timer = setTimeout(() => {
-                        completed++;
-                        console.log(`Async job completed for trigger=${id}`);
-                      }, 80);
+async function runIntegrationTests() {
+  console.log('=== Core Reactivity Integration ===');
+  await testCoalescedEffect();
+  await testManualDisposal();
+  await testScopeLifecycle();
+  await testComputedSignals();
+  await testWithScopeHelper();
+  await testDynamicDependencies();
+  await testEffectAsyncAbortBehavior();
+  console.log('\n=== Integration complete ===');
+}
 
-                      abortSignal.addEventListener('abort', () => {
-                        aborted++;
-                        clearTimeout(timer);
-                        console.log(`Async job aborted for trigger=${id}`);
-                      });
-                    });
-                  });
-
-                  // Force separate ticks so reruns actually happen
-                  trigger.set(1);
-                  setTimeout(() => trigger.set(2), 10);
-                  setTimeout(() => trigger.set(3), 20);
-
-                  setTimeout(() => {
-                    console.log('Async completed:', completed, '(expected 1)');
-                    console.log('Async aborted:', aborted, '(expected >=2)');
-                    asyncScope.dispose();
-
-                    console.log('\n=== All Tests Completed ===');
-                    console.log('Coalescing + dedupe behavior observed');
-                    console.log('Manual disposal works');
-                    console.log('Scope integration works');
-                    console.log('Computed signals initialize sync');
-                    console.log('withScope works');
-                    console.log('Dynamic dependencies work');
-                    console.log('effectAsync abort-on-rerun works');
-                  }, 250);
-                }, 120);
-              }, 30);
-            }, 100);
-          }, 100);
-        }, 100);
-      }, 100);
-    }, 100);
-  }, 100);
-}, 100);
+runIntegrationTests().catch((err) => {
+  console.error('Unexpected error during integration tests:', err);
+});
