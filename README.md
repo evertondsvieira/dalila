@@ -96,16 +96,78 @@ effectAsync(async (signal) => {
 ```
 
 ### Conditional Rendering
+
+Dalila provides two primitives for branching UI:
+
+- **`when`** — boolean conditions (`if / else`)
+- **`match`** — value-based branching (`switch / cases`)
+
+They are intentionally separate to keep UI logic explicit and predictable.
+
+#### `when` — boolean conditions
+
+Use `when` when your UI depends on a true/false condition.
+
+```ts
+when(
+  () => isVisible(),
+  () => VisibleView(),
+  () => HiddenView()
+);
+```
+
+HTML binding example:
+
 ```html
-<p when={showTips}>This shows when true.</p>
-<div match={status}>
-  <span case="idle">Idle</span>
-  <span case="active">Active</span>
+<div>
+  <button on:click={toggle}>Toggle</button>
+
+  <p when={show}>🐒 Visible branch</p>
+  <p when={!show}>🙈 Hidden branch</p>
 </div>
 ```
 
-> Note: `when`/`match` bindings are available only in the example dev-server today.
-> They are not part of the core runtime yet.
+- Tracks signals used inside the condition
+- Optional else branch runs when the condition is false
+- Each branch has its own lifecycle (scope cleanup)
+
+#### `match` — value-based branching
+
+Use `match` when your UI depends on a state or key, not just true/false.
+
+```ts
+match(
+  () => status(),
+  {
+    loading: Loading,
+    error: Error,
+    success: Success,
+    _: Idle
+  }
+);
+```
+
+HTML binding example:
+
+```html
+<div match={status}>
+  <p case="idle">🟦 Idle</p>
+  <p case="loading">⏳ Loading...</p>
+  <p case="success">✅ Success!</p>
+  <p case="error">❌ Error</p>
+  <p case="_">🤷 Unknown</p>
+</div>
+```
+
+- Each case maps a value to a render function
+- `_` is the default (fallback) case
+- Swaps cases only when the selected key changes
+- Each case has its own lifecycle (scope cleanup)
+
+#### Rule of thumb
+
+- `when` → booleans → optional else
+- `match` → values/keys → `_` as fallback
 
 ### Context (Dependency Injection)
 ```ts
