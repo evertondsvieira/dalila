@@ -65,7 +65,7 @@ Run a local server with HMR from the repo root:
 npm run serve
 ```
 
-Then open `http://localhost:3000/`.
+Then open `http://localhost:4242/`.
 
 ## 📚 Core Concepts
 
@@ -169,6 +169,9 @@ HTML binding example:
 - `when` → booleans → optional else
 - `match` → values/keys → `_` as fallback
 
+These primitives are not abstractions over JSX.
+They are explicit DOM control tools, designed to make branching visible and predictable.
+
 ### Context (Dependency Injection)
 ```ts
 const Theme = createContext<'light' | 'dark'>('theme');
@@ -197,11 +200,13 @@ router.mount(document.getElementById('app'));
 
 ### Batching & Scheduling
 ```typescript
-// Batch multiple updates into single frame
+// Batch multiple updates - effects coalesce into a single frame
 batch(() => {
-  count.set(1);
-  theme.set('dark');
-  // All updates happen in one frame
+  count.set(1);      // ✅ State updates immediately
+  theme.set('dark'); // ✅ State updates immediately
+  console.log(count()); // Reads new value: 1
+
+  // Effects are deferred and run once at the end of the batch
 });
 
 // DOM read/write discipline
@@ -210,6 +215,12 @@ mutate(() => {
   element.style.width = `${width + 10}px`;
 });
 ```
+
+**Batching semantics:**
+- `signal.set()` updates the value **immediately** (synchronous)
+- Effects are **deferred** until the batch completes
+- All deferred effects run once in a single animation frame
+- This allows reading updated values inside the batch while coalescing UI updates
 
 ### List Rendering with Keys
 ```typescript
@@ -227,98 +238,265 @@ forEach(
 );
 ```
 
-### Resource Management
-```typescript
-// Declarative data fetching
-const { data, loading, error, refresh } = createResource(
-  async (signal) => {
-    const res = await fetch('/api/data', { signal });
-    return res.json();
-  }
-);
+### Data Fetching & Server State
 
-// Signals
-effect(() => {
-  console.log(data(), loading(), error());
+> **Scope rule (important):**
+> - `q.query()` / `createCachedResource()` cache **only within a scope**.
+> - Outside scope, **no cache** (safer).
+> - For explicit global cache, use `q.queryGlobal()` or `createCachedResource(..., { persist: true })`.
+
+Dalila treats async data as **state**, not as lifecycle effects.
+
+Instead of hooks or lifecycle-driven fetching, Dalila provides resources that:
+
+- Are driven by signals
+- Are abortable by default
+- Clean themselves up with scopes
+- Can be cached, invalidated, and revalidated declaratively
+
+There are three layers, from low-level to DX-focused:
+
+- `createResource` — primitive (no cache)
+- `createCachedResource` — shared cache + invalidation
+- `QueryClient` — ergonomic DX (queries + mutations)
+
+You can stop at any layer.
+
+#### 🧱 createResource — the primitive
+
+Use `createResource` when you want a single async source tied to reactive dependencies.
+
+```ts
+const user = createResource(async (signal) => {
+  const res = await fetch(`/api/user/${id()}`, { signal });
+  return res.json();
+});
+```
+
+**Behavior**
+
+- Runs inside effectAsync
+- Tracks any signal reads inside the fetch
+- Aborts the previous request on re-run
+- Aborts automatically on scope disposal
+- Exposes reactive state
+
+```ts
+user.data();     // T | null
+user.loading();  // boolean
+user.error();    // Error | null
+```
+
+**Manual revalidation:**
+
+```ts
+user.refresh();          // deduped
+user.refresh({ force }); // abort + refetch
+```
+
+**When to use**
+
+- Local data
+- One-off fetches
+- Non-shared state
+- Full control
+
+If you want sharing, cache, or invalidation, go up one level.
+
+#### 🗄️ Cached Resources
+
+> **Scoped cache (recommended):**
+```ts
+withScope(createScope(), () => {
+  const user = createCachedResource("user:42", fetchUser, { tags: ["users"] });
+});
+```
+
+> **Global cache (explicit):**
+```ts
+const user = createCachedResource("user:42", fetchUser, { tags: ["users"], persist: true });
+```
+
+Dalila can cache resources by key, without introducing a global singleton or context provider.
+
+```ts
+const user = createCachedResource(
+  "user:42",
+  async (signal) => fetchUser(signal, 42),
+  { tags: ["users"] }
+);
+```
+
+**What caching means in Dalila**
+
+- One fetch per key (deduped)
+- Shared across scopes (when using `persist: true`)
+- Automatically revalidated on invalidation
+- Still abortable and scope-safe
+
+**Invalidation by tag**
+```ts
+invalidateResourceTag("users");
+```
+
+All cached resources registered with "users" will:
+- Be marked stale
+- Revalidate in place (best-effort)
+
+This is the foundation used by the query layer.
+
+#### 🧠 Query Client (DX Layer)
+
+The QueryClient builds a React Query–like experience, but stays signal-driven and scope-safe.
+
+```ts
+const q = createQueryClient();
+
+// Scoped query (recommended)
+const user = q.query({
+  key: () => q.key("user", userId()),
+  tags: ["users"],
+  fetch: (signal, key) => apiGetUser(signal, key[1]),
+  staleTime: 10_000,
 });
 
-// Cached resource
-const cachedData = createCachedResource(
-  'user-data',
-  async (signal) => fetchUser(signal)
-);
-
-// Auto-refresh
-const liveData = createAutoRefreshResource(
-  fetchData,
-  5000 // Refresh every 5 seconds
-);
+// Global query (explicit)
+const user = q.queryGlobal({
+  key: () => q.key("user", userId()),
+  tags: ["users"],
+  fetch: (signal, key) => apiGetUser(signal, key[1]),
+  staleTime: 10_000,
+});
 ```
 
-### Virtualization (experimental)
-```typescript
-// Virtual list
-createVirtualList(
-  items,
-  50, // Item height
-  (item) => div(item.name),
-  { container: document.getElementById('list') }
-);
+**What this gives you**
 
-// Virtual table
-createVirtualTable(
-  data,
-  [
-    { key: 'id', header: 'ID', width: '100px' },
-    { key: 'name', header: 'Name', width: '200px' }
-  ],
-  (item, column) => div(item[column.key]),
-  document.getElementById('table')
-);
+- Reactive key
+- Automatic caching by encoded key
+- Abort on key change
+- Deduped requests
+- Tag-based invalidation
+- Optional stale revalidation
+- No providers, no hooks
 
-// Infinite scroll
-const { items, loading, refresh } = createInfiniteScroll(
-  (offset, limit) => fetchItems(offset, limit),
-  (item) => div(item.name),
-  document.getElementById('scroll-container')
-);
+```ts
+user.data();
+user.loading();
+user.error();
+user.status();   // "loading" | "error" | "success"
+user.refresh();
 ```
 
-### DevTools & Warnings (console-only)
-```typescript
-// Enable dev tools
-initDevTools();
+#### 🔑 Query Keys
 
-// Inspect signals
-const { value, subscribers } = inspectSignal(count);
+Keys are data identity, not fetch parameters.
 
-// Get active effects
-const effects = getActiveEffects();
-
-// Performance monitoring (automatic, console warnings)
-monitorPerformance();
+```ts
+q.key("user", userId());
 ```
 
-> There is no DevTools UI yet. The current tooling is lightweight console diagnostics.
+- Typed
+- Stable
+- Readonly
+- Encoded safely (no JSON.stringify)
+- If the key changes, the query refetches.
 
-### Cleanup Utilities
-```typescript
-// Event listener with auto-cleanup
-useEvent(window, 'resize', handleResize);
+#### 🔁 Stale Revalidation (staleTime)
 
-// Interval with auto-cleanup
-useInterval(() => {
-  console.log('Tick');
-}, 1000);
+Dalila’s staleTime is intentionally simpler than React Query.
 
-// Timeout with auto-cleanup
-useTimeout(() => {
-  console.log('Delayed');
-}, 2000);
-
-// Fetch with auto-cleanup
-const { data, loading, error } = useFetch('/api/data');
+```ts
+staleTime: 10_000
 ```
+
+**Meaning:**
+
+- After a successful fetch
+- Schedule a best-effort revalidate
+- Cleared automatically on scope disposal
+
+This avoids background timers leaking or running after unmount.
+
+#### ✍️ Mutations
+
+Mutations represent intentional writes.
+
+They:
+- Are abortable
+- Deduplicate concurrent runs
+- Store last successful result
+- Invalidate queries declaratively
+
+```ts
+const saveUser = q.mutation({
+  mutate: (signal, input) => apiSaveUser(signal, input),
+  invalidateTags: ["users"],
+});
+```
+
+**Running a mutation**
+```ts
+await saveUser.run({ name: "Everton" });
+```
+
+**Reactive state:**
+```ts
+saveUser.data();    // last success
+saveUser.loading();
+saveUser.error();
+```
+
+**Deduplication & force**
+```ts
+saveUser.run(input);              // deduped
+saveUser.run(input, { force });   // abort + restart
+```
+
+**Invalidation**
+
+On success, mutations can invalidate:
+- Tags → revalidate all matching queries
+- Keys → revalidate a specific query
+
+This keeps writes explicit and reads declarative.
+
+#### 🧭 Mental Model
+
+Think in layers:
+
+| Layer | Purpose |
+|-------|---------|
+| createResource | Async signal |
+| Cached resource | Shared async state |
+| Query | Read model |
+| Mutation | Write model |
+
+Dalila does not blur these layers.
+
+#### ✅ Rule of Thumb
+
+- Local async state → `createResource`
+- Shared server data → `query()`
+- Global cache → `queryGlobal()` / `persist: true`
+- Writes / side effects → `mutation`
+- UI branching → `when` / `match`
+
+Queries and mutations are just signals.
+They compose naturally with `when`, `match`, lists, and effects.
+
+#### 🧠 Philosophy
+
+Dalila’s data layer is designed to be:
+
+- Predictable
+- Abortable
+- Scope-safe
+- Explicit
+- Boring in the right way
+
+No magic lifecycles.
+No hidden background work.
+No provider pyramids.
 
 ## 🏗️ Architecture
 
