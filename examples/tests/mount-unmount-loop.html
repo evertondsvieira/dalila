@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test: Mount/Unmount Loop (No Effect Accumulation)</title>
+</head>
+<body>
+  <div id="app"></div>
+  <button id="loop">Run Loop (200 mount/unmount)</button>
+  <button id="trigger">Trigger Signal Update</button>
+  <div id="info">Runs: 0</div>
+
+  <script type="module">
+    import { signal, effect } from '../../dist/core/signal.js';
+    import { when } from '../../dist/core/when.js';
+
+    const app = document.getElementById('app');
+    const loopBtn = document.getElementById('loop');
+    const triggerBtn = document.getElementById('trigger');
+    const infoDiv = document.getElementById('info');
+
+    const showView = signal(true);
+    const globalSignal = signal(0);
+
+    window.__effectRuns = 0;
+    window.__mounts = 0;
+    window.__loopDone = false;
+    let expectedRuns = 0;
+
+    function createView() {
+      const div = document.createElement('div');
+
+      // Track number of mounts for deterministic validation
+      window.__mounts++;
+
+      // Effect that subscribes to global signal and updates the div
+      effect(() => {
+        const value = globalSignal();
+        window.__effectRuns++;
+        div.textContent = `View is mounted (signal: ${value}, runs: ${window.__effectRuns})`;
+        infoDiv.textContent = `Runs: ${window.__effectRuns} (mounts: ${window.__mounts})`;
+      });
+
+      return div;
+    }
+
+    function render() {
+      app.innerHTML = '';
+
+      const frag = when(
+        () => showView(),
+        () => createView(),
+        () => {
+          const div = document.createElement('div');
+          div.textContent = 'View is unmounted';
+          return div;
+        }
+      );
+
+      app.appendChild(frag);
+    }
+
+    render();
+
+    loopBtn.addEventListener('click', async () => {
+      window.__loopDone = false;
+      const startRuns = window.__effectRuns;
+      const startMounts = window.__mounts;
+
+      // Mount and unmount 200 times
+      for (let i = 0; i < 200; i++) {
+        showView.set(false);
+        await new Promise(r => setTimeout(r, 0));
+        showView.set(true);
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      // Wait for all async effects to settle
+      await new Promise(r => setTimeout(r, 20));
+
+      const endRuns = window.__effectRuns;
+      const endMounts = window.__mounts;
+      const actualNewRuns = endRuns - startRuns;
+      const actualNewMounts = endMounts - startMounts;
+
+      // Signal completion for deterministic testing
+      window.__loopDone = true;
+
+      infoDiv.textContent = `Runs: ${window.__effectRuns} (loop: +${actualNewRuns} runs, +${actualNewMounts} mounts)`;
+    });
+
+    triggerBtn.addEventListener('click', () => {
+      expectedRuns++;
+      globalSignal.set(globalSignal() + 1);
+    });
+  </script>
+</body>
+</html>

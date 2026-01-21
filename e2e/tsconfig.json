@@ -1,0 +1,22 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../dist-e2e",
+
+    "types": ["@playwright/test"],
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+
+    "noEmit": true
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.spec.ts",
+    "test-globals.d.ts"
+  ]
+}

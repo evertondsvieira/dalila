@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test: Resource Abort on Unmount</title>
+</head>
+<body>
+  <div id="app"></div>
+  <button id="toggle">Toggle Branch</button>
+  <div id="status">Status: Idle</div>
+
+  <script type="module">
+    import { signal, effect } from '../../dist/core/signal.js';
+    import { when } from '../../dist/core/when.js';
+    import { createResource } from '../../dist/core/resource.js';
+
+    const app = document.getElementById('app');
+    const toggleBtn = document.getElementById('toggle');
+    const statusDiv = document.getElementById('status');
+
+    const showBranch = signal(true);
+
+    window.__abortedCount = 0;
+    window.__completedCount = 0;
+
+    function render() {
+      app.innerHTML = '';
+
+      const frag = when(
+        () => showBranch(),
+        () => {
+          // Branch A: Creates a resource with slow fetch
+          const resource = createResource(async (abortSignal) => {
+            statusDiv.textContent = 'Status: Fetching...';
+
+            return new Promise((resolve, reject) => {
+              let done = false;
+
+              const timeout = setTimeout(() => {
+                if (done) return;
+                if (abortSignal.aborted) {
+                  done = true;
+                  reject(new Error('Aborted'));
+                } else {
+                  done = true;
+                  window.__completedCount++;
+                  statusDiv.textContent = 'Status: Completed';
+                  resolve({ data: 'Success' });
+                }
+              }, 200);
+
+              abortSignal.addEventListener('abort', () => {
+                if (done) return;
+                done = true;
+                clearTimeout(timeout);
+                window.__abortedCount++;
+                statusDiv.textContent = 'Status: Aborted';
+                reject(new Error('Aborted'));
+              }, { once: true });
+            });
+          });
+
+          const div = document.createElement('div');
+
+          effect(() => {
+            const loading = resource.loading();
+            const data = resource.data();
+            const error = resource.error();
+
+            if (loading) {
+              div.textContent = 'Loading...';
+            } else if (error) {
+              div.textContent = `Error: ${error.message}`;
+            } else if (data) {
+              div.textContent = `Data: ${data.data}`;
+            } else {
+              div.textContent = 'Idle';
+            }
+          });
+
+          return div;
+        },
+        () => {
+          const div = document.createElement('div');
+          div.textContent = 'Branch B (No Resource)';
+          return div;
+        }
+      );
+
+      app.appendChild(frag);
+    }
+
+    render();
+
+    toggleBtn.addEventListener('click', () => {
+      showBranch.set(!showBranch());
+    });
+  </script>
+</body>
+</html>

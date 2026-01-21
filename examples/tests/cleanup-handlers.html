@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test: Cleanup Handlers (No Duplicates)</title>
+</head>
+<body>
+  <div id="app"></div>
+  <button id="toggle">Toggle Branch</button>
+  <button id="test">Test Click</button>
+  <div id="count">0</div>
+
+  <script type="module">
+    import { signal } from '../../dist/core/signal.js';
+    import { when } from '../../dist/core/when.js';
+
+    const app = document.getElementById('app');
+    const toggleBtn = document.getElementById('toggle');
+    const countDiv = document.getElementById('count');
+
+    const showBranch = signal(true);
+    let clickCount = 0;
+
+    window.__clickCount = 0;
+
+    function render() {
+      app.innerHTML = '';
+
+      const frag = when(
+        () => showBranch(),
+        () => {
+          const btn = document.createElement('button');
+          btn.id = 'increment';
+          btn.textContent = 'Increment (Branch A)';
+
+          // Handler that increments global counter
+          btn.addEventListener('click', () => {
+            clickCount++;
+            window.__clickCount = clickCount;
+            countDiv.textContent = clickCount;
+          });
+
+          return btn;
+        },
+        () => {
+          const div = document.createElement('div');
+          div.textContent = 'Branch B (no handler)';
+          return div;
+        }
+      );
+
+      app.appendChild(frag);
+    }
+
+    render();
+
+    toggleBtn.addEventListener('click', () => {
+      showBranch.set(!showBranch());
+    });
+  </script>
+</body>
+</html>
