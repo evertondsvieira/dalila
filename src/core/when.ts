@@ -1,89 +1,84 @@
 import { effect } from './signal.js';
-import { createScope, withScope, Scope } from './scope.js';
+import { createScope, getCurrentScope, withScope, Scope } from './scope.js';
 import { scheduleMicrotask } from './scheduler.js';
 
 /**
- * Conditional DOM rendering primitive with per-branch lifetime.
+ * Conditional DOM rendering with per-branch lifetime.
  *
- * `when()` returns a stable DOM slot delimited by two comment markers:
- *   <!-- when:start --> ...dynamic content... <!-- when:end -->
+ * `when()` returns a DocumentFragment containing two stable comment markers:
+ *   <!-- when:start --> ...branch nodes... <!-- when:end -->
  *
- * Behavior:
- * - Tracks only `test()` in the reactive effect.
- * - Swaps the rendered branch only when the boolean result changes.
- * - Branch rendering is executed in a microtask (outside reactive tracking),
- *   preventing internal branch reads from subscribing the outer effect.
+ * Why markers?
+ * - The markers act as a permanent insertion point, so the branch can be swapped
+ *   without the caller managing placeholders or re-appending anything.
+ *
+ * Semantics:
+ * - Initial render is synchronous (prevents “flash”).
+ * - Updates track only `test()` (the condition), not the branch internals.
+ * - Branch swaps are coalesced in a microtask to:
+ *   1) merge rapid toggles into a single swap, and
+ *   2) run branch rendering outside reactive tracking (avoid accidental subscriptions).
  *
  * Lifetime:
- * - Each mounted branch owns a Scope. On branch swap, the previous scope is disposed,
- *   running cleanups for effects/listeners/timers created within the branch.
- *
- * Notes:
- * - DOM-first: manipulates real Nodes directly (no VDOM).
- * - The returned fragment can be appended anywhere; markers keep a stable insertion point.
+ * - Each mounted branch owns its own Scope.
+ * - Swapping branches disposes the previous scope, cleaning up effects/listeners/timers
+ *   created inside that branch.
  */
 export function when(
   test: () => any,
   thenFn: () => Node | Node[],
   elseFn?: () => Node | Node[]
 ): DocumentFragment {
-  /** Stable range markers in the DOM. */
+  /** Stable DOM anchors delimiting the dynamic range. */
   const start = document.createComment('when:start');
   const end = document.createComment('when:end');
 
   /** Nodes currently mounted between start/end. */
   let currentNodes: Node[] = [];
 
-  /** Scope that owns resources created by the currently mounted branch. */
+  /** Scope owning resources created by the mounted branch. */
   let branchScope: Scope | null = null;
 
-  /** Last evaluated boolean branch selector. */
+  /** Last resolved boolean (used to avoid unnecessary remounts). */
   let lastCond: boolean | undefined = undefined;
 
-  /** Coalescing: only one scheduled swap per tick. */
+  /** Coalescing state: ensure at most one scheduled swap per tick. */
   let swapScheduled = false;
   let pendingCond: boolean | undefined = undefined;
 
-  /**
-   * Remove currently mounted nodes and dispose their scope.
-   * This is the "branch teardown".
-   */
+  /** Disposal guard to prevent orphan microtasks from touching dead DOM. */
+  let disposed = false;
+
+  /** Removes mounted nodes and disposes their branch scope. */
   const clear = () => {
-    if (branchScope) {
-      branchScope.dispose();
-      branchScope = null;
-    }
+    branchScope?.dispose();
+    branchScope = null;
 
     for (const n of currentNodes) {
-      if (n.parentNode) n.parentNode.removeChild(n);
+      n.parentNode?.removeChild(n);
     }
     currentNodes = [];
   };
 
-  /**
-   * Mount nodes right before the end marker and record branch scope.
-   */
+  /** Inserts nodes before the end marker and records ownership. */
   const mount = (nodes: Node[], scope: Scope) => {
     currentNodes = nodes;
     branchScope = scope;
     end.before(...nodes);
   };
 
-  /**
-   * Swap branch DOM for the given condition.
-   * Runs outside reactive tracking (scheduled via microtask).
-   */
+  /** Clears old branch and mounts the branch for `cond`. */
   const swap = (cond: boolean) => {
     clear();
 
     const nextScope = createScope();
 
     try {
-      // Render the chosen branch inside its own scope.
+      // Render inside an isolated scope so branch resources are tied to that branch.
       const result = withScope(nextScope, () => (cond ? thenFn() : elseFn?.()));
 
       if (!result) {
-        // No nodes: dispose unused scope and leave slot empty.
+        // Allow “empty branch”: keep anchors, dispose the unused scope.
         nextScope.dispose();
         return;
       }
@@ -91,22 +86,30 @@ export function when(
       const nodes = Array.isArray(result) ? result : [result];
       mount(nodes, nextScope);
     } catch (err) {
-      // Avoid leaking the new scope on errors.
+      // Never leak the newly created scope if branch rendering throws.
       nextScope.dispose();
       throw err;
     }
   };
 
+  // Create the stable slot (anchors first, content inserted between them).
+  const frag = document.createDocumentFragment();
+  frag.append(start, end);
+
+  // Initial render is synchronous so the caller sees the correct branch immediately
+  // after appending the fragment to the DOM.
+  const initialCond = !!test();
+  lastCond = initialCond;
+  swap(initialCond);
+
   /**
    * Reactive driver:
-   * - Tracks only `test()`.
-   * - If the boolean branch does not change, do nothing (no remount).
-   * - If it changes, schedule a single swap (coalesced).
+   * - tracks only `test()`
+   * - swaps only when the boolean changes
+   * - coalesces swaps via microtask (outside tracking)
    */
   effect(() => {
     const cond = !!test();
-
-    // If branch selector didn't change, keep current DOM as-is.
     if (lastCond === cond) return;
 
     lastCond = cond;
@@ -115,11 +118,10 @@ export function when(
     if (swapScheduled) return;
     swapScheduled = true;
 
-    // Schedule the actual DOM swap outside reactive tracking.
     scheduleMicrotask(() => {
       swapScheduled = false;
+      if (disposed) return;
 
-      // Use the last requested condition if multiple updates happened in the same tick.
       const next = pendingCond!;
       pendingCond = undefined;
 
@@ -127,8 +129,14 @@ export function when(
     });
   });
 
-  /** Return a fragment containing stable markers. */
-  const frag = document.createDocumentFragment();
-  frag.append(start, end);
+  // If `when()` is created inside a parent scope, dispose branch resources with it.
+  const parentScope = getCurrentScope();
+  if (parentScope) {
+    parentScope.onCleanup(() => {
+      disposed = true;
+      clear();
+    });
+  }
+
   return frag;
 }

@@ -1,50 +1,63 @@
-import { effect } from './signal.js';
-import { createScope, withScope, Scope } from './scope.js';
-import { scheduleMicrotask } from './scheduler.js';
+import { effect } from "./signal.js";
+import { createScope, getCurrentScope, withScope, type Scope } from "./scope.js";
+import { scheduleMicrotask } from "./scheduler.js";
 
 /**
- * Multi-branch conditional rendering primitive with per-case lifetime.
+ * Multi-branch conditional DOM primitive with per-case lifetime.
  *
- * `match()` selects a rendering function based on the current `value()`.
+ * `match()` renders exactly one case at a time, chosen by `value()`.
+ * It returns a stable DOM "slot" delimited by two comment markers:
  *
- * Behavior:
- * - Tracks only `value()` in the reactive effect.
- * - Swaps the rendered case only when the selected key changes.
- * - Case rendering runs in a microtask (outside reactive tracking), preventing
- *   internal case reads from subscribing the outer effect.
+ *   <!-- match:start --> ...active case... <!-- match:end -->
  *
- * Lifetime:
- * - Each mounted case owns a Scope. On case swap, the previous scope is disposed,
- *   running cleanups for effects/listeners/timers created within the case.
+ * Design goals:
+ * - DOM-first: direct Node insertion/removal (no VDOM).
+ * - No "flash": initial case is mounted synchronously.
+ * - Correct reactivity: the reactive driver tracks only `value()`.
+ * - Isolation: each case runs inside its own `Scope`, so effects/listeners/timers
+ *   created by a case are disposed when that case unmounts.
+ * - Safety: swaps are scheduled via microtask to avoid accidental dependency
+ *   tracking from inside the case render function.
  *
  * Cases:
- * - `cases[v]` renders when `value()` equals `v`
- * - `cases["_"]` is the default/fallback case
+ * - `cases[v]` runs when `value()` equals `v`.
+ * - `cases["_"]` is an optional fallback when there is no exact match.
  */
 export function match<T extends string | number | symbol>(
   value: () => T,
-  cases: Record<T | '_', () => Node | Node[]>
+  cases: Record<T | "_", () => Node | Node[]>
 ): DocumentFragment {
-  /** Stable range markers in the DOM. */
-  const start = document.createComment('match:start');
-  const end = document.createComment('match:end');
+  /** Stable range markers that define the insertion point. */
+  const start = document.createComment("match:start");
+  const end = document.createComment("match:end");
 
-  /** Nodes currently mounted between start/end. */
+  /** Nodes currently mounted between `start` and `end`. */
   let currentNodes: Node[] = [];
 
-  /** Scope that owns resources created by the currently mounted case. */
+  /** Scope owning the currently mounted case (disposed on swap). */
   let caseScope: Scope | null = null;
 
-  /** Last selected key (either a concrete T or '_' fallback). */
-  let lastKey: T | '_' | undefined = undefined;
+  /** Last resolved case key (exact match or "_"). */
+  let lastKey: T | "_" | undefined = undefined;
 
-  /** Coalescing: only one scheduled swap per tick. */
+  /** Microtask coalescing: allow only one pending swap per tick. */
   let swapScheduled = false;
-  let pendingKey: T | '_' | undefined = undefined;
+  let pendingKey: T | "_" | undefined = undefined;
 
-  // Safer membership check (handles symbols and avoids prototype chain hits).
+  /**
+   * Guard to prevent "orphan" microtasks from touching DOM after this match()
+   * is disposed by a parent scope.
+   */
+  let disposed = false;
+
+  /** Own-property check (works with symbols and ignores prototype chain). */
   const has = (k: PropertyKey) => Object.prototype.hasOwnProperty.call(cases, k);
 
+  /**
+   * Unmount current case:
+   * - Dispose scope to run cleanups (effects/listeners/timers).
+   * - Remove DOM nodes currently mounted in the slot.
+   */
   const clear = () => {
     if (caseScope) {
       caseScope.dispose();
@@ -57,6 +70,10 @@ export function match<T extends string | number | symbol>(
     currentNodes = [];
   };
 
+  /**
+   * Mount nodes right before the end marker and bind them to `scope`.
+   * Keeping the markers stable makes swaps predictable and cheap.
+   */
   const mount = (nodes: Node[], scope: Scope) => {
     currentNodes = nodes;
     caseScope = scope;
@@ -64,25 +81,42 @@ export function match<T extends string | number | symbol>(
   };
 
   /**
-   * Swap to a given case key.
-   * Runs outside reactive tracking (scheduled via microtask).
+   * Resolve a runtime value to an actual render key:
+   * - exact match if present,
+   * - otherwise "_" fallback if present,
+   * - otherwise throws (explicit + debuggable failure).
    */
-  const swap = (key: T | '_') => {
+  const resolveKey = (v: T): T | "_" => {
+    const key = (has(v) ? v : "_") as T | "_";
+    if (!has(key)) {
+      throw new Error(`No case found for value: ${String(v)} (and no "_" fallback)`);
+    }
+    return key;
+  };
+
+  /**
+   * Swap the mounted DOM to the given key.
+   * This function is intentionally called outside reactive tracking.
+   *
+   * Important: the case render function runs inside a fresh `Scope`,
+   * so anything created by that case is automatically cleaned up on swap.
+   */
+  const swap = (key: T | "_") => {
     clear();
 
     const nextScope = createScope();
 
     try {
       const fn = cases[key];
-
       if (!fn) {
+        // Should be unreachable if resolveKey is used, but keep it defensive.
         nextScope.dispose();
         throw new Error(`No case found for key: ${String(key)}`);
       }
 
       const result = withScope(nextScope, () => fn());
-
       if (!result) {
+        // Allow "empty" cases: nothing is mounted, scope is discarded.
         nextScope.dispose();
         return;
       }
@@ -90,29 +124,38 @@ export function match<T extends string | number | symbol>(
       const nodes = Array.isArray(result) ? result : [result];
       mount(nodes, nextScope);
     } catch (err) {
+      // Never leak the newly created scope on errors.
       nextScope.dispose();
       throw err;
     }
   };
 
+  /** The returned fragment contains only stable markers; content lives between them. */
+  const frag = document.createDocumentFragment();
+  frag.append(start, end);
+
+  /**
+   * Initial mount is synchronous to avoid content flash.
+   *
+   * CRITICAL: markers must already be in the fragment before `swap()`,
+   * because `swap()` inserts using `end.before(...)`.
+   */
+  const initialKey = resolveKey(value());
+  lastKey = initialKey;
+  swap(initialKey);
+
   /**
    * Reactive driver:
-   * - Reads `value()` exactly once per update.
-   * - Selects the active key: exact match if present, otherwise '_' if present.
-   * - If the key did not change, do nothing (no remount).
-   * - If it changed, schedule a single swap (coalesced).
+   * - Tracks only `value()`.
+   * - If the selected key doesn't change, we do nothing (no remount).
+   * - If it changes, we schedule a microtask swap (coalesced).
+   *
+   * Why microtask?
+   * - It prevents any reads inside a case render function from becoming
+   *   dependencies of this outer effect.
    */
   effect(() => {
-    const v = value();
-
-    // Pick key using own-property checks (no prototype chain).
-    const key = (has(v) ? v : '_') as T | '_';
-
-    // If neither exact case nor default exists, surface it clearly.
-    if (!has(key)) {
-      throw new Error(`No case found for value: ${String(v)} (and no "_" fallback)`);
-    }
-
+    const key = resolveKey(value());
     if (lastKey === key) return;
 
     lastKey = key;
@@ -121,9 +164,9 @@ export function match<T extends string | number | symbol>(
     if (swapScheduled) return;
     swapScheduled = true;
 
-    // Swap outside reactive tracking.
     scheduleMicrotask(() => {
       swapScheduled = false;
+      if (disposed) return;
 
       const next = pendingKey!;
       pendingKey = undefined;
@@ -132,7 +175,19 @@ export function match<T extends string | number | symbol>(
     });
   });
 
-  const frag = document.createDocumentFragment();
-  frag.append(start, end);
+  /**
+   * If this match() is created inside a parent scope, we auto-cleanup:
+   * - prevent pending microtasks from doing work,
+   * - dispose current case scope,
+   * - remove mounted nodes.
+   */
+  const parentScope = getCurrentScope();
+  if (parentScope) {
+    parentScope.onCleanup(() => {
+      disposed = true;
+      clear();
+    });
+  }
+
   return frag;
 }
