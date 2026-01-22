@@ -2,88 +2,86 @@ import { getCurrentScope, Scope, withScope } from './scope.js';
 import { scheduleMicrotask, isBatching, queueInBatch } from './scheduler.js';
 
 /**
- * Optional global error handler for effect execution.
+ * Optional global error handler for reactive execution.
  *
- * Dalila keeps the reactive system alive even if an effect throws.
- * If no handler is set, errors are logged to the console.
+ * The runtime keeps running even if an effect/computed throws:
+ * - if a handler is registered, we forward errors to it
+ * - otherwise we log to the console
  */
 let effectErrorHandler: ((error: Error, source: string) => void) | null = null;
 
 /**
- * Sets a global error handler for effects/computed invalidations.
+ * Register a global error handler for effects/computed invalidations.
  *
- * @example
- * setEffectErrorHandler((err, src) => report(err, { source: src }));
+ * Use this to report errors without crashing the reactive graph.
  */
 export function setEffectErrorHandler(handler: (error: Error, source: string) => void): void {
   effectErrorHandler = handler;
 }
 
-/** Normalizes unknown throws and routes them to the global handler (or console). */
+/**
+ * Normalize unknown throws into Error and route to the global handler (or console).
+ */
 function reportEffectError(error: unknown, source: string): void {
   const err = error instanceof Error ? error : new Error(String(error));
   if (effectErrorHandler) effectErrorHandler(err, source);
   else console.error(`[Dalila] Error in ${source}:`, err);
 }
 
+/**
+ * Internal effect function type.
+ *
+ * - deps: reverse dependency tracking (which subscriber Sets we are registered in)
+ * - disposed: prevents future executions and allows idempotent cleanup
+ * - sync: marks "run immediately" effects (used by computed invalidation)
+ */
 type EffectFn = (() => void) & {
-  /**
-   * Reverse dependency tracking:
-   * we store the subscriber Set(s) this effect is registered in so we can
-   * unsubscribe on re-run (dynamic deps) and on dispose.
-   */
   deps?: Set<Set<EffectFn>>;
-
-  /** When true, this effect must never execute again. */
   disposed?: boolean;
-
-  /**
-   * Synchronous scheduling flag.
-   * Used by computed invalidation: mark dirty immediately when deps change.
-   */
   sync?: boolean;
 };
 
 /**
- * Currently executing effect (dependency collector).
- * Signals read while this is set will subscribe this effect.
+ * Currently executing effect for dependency collection.
+ * Any signal read while this is set subscribes this effect.
  */
 let activeEffect: EffectFn | null = null;
 
 /**
  * Scope associated with the currently executing effect.
  *
- * Best-effort guard: avoid cross-scope subscriptions by only subscribing when
- * the current scope matches the effect's owning scope (or when there is no owning scope).
+ * Best-effort safety:
+ * - effects run inside an owning scope
+ * - signals only subscribe the active effect if the caller is in the same scope
  */
 let activeScope: Scope | null = null;
 
 /**
- * Dedup set for scheduled effects.
- * Multiple signal writes in the same tick will only enqueue an effect once.
+ * Per-tick dedupe for async effects.
+ * Multiple writes in the same tick schedule an effect only once.
  */
 const pendingEffects = new Set<EffectFn>();
 
 /**
  * Stable runner per effect (function identity).
  *
- * Important for `batch()`:
- * - during a batch we enqueue runner functions into the batch queue
- * - dedupe is done by function identity
- * - so each effect needs a stable runner function
+ * Why:
+ * - when batching, we enqueue a function into the batch queue
+ * - dedupe uses function identity
+ * - each effect needs a stable runner function across schedules
  */
 const effectRunners = new WeakMap<EffectFn, () => void>();
 
 /**
- * Schedules an effect respecting:
- * - computed invalidations run synchronously
- * - regular effects run async (microtask), deduped per tick
- * - during `batch()`, we enqueue into the batch queue (which flushes once per frame)
+ * Schedule an effect with correct semantics:
+ * - computed invalidations run synchronously (mark dirty immediately)
+ * - normal effects run async (microtask), coalesced/deduped per tick
+ * - inside batch(): queue into the batch queue to flush once
  */
 function scheduleEffect(eff: EffectFn): void {
   if (eff.disposed) return;
 
-  // Computed invalidation: run immediately so computed is marked dirty ASAP.
+  // Computed invalidation: run immediately so computed becomes dirty synchronously.
   if (eff.sync) {
     try {
       eff();
@@ -126,25 +124,40 @@ export interface Signal<T> {
 }
 
 /**
- * Creates a signal: a mutable value with automatic dependency tracking.
+ * Create a signal: a mutable value with automatic dependency tracking.
  *
- * Reads inside effects subscribe the effect.
- * Writes notify subscribers, with optional deferral when inside `batch()`.
+ * Reads:
+ * - if there is an active effect, subscribe it (dynamic deps supported)
+ *
+ * Writes:
+ * - update the value immediately
+ * - notify subscribers (immediately, or deferred via batch queue)
+ *
+ * Lifecycle:
+ * - effects remove themselves from subscriber sets on re-run and on dispose
+ * - signals do not "own" subscriber lifetimes; they only maintain the set
  */
 export function signal<T>(initialValue: T): Signal<T> {
   let value = initialValue;
   const subscribers = new Set<EffectFn>();
-  const owningScope = getCurrentScope();
 
   const read = () => {
     if (activeEffect && !activeEffect.disposed) {
-      const current = getCurrentScope();
-
-      // Scope-aware subscription guard (best effort).
-      if (!activeScope || activeScope === current) {
+      // Scope-aware subscription guard (best effort):
+      // - if the active effect is not scoped, allow subscription
+      // - if scoped, only subscribe when currently executing inside that scope
+      if (!activeScope) {
         if (!subscribers.has(activeEffect)) {
           subscribers.add(activeEffect);
           (activeEffect.deps ??= new Set()).add(subscribers);
+        }
+      } else {
+        const current = getCurrentScope();
+        if (activeScope === current) {
+          if (!subscribers.has(activeEffect)) {
+            subscribers.add(activeEffect);
+            (activeEffect.deps ??= new Set()).add(subscribers);
+          }
         }
       }
     }
@@ -172,23 +185,22 @@ export function signal<T>(initialValue: T): Signal<T> {
     read.set(fn(value));
   };
 
-  // If the signal was created inside a scope, drop subscribers when the scope ends.
-  if (owningScope) {
-    owningScope.onCleanup(() => {
-      subscribers.clear();
-    });
-  }
-
   return read as Signal<T>;
 }
 
 /**
- * Creates an effect: reruns `fn` whenever any tracked signal changes.
+ * Create an effect: reruns `fn` whenever any tracked signal changes.
  *
- * Notes:
- * - First run is scheduled (microtask) to coalesce multiple writes.
- * - Dependency sets are cleared before each run (dynamic dependency tracking).
- * - If created inside a scope, the effect is disposed automatically on scope cleanup.
+ * Scheduling:
+ * - the initial run is scheduled (microtask) to coalesce multiple writes
+ *
+ * Dependency tracking:
+ * - before each run, the effect unsubscribes from previous dependencies
+ * - during the run, reads resubscribe to the new dependencies (dynamic deps)
+ *
+ * Scope:
+ * - if created inside a scope, the effect runs inside that scope
+ * - the effect is disposed automatically when the scope disposes
  */
 export function effect(fn: () => void): () => void {
   const owningScope = getCurrentScope();
@@ -219,7 +231,7 @@ export function effect(fn: () => void): () => void {
     activeScope = owningScope ?? null;
 
     try {
-      // Run inside owning scope so any resources created by the effect are scoped.
+      // Run inside owning scope so resources created by the effect are scoped.
       if (owningScope) withScope(owningScope, fn);
       else fn();
     } finally {
@@ -235,28 +247,32 @@ export function effect(fn: () => void): () => void {
 }
 
 /**
- * Creates a computed signal.
+ * Create a computed signal (derived, cached, read-only).
  *
- * - Lazy: computes on first read.
- * - Cached: returns cached value until invalidated by a dependency change.
- * - Consistent: invalidation is synchronous, so immediate reads after writes
- *   recompute the latest value.
+ * Semantics:
+ * - lazy: computes on first read
+ * - cached: returns the cached value until invalidated
+ * - synchronous invalidation: dependencies mark it dirty immediately
  *
- * Computed signals are read-only.
+ * Dependency tracking:
+ * - while computing, we collect dependencies into an internal "markDirty" effect
+ * - those dependencies will synchronously mark this computed as dirty on change
+ *
+ * Subscription:
+ * - other effects can subscribe to the computed like a normal signal
  */
 export function computed<T>(fn: () => T): Signal<T> {
   let value: T;
   let dirty = true;
 
   const subscribers = new Set<EffectFn>();
-  const owningScope = getCurrentScope();
 
-  // Track which deps we subscribed to so we can unsubscribe when re-tracking.
+  // Dep sets that `markDirty` is currently registered in (so we can unsubscribe on recompute).
   let trackedDeps = new Set<Set<EffectFn>>();
 
   /**
-   * Synchronous invalidator:
-   * When any dependency changes, mark dirty immediately and notify subscribers.
+   * Internal invalidator.
+   * Runs synchronously when any dependency changes.
    */
   const markDirty: EffectFn = (() => {
     if (dirty) return;
@@ -274,13 +290,20 @@ export function computed<T>(fn: () => T): Signal<T> {
   };
 
   const read = (): T => {
-    // Allow effects to subscribe to this computed.
+    // Allow effects to subscribe to this computed (same rules as signal()).
     if (activeEffect && !activeEffect.disposed) {
-      const current = getCurrentScope();
-      if (!activeScope || activeScope === current) {
+      if (!activeScope) {
         if (!subscribers.has(activeEffect)) {
           subscribers.add(activeEffect);
           (activeEffect.deps ??= new Set()).add(subscribers);
+        }
+      } else {
+        const current = getCurrentScope();
+        if (activeScope === current) {
+          if (!subscribers.has(activeEffect)) {
+            subscribers.add(activeEffect);
+            (activeEffect.deps ??= new Set()).add(subscribers);
+          }
         }
       }
     }
@@ -293,13 +316,17 @@ export function computed<T>(fn: () => T): Signal<T> {
 
       // Collect deps into markDirty.
       activeEffect = markDirty;
-      activeScope = owningScope ?? null;
+
+      // During dependency collection for computed:
+      // - we want to subscribe to its dependencies regardless of the caller scope.
+      // - the computed's deps belong to the computed itself, not to whoever read it.
+      activeScope = null;
 
       try {
         value = fn();
         dirty = false;
 
-        // Save subscribed dep sets so we can unsubscribe on next recompute.
+        // Snapshot the current dep sets for later unsubscription.
         if (markDirty.deps) trackedDeps = new Set(markDirty.deps);
       } finally {
         activeEffect = prevEffect;
@@ -318,14 +345,6 @@ export function computed<T>(fn: () => T): Signal<T> {
     throw new Error('Cannot update a computed signal directly. Computed signals are derived from other signals.');
   };
 
-  if (owningScope) {
-    owningScope.onCleanup(() => {
-      markDirty.disposed = true;
-      cleanupDeps();
-      subscribers.clear();
-    });
-  }
-
   return read as Signal<T>;
 }
 
@@ -333,9 +352,9 @@ export function computed<T>(fn: () => T): Signal<T> {
  * Async effect with cancellation.
  *
  * Semantics:
- * - Runs like a normal effect, but provides an AbortSignal to the callback.
- * - On re-run, the previous run is aborted before starting the next.
- * - If created inside a scope, it's aborted + disposed on scope cleanup.
+ * - provides an AbortSignal to the callback
+ * - on re-run, aborts the previous run before starting the next
+ * - when disposed, aborts the current run and stops future scheduling
  */
 export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
   const owningScope = getCurrentScope();
@@ -361,7 +380,7 @@ export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
   const run: EffectFn = (() => {
     if (run.disposed) return;
 
-    // Abort the previous run (if any), then create a new signal for this run.
+    // Abort previous run (if any), then create a new controller for this run.
     controller?.abort();
     controller = new AbortController();
 
