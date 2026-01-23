@@ -10,6 +10,7 @@ Dalila is a **SPA**, **DOM-first**, **HTML natural** framework based on **signal
 - 🚀 **Signals-based reactivity** - Automatic dependency tracking
 - 🎯 **DOM-first rendering** - Direct DOM manipulation, no Virtual DOM
 - 🔄 **Scope-based lifecycle** - Automatic cleanup (best effort)
+- 🧿 **DOM lifecycle watchers** — `watch()` + helpers (`useEvent`, `useInterval`, `useTimeout`, `useFetch`) with scope-based cleanup
 - 🛣️ **SPA router** - Basic routing with loaders and AbortSignal
 - 📦 **Context system** - Reactive dependency injection
 - 🔧 **Scheduler & batching** - Group updates into a single frame
@@ -94,6 +95,80 @@ effectAsync(async (signal) => {
   console.log(data);
 });
 ```
+
+### Lifecycle / Cleanup (Scopes + DOM)
+
+Dalila is DOM-first. That means a lot of your "lifecycle" work is not React-like rendering —
+it's **attaching listeners, timers, and async work to real DOM nodes**.
+
+Dalila's rule is simple:
+
+- **Inside a scope** → cleanup is automatic on `scope.dispose()`
+- **Outside a scope** → you must call `dispose()` manually (Dalila warns once)
+
+#### `watch(node, fn)` — DOM lifecycle primitive
+
+`watch()` runs a reactive function while a DOM node is connected.
+When the node disconnects, the effect is disposed. If the node reconnects later, it starts again.
+It's the primitive that enables DOM lifecycle without a VDOM.
+
+```ts
+import { watch, signal } from "dalila";
+
+const count = signal(0);
+
+const dispose = watch(someNode, () => {
+  // Reactive while connected because watch() runs this inside an effect()
+  someNode.textContent = String(count());
+});
+
+// later (optional if inside a scope)
+dispose();
+```
+
+#### Lifecycle helpers
+
+Built on the same mental model, Dalila provides small helpers that always return an **idempotent** `dispose()`:
+`useEvent`, `useInterval`, `useTimeout`, `useFetch`.
+
+**Inside a scope (recommended)**
+
+```ts
+import { createScope, withScope, useEvent, useInterval, useFetch } from "dalila";
+
+const scope = createScope();
+
+withScope(scope, () => {
+  useEvent(button, "click", onClick);
+  useInterval(tick, 1000);
+
+  const user = useFetch("/api/user");
+
+  // Optional manual cleanup:
+  // user.dispose();
+});
+
+scope.dispose(); // stops listener, interval, and aborts fetch
+```
+
+Disposing the scope stops listeners/timers and aborts in-flight async work created inside the scope.
+
+**Outside a scope (manual cleanup)**
+
+```ts
+import { useInterval } from "dalila";
+
+const dispose = useInterval(() => console.log("tick"), 1000);
+
+// later...
+dispose(); // required
+```
+
+#### Why helpers vs native APIs?
+
+You *can* use `addEventListener` / `setTimeout` / `setInterval` directly, but then cleanup becomes "manual discipline".
+In a DOM-first app, listeners/timers are the #1 source of silent leaks when the UI changes.
+Scopes make cleanup a **default**, not a convention — so UI changes don't silently leak listeners, timers, or in-flight async work.
 
 ### Conditional Rendering
 
