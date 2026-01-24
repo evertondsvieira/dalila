@@ -14,18 +14,18 @@ Dalila is a **SPA**, **DOM-first**, **HTML natural** framework based on **signal
 - 🛣️ **SPA router** - Basic routing with loaders and AbortSignal
 - 📦 **Context system** - Reactive dependency injection
 - 🔧 **Scheduler & batching** - Group updates into a single frame
-- 📚 **List rendering** - `createList` for keyed lists
+- 📚 **List rendering** - `createList` with keyed diffing for efficient updates
 - 🧱 **Resources** - Async data helpers with AbortSignal and scope cleanup
 
 ### Experimental
 - 🎨 **Natural HTML bindings** - Only in the example dev-server (not in core)
-- 📊 **Virtualization** - Virtual lists/tables are experimental
 - 🔍 **DevTools (console)** - Warnings and FPS monitor only
-- 🧪 **Low-level list API** - `forEach` (experimental, prefer `createList`)
+- 🧪 **Low-level list API** - `forEach` (advanced control, use when you need fine-grained behavior like reactive index; `createList` is the default)
 
 ### Planned / Roadmap
 - 🧰 **DevTools UI** - Visual inspection tooling
 - 🧩 **HTML bindings runtime/compiler** - First-class template binding
+- 📊 **Virtualization** - Virtual lists/tables for very large datasets (10k+ items)
 
 ## 📦 Installation
 
@@ -55,7 +55,7 @@ export function createController() {
 }
 ```
 
-> Note: HTML bindings in this example are provided by the example dev-server,
+> Note: HTML bindings in this example are provided by the example dev-server (`npm run serve`),
 > not by the core runtime.
 
 ## 🧪 Local Demo Server
@@ -103,8 +103,8 @@ it's **attaching listeners, timers, and async work to real DOM nodes**.
 
 Dalila's rule is simple:
 
-- **Inside a scope** → cleanup is automatic on `scope.dispose()`
-- **Outside a scope** → you must call `dispose()` manually (Dalila warns once)
+- **Inside a scope** → cleanup is automatic (best-effort) on `scope.dispose()`
+- **Outside a scope** → you must call `dispose()` manually unless a primitive explicitly auto-disposes on DOM removal (Dalila warns in dev mode)
 
 #### `watch(node, fn)` — DOM lifecycle primitive
 
@@ -298,18 +298,61 @@ mutate(() => {
 - This allows reading updated values inside the batch while coalescing UI updates
 
 ### List Rendering with Keys
+
+Dalila provides efficient list rendering with keyed diffing, similar to React's `key` prop or Vue's `:key`.
+
+**Basic usage:**
 ```typescript
-// Primary API (stable)
-createList(
-  todos,
-  (todo) => div(todo.text)
+import { signal } from 'dalila';
+import { createList } from 'dalila/core';
+
+const todos = signal([
+  { id: 1, text: 'Learn Dalila', done: true },
+  { id: 2, text: 'Build app', done: false }
+]);
+
+const listFragment = createList(
+  () => todos(),
+  (todo) => {
+    const li = document.createElement('li');
+    li.textContent = todo.text;
+    return li;
+  },
+  (todo) => todo.id.toString() // Key function
 );
 
-// Experimental low-level API
-forEach(
-  items,
-  (item) => div(item.name),
-  (item) => item.id // Key function
+document.body.append(listFragment);
+```
+
+**Key function best practices:**
+- ✅ Always provide a keyFn for dynamic lists
+- ✅ Use stable, unique identifiers (IDs, not indices)
+- ✅ Avoid using object references as keys
+- ⚠️ Without keyFn, items use index as key (re-renders on reorder)
+
+**How it works:**
+- Only re-renders items whose value changed (not items that only moved)
+- Preserves DOM nodes for unchanged items (maintains focus, scroll, etc)
+- Efficient for lists up to ~1000 items (informal guideline, not yet benchmarked)
+- Each item gets its own scope for automatic cleanup
+- Outside a scope, the list auto-disposes when removed from the DOM (or call `fragment.dispose()`)
+> **Note:** In `createList`, `index` is a snapshot (not reactive). Reorder moves nodes without re-render. Use `forEach()` if you need a reactive index.
+
+**Performance:**
+```typescript
+// Bad: re-creates all items on every change
+effect(() => {
+  container.innerHTML = '';
+  todos().forEach(todo => {
+    container.append(createTodoItem(todo));
+  });
+});
+
+// Good: only updates changed items
+const list = createList(
+  () => todos(),
+  (todo) => createTodoItem(todo),
+  (todo) => todo.id.toString()
 );
 ```
 
@@ -596,7 +639,7 @@ Dalila is built around these core principles:
 | Rendering | Virtual DOM diffing | Direct DOM manipulation |
 | Performance | Manual optimization | Runtime scheduling (best-effort) |
 | State management | Hooks + deps arrays | Signals + automatic tracking |
-| Side effects | `useEffect` + deps | `effect()` + automatic cleanup |
+| Side effects | `useEffect` + deps | `effect()` + automatic cleanup (best-effort) |
 | Bundle size | ~40KB | Not yet measured |
 
 ## 📁 Project Structure
