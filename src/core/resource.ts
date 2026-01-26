@@ -1,5 +1,5 @@
 import { signal, effectAsync, type Signal } from "./signal.js";
-import { getCurrentScope, createScope, withScope, type Scope } from "./scope.js";
+import { getCurrentScope, setCurrentScope, createScope, withScope, type Scope } from "./scope.js";
 
 /**
  * ResourceOptions:
@@ -677,7 +677,10 @@ export function createCachedResource<T>(
    * Create a dedicated scope for this cache entry.
    * This isolates the resource from caller scopes, preventing premature disposal.
    */
+  const previousScope = getCurrentScope();
+  if (previousScope) setCurrentScope(null);
   const cacheScope = createScope();
+  if (previousScope) setCurrentScope(previousScope);
 
   /**
    * Create the resource inside cacheScope so its subscriptions, effects, and abort handling
