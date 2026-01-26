@@ -12,6 +12,9 @@ export interface Scope {
 
   /** Dispose the scope and run all registered cleanups. */
   dispose(): void;
+
+  /** Parent scope in the hierarchy (for context lookup). */
+  readonly parent: Scope | null;
 }
 
 /**
@@ -21,19 +24,56 @@ export interface Scope {
  * - Cleanups run in FIFO order (registration order).
  * - If a cleanup registers another cleanup during disposal, it will NOT run
  *   in the same dispose pass (because we snapshot via `splice(0)`).
+ * - Parent is captured from the current scope context (set by withScope).
  */
 export function createScope(): Scope {
   const cleanups: (() => void)[] = [];
+  const parent = currentScope;
+  let disposed = false;
 
-  return {
+  const runCleanupSafely = (fn: () => void): unknown | undefined => {
+    try {
+      return fn();
+    } catch (err) {
+      return err;
+    }
+  };
+
+  const scope: Scope = {
     onCleanup(fn: () => void) {
+      if (disposed) {
+        const error = runCleanupSafely(fn);
+        if (error) {
+          console.error('[Dalila] cleanup registered after dispose() threw:', error);
+        }
+        return;
+      }
       cleanups.push(fn);
     },
     dispose() {
-      // Snapshot and clear, then run.
-      for (const fn of cleanups.splice(0)) fn();
+      if (disposed) return;
+      disposed = true;
+
+      const snapshot = cleanups.splice(0);
+      const errors: unknown[] = [];
+
+      for (const fn of snapshot) {
+        const error = runCleanupSafely(fn);
+        if (error) errors.push(error);
+      }
+
+      if (errors.length > 0) {
+        console.error('[Dalila] scope.dispose() had cleanup errors:', errors);
+      }
     },
+    parent,
   };
+
+  if (parent) {
+    parent.onCleanup(() => scope.dispose());
+  }
+
+  return scope;
 }
 
 /**
