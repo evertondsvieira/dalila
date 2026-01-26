@@ -46,6 +46,11 @@ let isFlushingMicrotasks = false;
 const rafQueue: Task[] = [];
 const microtaskQueue: Task[] = [];
 
+const rafImpl: (cb: () => void) => void =
+  typeof globalThis !== 'undefined' && typeof globalThis.requestAnimationFrame === 'function'
+    ? (cb) => globalThis.requestAnimationFrame(() => cb())
+    : (cb) => setTimeout(cb, 0);
+
 /**
  * Batching state.
  *
@@ -69,7 +74,7 @@ export function schedule(task: Task): void {
 
   if (!rafScheduled) {
     rafScheduled = true;
-    requestAnimationFrame(flushRaf);
+    rafImpl(flushRaf);
   }
 }
 
@@ -225,7 +230,7 @@ function flushRaf(): void {
     // If tasks were queued during the flush, schedule another frame.
     if (rafQueue.length > 0 && !rafScheduled) {
       rafScheduled = true;
-      requestAnimationFrame(flushRaf);
+      rafImpl(flushRaf);
     }
   }
 }
