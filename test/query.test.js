@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createScope, withScope } from "../dist/core/scope.js";
@@ -16,11 +16,14 @@ test("query caches results by encoded key within a scope", async () => {
   const q = createQueryClient();
 
   let runs = 0;
+  let userId;
+  let userA;
+  let userB;
 
-  await withScope(scope, async () => {
-    const userId = signal(1);
+  withScope(scope, () => {
+    userId = signal(1);
 
-    const userA = q.query({
+    userA = q.query({
       key: () => q.key("user", userId()),
       tags: ["users"],
       fetch: async (_sig, [_, id]) => {
@@ -29,7 +32,7 @@ test("query caches results by encoded key within a scope", async () => {
       },
     });
 
-    const userB = q.query({
+    userB = q.query({
       key: () => q.key("user", userId()),
       tags: ["users"],
       fetch: async (_sig, [_, id]) => {
@@ -37,22 +40,22 @@ test("query caches results by encoded key within a scope", async () => {
         return { id, runs };
       },
     });
-
-    await flush();
-    await sleep(5);
-
-    assert.equal(runs, 1);
-    assert.equal(userA.cacheKey(), userB.cacheKey());
-    assert.deepEqual(userA.data(), { id: 1, runs: 1 });
-    assert.deepEqual(userB.data(), { id: 1, runs: 1 });
-
-    userId.set(2);
-    await flush();
-    await sleep(5);
-
-    assert.equal(runs, 2);
-    assert.deepEqual(userA.data(), { id: 2, runs: 2 });
   });
+
+  await flush();
+  await sleep(5);
+
+  assert.equal(runs, 1);
+  assert.equal(userA.cacheKey(), userB.cacheKey());
+  assert.deepEqual(userA.data(), { id: 1, runs: 1 });
+  assert.deepEqual(userB.data(), { id: 1, runs: 1 });
+
+  userId.set(2);
+  await flush();
+  await sleep(5);
+
+  assert.equal(runs, 2);
+  assert.deepEqual(userA.data(), { id: 2, runs: 2 });
 
   scope.dispose();
 });
@@ -64,11 +67,13 @@ test("staleTime schedules a scope-safe revalidation after success", async () => 
   const q = createQueryClient();
 
   let runs = 0;
+  let id;
+  let user;
 
-  await withScope(scope, async () => {
-    const id = signal(1);
+  withScope(scope, () => {
+    id = signal(1);
 
-    const user = q.query({
+    user = q.query({
       key: () => q.key("user", id()),
       tags: ["users"],
       staleTime: 30,
@@ -77,20 +82,20 @@ test("staleTime schedules a scope-safe revalidation after success", async () => 
         return { userId, runs };
       },
     });
-
-    await flush();
-    await sleep(5);
-
-    assert.equal(runs, 1);
-    assert.equal(user.status(), "success");
-
-    await sleep(60);
-    await flush();
-    await sleep(5);
-
-    assert.ok(runs >= 2);
-    assert.equal(user.data()?.userId, 1);
   });
+
+  await flush();
+  await sleep(5);
+
+  assert.equal(runs, 1);
+  assert.equal(user.status(), "success");
+
+  await sleep(60);
+  await flush();
+  await sleep(5);
+
+  assert.ok(runs >= 2);
+  assert.equal(user.data()?.userId, 1);
 
   scope.dispose();
 });

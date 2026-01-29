@@ -1,7 +1,8 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { signal } from "../dist/core/signal.js";
+import { createScope, withScope } from "../dist/core/scope.js";
 import { createQueryClient } from "../dist/core/query.js";
 import { clearResourceCache } from "../dist/core/resource.js";
 
@@ -49,10 +50,11 @@ test("non-scoped queries do not cache shared results", async () => {
   assert.notEqual(da.runs, db.runs);
 });
 
-test("queryGlobal staleTime still revalidates without a scope", async () => {
+test("queryGlobal staleTime still revalidates within a scope", async () => {
   clearResourceCache();
 
   const q = createQueryClient();
+  const scope = createScope();
   let runs = 0;
 
   const originalSetTimeout = globalThis.setTimeout;
@@ -74,13 +76,16 @@ test("queryGlobal staleTime still revalidates without a scope", async () => {
   };
 
   try {
-    const user = q.queryGlobal({
-      key: () => q.key("user", "stale"),
-      staleTime: 20,
-      fetch: async () => {
-        runs++;
-        return { runs };
-      },
+    let user;
+    withScope(scope, () => {
+      user = q.queryGlobal({
+        key: () => q.key("user", "stale"),
+        staleTime: 20,
+        fetch: async () => {
+          runs++;
+          return { runs };
+        },
+      });
     });
 
     await flush();
@@ -95,6 +100,7 @@ test("queryGlobal staleTime still revalidates without a scope", async () => {
     assert.ok(runs >= 2);
     assert.equal(user.data()?.runs, runs);
   } finally {
+    scope.dispose();
     for (const timer of timers) {
       originalClearTimeout(timer);
     }
