@@ -1,5 +1,6 @@
 import { signal, effectAsync, type Signal } from "./signal.js";
-import { getCurrentScope, setCurrentScope, createScope, withScope, type Scope } from "./scope.js";
+import { isInDevMode } from "./dev.js";
+import { getCurrentScope, createScope, isScopeDisposed, withScope, type Scope } from "./scope.js";
 
 /**
  * ResourceOptions:
@@ -101,7 +102,7 @@ export function createResource<T>(
    * - refresh() creates a waiter for the next runId
    * - driver resolves it when that run finishes (if still current)
    */
-  const waiters = new Map<number, Deferred>();
+  const waiters = new Map<number, { deferred: Deferred; controller: AbortController | null }>();
 
   const owningScope = getCurrentScope();
 
@@ -111,7 +112,7 @@ export function createResource<T>(
   function requestRun(): Promise<void> {
     const id = ++runId;
     const deferred = createDeferred();
-    waiters.set(id, deferred);
+    waiters.set(id, { deferred, controller: null });
 
     refreshTick.set(id);
     return deferred.promise;
@@ -133,6 +134,7 @@ export function createResource<T>(
 
     const controller = new AbortController();
     lastRunController = controller;
+    if (waiter) waiter.controller = controller;
 
     // If the effect run is aborted (rerun or scope disposal), abort this request too.
     const onAbort = () => controller.abort();
@@ -145,6 +147,9 @@ export function createResource<T>(
 
     inFlight = (async () => {
       try {
+        // NOTE: fetchFn runs inside the effect's sync tracking phase.
+        // Synchronous signal reads before the first await may be tracked.
+        // Use createDependentResource or QueryClient to opt out of this.
         const result = await fetchFn(requestSignal);
         if (requestSignal.aborted) return;
 
@@ -165,12 +170,8 @@ export function createResource<T>(
     })();
 
     inFlight.finally(() => {
-      /**
-       * Only resolve the waiter if this run is still current.
-       * Prevents early resolution when effectAsync reruns during fetch.
-       */
-      if (lastRunController === controller) {
-        waiter?.resolve();
+      if (waiter && waiter.controller === controller) {
+        waiter.deferred.resolve();
         waiters.delete(id);
       }
       runSignal.removeEventListener("abort", onAbort);
@@ -189,8 +190,10 @@ export function createResource<T>(
       lastRunController = null;
       disposeDriver();
 
+      loading.set(false);
+
       for (const [, deferred] of waiters) {
-        deferred.resolve();
+        deferred.deferred.resolve();
       }
       waiters.clear();
     });
@@ -199,6 +202,7 @@ export function createResource<T>(
   async function refresh(opts: ResourceRefreshOptions = {}): Promise<void> {
     // Dedupe: if already loading and not forced, just await the active run.
     if (loading() && !opts.force) {
+      await Promise.resolve();
       await (inFlight ?? Promise.resolve());
       return;
     }
@@ -289,14 +293,14 @@ export function createDependentResource<T, D>(
   let lastRunController: AbortController | null = null;
 
   let runId = 0;
-  const waiters = new Map<number, Deferred>();
+  const waiters = new Map<number, { deferred: Deferred; controller: AbortController | null }>();
 
   const owningScope = getCurrentScope();
 
   function requestRun(): Promise<void> {
     const id = ++runId;
     const deferred = createDeferred();
-    waiters.set(id, deferred);
+    waiters.set(id, { deferred, controller: null });
 
     refreshTick.set(id);
     return deferred.promise;
@@ -313,8 +317,10 @@ export function createDependentResource<T, D>(
       // Only resolve the waiter if no fetch is in flight.
       // (refresh forces changed=true, so this path only occurs on normal reruns)
       if (!loading()) {
-        waiter?.resolve();
-        waiters.delete(id);
+        if (waiter) {
+          waiter.deferred.resolve();
+          waiters.delete(id);
+        }
       }
       return;
     }
@@ -323,6 +329,7 @@ export function createDependentResource<T, D>(
 
     const controller = new AbortController();
     lastRunController = controller;
+    if (waiter) waiter.controller = controller;
 
     const onAbort = () => controller.abort();
     runSignal.addEventListener("abort", onAbort, { once: true });
@@ -334,6 +341,8 @@ export function createDependentResource<T, D>(
 
     inFlight = (async () => {
       try {
+        // Break reactive tracking: run fetchFn outside effect's sync tracking phase.
+        await Promise.resolve();
         const result = await fetchFn(requestSignal, resolved.deps);
         if (requestSignal.aborted) return;
 
@@ -353,10 +362,8 @@ export function createDependentResource<T, D>(
     })();
 
     inFlight.finally(() => {
-      // Only resolve the waiter if this run is still current.
-      // Prevents early resolution when effectAsync reruns during fetch.
-      if (lastRunController === controller) {
-        waiter?.resolve();
+      if (waiter && waiter.controller === controller) {
+        waiter.deferred.resolve();
         waiters.delete(id);
       }
       runSignal.removeEventListener("abort", onAbort);
@@ -369,8 +376,10 @@ export function createDependentResource<T, D>(
       lastRunController = null;
       disposeDriver();
 
+      loading.set(false);
+
       for (const [, deferred] of waiters) {
-        deferred.resolve();
+        deferred.deferred.resolve();
       }
       waiters.clear();
     });
@@ -403,6 +412,7 @@ export function createDependentResource<T, D>(
    */
   async function refresh(opts: ResourceRefreshOptions = {}): Promise<void> {
     if (loading() && !opts.force) {
+      await Promise.resolve();
       await (inFlight ?? Promise.resolve());
       return;
     }
@@ -455,10 +465,9 @@ function resolveDeps<D>(src: DepSource<D>): ResolvedDeps<D> {
   }
 
   const depsVal = src.get();
-  const keyVal = src.key ? src.key() : undefined;
 
-  if (keyVal !== undefined) {
-    return { deps: depsVal, kind: "key", key: keyVal };
+  if (src.key) {
+    return { deps: depsVal, kind: "key", key: src.key() };
   }
 
   return { deps: depsVal, kind: "value" };
@@ -494,6 +503,7 @@ function shallowArrayEqual(a: any[], b: any[]): boolean {
  */
 type CacheEntry = {
   resource: ResourceState<any>;
+  // createdAt is treated as a last-used timestamp for TTL + LRU.
   createdAt: number;
   ttlMs?: number;
 
@@ -521,7 +531,7 @@ const tagIndex = new Map<string, Set<string>>();
  * Tracks keys acquired per scope so we don't double-release.
  * WeakMap ensures we don't keep scopes alive through bookkeeping.
  */
-const scopeKeys = new WeakMap<object, Map<string, CacheEntry>>();
+const scopeKeys = new WeakMap<Scope, Map<string, CacheEntry>>();
 
 export interface CachedResourceOptions<T> extends ResourceOptions<T> {
   ttlMs?: number;
@@ -538,6 +548,18 @@ export interface CachedResourceOptions<T> extends ResourceOptions<T> {
    * Leave default as true to teach DX.
    */
   warnIfNoScope?: boolean;
+
+  /**
+   * Optional dev warning when persist is true without ttlMs.
+   * Leave default as true to teach DX.
+   */
+  warnPersistWithoutTtl?: boolean;
+
+  /**
+   * Optional scope to run fetchFn inside (for context lookup).
+   * Note: only the sync portion before the first await runs inside this scope.
+   */
+  fetchScope?: Scope | null;
 }
 
 /**
@@ -635,24 +657,36 @@ export function createCachedResource<T>(
   options: CachedResourceOptions<T> = {}
 ): ResourceState<T> {
   const scope = getCurrentScope();
+  const fetchScope =
+    options.fetchScope && !isScopeDisposed(options.fetchScope) ? options.fetchScope : null;
+  const wrappedFetch = fetchScope
+    ? (signal: AbortSignal) => withScope(fetchScope, () => fetchFn(signal))
+    : fetchFn;
 
   // Memory safety: persist without TTL can cause unbounded cache growth
-  if (options.persist === true && options.ttlMs == null) {
+  if (
+    isInDevMode() &&
+    options.persist === true &&
+    options.ttlMs == null &&
+    options.warnPersistWithoutTtl !== false
+  ) {
     console.warn(
       `[Dalila] createCachedResource("${key}") has persist: true without ttlMs. ` +
-        `This can cause memory leaks. Consider adding a ttlMs or using maxCacheSize.`
+        `This can cause memory leaks. Consider adding a ttlMs or using maxEntries.`
     );
   }
 
   // Safe-by-default: outside scope, don't cache unless explicitly persisted.
   if (!scope && options.persist !== true) {
     if (options.warnIfNoScope !== false) {
-      console.warn(
-        `[Dalila] createCachedResource("${key}") called outside a scope. ` +
-          `No caching will happen. Use persist: true (or q.queryGlobal) for global cache.`
-      );
+      if (isInDevMode()) {
+        console.warn(
+          `[Dalila] createCachedResource("${key}") called outside a scope. ` +
+            `No caching will happen. Use persist: true (or q.queryGlobal) for global cache.`
+        );
+      }
     }
-    return createResource(fetchFn, options);
+    return createResource(wrappedFetch, options);
   }
 
   const now = Date.now();
@@ -661,8 +695,25 @@ export function createCachedResource<T>(
   if (existing) {
     // TTL expiry is checked lazily on access.
     if (existing.ttlMs != null && now - existing.createdAt > existing.ttlMs) {
-      removeCacheKey(key);
+      if (existing.refCount === 0) {
+        removeCacheKey(key);
+      } else {
+        existing.stale = true;
+        // createdAt is treated as a last-used timestamp for TTL + LRU.
+        existing.createdAt = now;
+        existing.resource.refresh({ force: true }).catch(() => {});
+
+        // Update tags/persist behavior if caller provided them.
+        if (options.tags) setEntryTags(key, existing, options.tags);
+        if (options.persist === true) existing.persist = true;
+
+        // Track usage in the current scope (increments refCount, releases on cleanup).
+        acquireCacheKey(key, existing);
+        return existing.resource as ResourceState<T>;
+      }
     } else {
+      // createdAt is treated as a last-used timestamp for TTL + LRU.
+      existing.createdAt = now;
       // Update tags/persist behavior if caller provided them.
       if (options.tags) setEntryTags(key, existing, options.tags);
       if (options.persist === true) existing.persist = true;
@@ -677,16 +728,13 @@ export function createCachedResource<T>(
    * Create a dedicated scope for this cache entry.
    * This isolates the resource from caller scopes, preventing premature disposal.
    */
-  const previousScope = getCurrentScope();
-  if (previousScope) setCurrentScope(null);
-  const cacheScope = createScope();
-  if (previousScope) setCurrentScope(previousScope);
+  const cacheScope = createScope(null);
 
   /**
    * Create the resource inside cacheScope so its subscriptions, effects, and abort handling
    * belong to the cache entry itself.
    */
-  const resource = withScope(cacheScope, () => createResource(fetchFn, options));
+  const resource = withScope(cacheScope, () => createResource(wrappedFetch, options));
 
   const entry: CacheEntry = {
     resource,
@@ -835,12 +883,10 @@ function acquireCacheKey(key: string, entry: CacheEntry): void {
   // Outside scope: allowed only when persisted (we checked before creating).
   if (!scope) return;
 
-  const scopeObj = scope as unknown as object;
-
-  let keys = scopeKeys.get(scopeObj);
+  let keys = scopeKeys.get(scope);
   if (!keys) {
     keys = new Map<string, CacheEntry>();
-    scopeKeys.set(scopeObj, keys);
+    scopeKeys.set(scope, keys);
 
     scope.onCleanup(() => {
       const entries = Array.from(keys!.entries());
@@ -875,7 +921,10 @@ function releaseCacheEntry(key: string, entry: CacheEntry): void {
   entry.refCount = Math.max(0, entry.refCount - 1);
 
   if (entry.refCount === 0 && entry.persist !== true) {
-    removeCacheKey(key);
+    const current = resourceCache.get(key);
+    if (current === entry) {
+      removeCacheKey(key);
+    }
   }
 }
 
@@ -917,10 +966,12 @@ export function createAutoRefreshResource<T>(
   const resource = createResource(fetchFn, options);
 
   if (!scope) {
-    console.warn(
-      `[Dalila] createAutoRefreshResource called outside a scope. ` +
-        `Auto-refresh will not work. Use within a scope or manage cleanup manually.`
-    );
+    if (isInDevMode()) {
+      console.warn(
+        `[Dalila] createAutoRefreshResource called outside a scope. ` +
+          `Auto-refresh will not work. Use within a scope or manage cleanup manually.`
+      );
+    }
     return resource;
   }
 
@@ -933,4 +984,320 @@ export function createAutoRefreshResource<T>(
   });
 
   return resource;
+}
+
+/**
+ * Isolated cache instance for SSR and testing.
+ *
+ * Use this when you need complete cache isolation:
+ * - SSR: each request gets its own cache
+ * - Testing: each test gets fresh state
+ *
+ * Example:
+ * ```ts
+ * const { createCachedResource, clearCache, invalidateKey, getCache } = createIsolatedCache();
+ *
+ * // Use the isolated createCachedResource instead of the global one
+ * const resource = createCachedResource('key', fetchFn);
+ *
+ * // Clean up when done
+ * clearCache();
+ * ```
+ */
+export interface IsolatedCache {
+  /**
+   * Create a cached resource using this isolated cache.
+   */
+  createCachedResource: <T>(
+    key: string,
+    fetchFn: (signal: AbortSignal) => Promise<T>,
+    options?: CachedResourceOptions<T>
+  ) => ResourceState<T>;
+
+  /**
+   * Clear all entries in this isolated cache.
+   */
+  clearCache: (key?: string) => void;
+
+  /**
+   * Invalidate a specific key in this isolated cache.
+   */
+  invalidateKey: (key: string, opts?: { revalidate?: boolean; force?: boolean }) => void;
+
+  /**
+   * Invalidate all entries with a specific tag.
+   */
+  invalidateTag: (tag: string, opts?: { revalidate?: boolean; force?: boolean }) => void;
+
+  /**
+   * Invalidate all entries with any of the specified tags.
+   */
+  invalidateTags: (tags: readonly string[], opts?: { revalidate?: boolean; force?: boolean }) => void;
+
+  /**
+   * Get the underlying cache Map (for debugging/inspection).
+   */
+  getCache: () => Map<string, CacheEntry>;
+
+  /**
+   * Get cache keys by tag.
+   */
+  getKeysByTag: (tag: string) => string[];
+
+  /**
+   * Configure cache limits for this instance.
+   */
+  configure: (config: Partial<{ maxEntries: number; warnOnEviction: boolean }>) => void;
+}
+
+export function createIsolatedCache(): IsolatedCache {
+  // Isolated state
+  const isolatedCache = new Map<string, CacheEntry>();
+  const isolatedTagIndex = new Map<string, Set<string>>();
+  const isolatedScopeKeys = new WeakMap<Scope, Map<string, CacheEntry>>();
+
+  let isolatedConfig = {
+    maxEntries: 500,
+    warnOnEviction: true,
+  };
+
+  function configure(config: Partial<{ maxEntries: number; warnOnEviction: boolean }>): void {
+    Object.assign(isolatedConfig, config);
+  }
+
+  function evictIfNeeded(): void {
+    if (isolatedCache.size <= isolatedConfig.maxEntries) return;
+
+    const evictable: Array<{ key: string; entry: CacheEntry }> = [];
+
+    for (const [key, entry] of isolatedCache) {
+      if (entry.refCount === 0) {
+        evictable.push({ key, entry });
+      }
+    }
+
+    evictable.sort((a, b) => a.entry.createdAt - b.entry.createdAt);
+
+    const toEvict = isolatedCache.size - isolatedConfig.maxEntries;
+    let evicted = 0;
+
+    for (const { key } of evictable) {
+      if (evicted >= toEvict) break;
+
+      if (isolatedConfig.warnOnEviction) {
+        console.warn(
+          `[Dalila] Isolated cache evicting "${key}" (LRU). ` +
+            `Cache size exceeded ${isolatedConfig.maxEntries} entries.`
+        );
+      }
+
+      removeCacheKeyIsolated(key);
+      evicted++;
+    }
+  }
+
+  function setEntryTagsIsolated(key: string, entry: CacheEntry, tags: readonly string[]): void {
+    for (const t of entry.tags) {
+      const set = isolatedTagIndex.get(t);
+      set?.delete(key);
+      if (set && set.size === 0) isolatedTagIndex.delete(t);
+    }
+    entry.tags.clear();
+
+    for (const t of tags) {
+      entry.tags.add(t);
+      let set = isolatedTagIndex.get(t);
+      if (!set) {
+        set = new Set<string>();
+        isolatedTagIndex.set(t, set);
+      }
+      set.add(key);
+    }
+  }
+
+  function acquireCacheKeyIsolated(key: string, entry: CacheEntry): void {
+    const scope = getCurrentScope();
+    if (!scope) return;
+
+    let keys = isolatedScopeKeys.get(scope);
+    if (!keys) {
+      keys = new Map<string, CacheEntry>();
+      isolatedScopeKeys.set(scope, keys);
+
+      scope.onCleanup(() => {
+        const entries = Array.from(keys!.entries());
+        keys!.clear();
+        for (const [cachedKey, cachedEntry] of entries) {
+          releaseCacheEntryIsolated(cachedKey, cachedEntry);
+        }
+      });
+    }
+
+    const tracked = keys.get(key);
+    if (tracked === entry) return;
+
+    if (tracked) {
+      keys.delete(key);
+      releaseCacheEntryIsolated(key, tracked);
+    }
+
+    keys.set(key, entry);
+    entry.refCount++;
+  }
+
+  function releaseCacheEntryIsolated(key: string, entry: CacheEntry): void {
+    entry.refCount = Math.max(0, entry.refCount - 1);
+
+    if (entry.refCount === 0 && entry.persist !== true) {
+      const current = isolatedCache.get(key);
+      if (current === entry) {
+        removeCacheKeyIsolated(key);
+      }
+    }
+  }
+
+  function removeCacheKeyIsolated(key: string): void {
+    const entry = isolatedCache.get(key);
+    if (!entry) return;
+
+    entry.cacheScope.dispose();
+
+    for (const t of entry.tags) {
+      const set = isolatedTagIndex.get(t);
+      set?.delete(key);
+      if (set && set.size === 0) isolatedTagIndex.delete(t);
+    }
+
+    isolatedCache.delete(key);
+  }
+
+  function createCachedResourceIsolated<T>(
+    key: string,
+    fetchFn: (signal: AbortSignal) => Promise<T>,
+    options: CachedResourceOptions<T> = {}
+  ): ResourceState<T> {
+    const scope = getCurrentScope();
+    const fetchScope =
+      options.fetchScope && !isScopeDisposed(options.fetchScope) ? options.fetchScope : null;
+    const wrappedFetch = fetchScope
+      ? (signal: AbortSignal) => withScope(fetchScope, () => fetchFn(signal))
+      : fetchFn;
+
+    if (!scope && options.persist !== true) {
+      if (options.warnIfNoScope !== false && isInDevMode()) {
+        console.warn(
+          `[Dalila] createCachedResource("${key}") called outside a scope. ` +
+            `No caching will happen. Use persist: true for global cache.`
+        );
+      }
+      return createResource(wrappedFetch, options);
+    }
+
+    const now = Date.now();
+    const existing = isolatedCache.get(key);
+
+    if (existing) {
+      if (existing.ttlMs != null && now - existing.createdAt > existing.ttlMs) {
+        if (existing.refCount === 0) {
+          removeCacheKeyIsolated(key);
+        } else {
+          existing.stale = true;
+          existing.createdAt = now;
+          existing.resource.refresh({ force: true }).catch(() => {});
+
+          if (options.tags) setEntryTagsIsolated(key, existing, options.tags);
+          if (options.persist === true) existing.persist = true;
+
+          acquireCacheKeyIsolated(key, existing);
+          return existing.resource as ResourceState<T>;
+        }
+      } else {
+        existing.createdAt = now;
+        if (options.tags) setEntryTagsIsolated(key, existing, options.tags);
+        if (options.persist === true) existing.persist = true;
+
+        acquireCacheKeyIsolated(key, existing);
+        return existing.resource as ResourceState<T>;
+      }
+    }
+
+    const cacheScope = createScope(null);
+    const resource = withScope(cacheScope, () => createResource(wrappedFetch, options));
+
+    const entry: CacheEntry = {
+      resource,
+      createdAt: now,
+      ttlMs: options.ttlMs,
+      tags: new Set<string>(),
+      stale: false,
+      refCount: 0,
+      persist: options.persist === true,
+      cacheScope,
+    };
+
+    isolatedCache.set(key, entry);
+
+    if (options.tags) setEntryTagsIsolated(key, entry, options.tags);
+
+    acquireCacheKeyIsolated(key, entry);
+    evictIfNeeded();
+
+    return resource;
+  }
+
+  function clearCacheIsolated(key?: string): void {
+    if (key == null) {
+      for (const k of isolatedCache.keys()) removeCacheKeyIsolated(k);
+      return;
+    }
+    removeCacheKeyIsolated(key);
+  }
+
+  function invalidateKeyIsolated(
+    key: string,
+    opts: { revalidate?: boolean; force?: boolean } = {}
+  ): void {
+    const entry = isolatedCache.get(key);
+    if (!entry) return;
+
+    entry.stale = true;
+
+    const shouldRevalidate = opts.revalidate ?? true;
+    if (shouldRevalidate) {
+      entry.resource.refresh({ force: opts.force ?? true }).catch(() => {});
+    }
+  }
+
+  function invalidateTagIsolated(
+    tag: string,
+    opts: { revalidate?: boolean; force?: boolean } = {}
+  ): void {
+    const keys = isolatedTagIndex.get(tag);
+    if (!keys || keys.size === 0) return;
+
+    for (const key of keys) invalidateKeyIsolated(key, opts);
+  }
+
+  function invalidateTagsIsolated(
+    tags: readonly string[],
+    opts: { revalidate?: boolean; force?: boolean } = {}
+  ): void {
+    for (const t of tags) invalidateTagIsolated(t, opts);
+  }
+
+  function getKeysByTagIsolated(tag: string): string[] {
+    const keys = isolatedTagIndex.get(tag);
+    return keys ? Array.from(keys) : [];
+  }
+
+  return {
+    createCachedResource: createCachedResourceIsolated,
+    clearCache: clearCacheIsolated,
+    invalidateKey: invalidateKeyIsolated,
+    invalidateTag: invalidateTagIsolated,
+    invalidateTags: invalidateTagsIsolated,
+    getCache: () => isolatedCache,
+    getKeysByTag: getKeysByTagIsolated,
+    configure,
+  };
 }
