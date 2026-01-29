@@ -1,5 +1,5 @@
 import { computed, effect } from "./signal.js";
-import { getCurrentScope } from "./scope.js";
+import { getCurrentScope, createScope, withScope, type Scope } from "./scope.js";
 import { key as keyBuilder, encodeKey, type QueryKey } from "./key.js";
 import {
   createCachedResource,
@@ -10,6 +10,7 @@ import {
   type ResourceOptions,
 } from "./resource.js";
 import { createMutation, type MutationConfig, type MutationState } from "./mutation.js";
+import { isInDevMode } from "./dev.js";
 
 export interface QueryConfig<TKey extends QueryKey, TResult> {
   /** Reactive key (stable identity + encodable). */
@@ -87,13 +88,40 @@ export interface QueryClient {
 export function createQueryClient(): QueryClient {
   function makeQuery<TKey extends QueryKey, TResult>(
     cfg: QueryConfig<TKey, TResult>,
-    behavior: { persist: boolean }
+    behavior: { persist: boolean; warnPersistWithoutTtl?: boolean }
   ): QueryState<TResult> {
     const scope = getCurrentScope();
+    const parentScope = scope;
     const staleTime = cfg.staleTime ?? 0;
 
     let staleTimer: ReturnType<typeof setTimeout> | null = null;
     let cleanupRegistered = false;
+    let keyScope: Scope | null = null;
+    let keyScopeCk: string | null = null;
+
+    if (isInDevMode() && !parentScope && behavior.persist === false) {
+      console.warn(
+        `[Dalila] q.query() called outside a scope. ` +
+        `It will not cache and may leak. Use within a scope or q.queryGlobal().`
+      );
+    }
+
+    function ensureKeyScope(ck: string): Scope | null {
+      if (!parentScope) return null;
+
+      if (keyScope && keyScopeCk === ck) return keyScope;
+
+      // cancel any pending stale timer from the previous key
+      if (staleTimer != null) {
+        clearTimeout(staleTimer);
+        staleTimer = null;
+      }
+
+      keyScope?.dispose();
+      keyScopeCk = ck;
+      keyScope = createScope(parentScope);
+      return keyScope;
+    }
 
     /**
      * Schedules a stale-time revalidation after success.
@@ -107,9 +135,19 @@ export function createQueryClient(): QueryClient {
      */
     const scheduleStaleRevalidate = (r: ResourceState<TResult>, expectedCk: string) => {
       if (staleTime <= 0) return;
+      if (!scope) {
+        if (isInDevMode()) {
+          console.warn(
+            `[Dalila] staleTime requires a scope for cleanup. ` +
+            `Run the query inside a scope or disable staleTime.`
+          );
+        }
+        return;
+      }
+      if (encodeKey(cfg.key()) !== expectedCk) return;
 
       // Register cleanup once (if we have a scope).
-      if (!cleanupRegistered && scope) {
+      if (!cleanupRegistered) {
         cleanupRegistered = true;
         scope.onCleanup(() => {
           if (staleTimer != null) clearTimeout(staleTimer);
@@ -126,7 +164,7 @@ export function createQueryClient(): QueryClient {
       staleTimer = setTimeout(() => {
         // Guard against revalidating stale keys when key changed during staleTime.
         if (encodeKey(cfg.key()) !== expectedCk) return;
-        r.refresh({ force: false }).catch(() => {});
+        r.refresh({ force: false }).catch(() => { });
       }, staleTime);
     };
 
@@ -142,19 +180,37 @@ export function createQueryClient(): QueryClient {
 
       let r!: ResourceState<TResult>;
 
-      const opts: ResourceOptions<TResult> & { tags?: readonly string[]; persist?: boolean } = {
+      const ks = ensureKeyScope(ck);
+
+      const opts: ResourceOptions<TResult> & {
+        tags?: readonly string[];
+        persist?: boolean;
+        warnPersistWithoutTtl?: boolean;
+        fetchScope?: Scope | null;
+      } = {
         onError: cfg.onError,
         onSuccess: (data) => {
           cfg.onSuccess?.(data);
           scheduleStaleRevalidate(r, ck);
         },
         persist: behavior.persist,
+        warnPersistWithoutTtl: behavior.warnPersistWithoutTtl,
+        fetchScope: ks ?? undefined,
       };
 
       if (cfg.initialValue !== undefined) opts.initialValue = cfg.initialValue;
 
       // Keyed cache entry (scope-safe unless persist is enabled).
-      r = createCachedResource<TResult>(ck, (sig) => cfg.fetch(sig, k), { ...opts, tags: cfg.tags } as any);
+      const make = () =>
+        createCachedResource<TResult>(
+          ck,
+          async (sig) => {
+            await Promise.resolve(); // break reactive tracking
+            return cfg.fetch(sig, k);
+          },
+          { ...opts, tags: cfg.tags } as any
+        );
+      r = ks ? withScope(ks, make) : make();
 
       return r;
     });
@@ -171,18 +227,11 @@ export function createQueryClient(): QueryClient {
     const cacheKeySig = computed(() => encodeKey(cfg.key()));
 
     /**
-     * Eager kick:
-     * - computed() is lazy
-     * - calling resource() starts the fetch immediately (resource auto-fetches on creation)
+     * Kick once so the initial query starts immediately.
+     * Then keep it reactive so key changes recreate the resource
+     * even if nobody reads data() / loading() / error().
      */
     resource();
-
-    /**
-     * Key-change driver:
-     * - computed() only re-evaluates on read
-     * - this effect reads resource() so key changes will recreate the resource
-     *   even if the consumer never reads data() / loading() / error()
-     */
     effect(() => {
       resource();
     });
@@ -202,7 +251,7 @@ export function createQueryClient(): QueryClient {
   }
 
   function queryGlobal<TKey extends QueryKey, TResult>(cfg: QueryConfig<TKey, TResult>): QueryState<TResult> {
-    return makeQuery(cfg, { persist: true });
+    return makeQuery(cfg, { persist: true, warnPersistWithoutTtl: false });
   }
 
   function mutation<TInput, TResult>(cfg: MutationConfig<TInput, TResult>): MutationState<TInput, TResult> {
