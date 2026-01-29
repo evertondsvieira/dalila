@@ -1,5 +1,5 @@
 import { effect } from './signal.js';
-import { createScope, getCurrentScope, withScope, Scope } from './scope.js';
+import { createScope, getCurrentScope, isScopeDisposed, withScope, Scope } from './scope.js';
 import { scheduleMicrotask } from './scheduler.js';
 
 /**
@@ -49,6 +49,14 @@ export function when(
   /** Disposal guard to prevent orphan microtasks from touching dead DOM. */
   let disposed = false;
 
+  /** Parent scope captured at creation time (if any). */
+  const parentScope = getCurrentScope();
+
+  const resolveParentScope = (): Scope | null => {
+    if (!parentScope) return null;
+    return isScopeDisposed(parentScope) ? null : parentScope;
+  };
+
   /** Removes mounted nodes and disposes their branch scope. */
   const clear = () => {
     branchScope?.dispose();
@@ -71,7 +79,7 @@ export function when(
   const swap = (cond: boolean) => {
     clear();
 
-    const nextScope = createScope();
+    const nextScope = createScope(resolveParentScope());
 
     try {
       // Render inside an isolated scope so branch resources are tied to that branch.
@@ -130,7 +138,6 @@ export function when(
   });
 
   // If `when()` is created inside a parent scope, dispose branch resources with it.
-  const parentScope = getCurrentScope();
   if (parentScope) {
     parentScope.onCleanup(() => {
       disposed = true;

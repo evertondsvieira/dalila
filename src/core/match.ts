@@ -1,5 +1,5 @@
 import { effect } from "./signal.js";
-import { createScope, getCurrentScope, withScope, type Scope } from "./scope.js";
+import { createScope, getCurrentScope, isScopeDisposed, withScope, type Scope } from "./scope.js";
 import { scheduleMicrotask } from "./scheduler.js";
 
 /**
@@ -43,6 +43,14 @@ export function match<T extends string | number | symbol>(
   /** Microtask coalescing: allow only one pending swap per tick. */
   let swapScheduled = false;
   let pendingKey: T | "_" | undefined = undefined;
+
+  /** Parent scope captured at creation time (if any). */
+  const parentScope = getCurrentScope();
+
+  const resolveParentScope = (): Scope | null => {
+    if (!parentScope) return null;
+    return isScopeDisposed(parentScope) ? null : parentScope;
+  };
 
   /**
    * Guard to prevent "orphan" microtasks from touching DOM after this match()
@@ -104,7 +112,7 @@ export function match<T extends string | number | symbol>(
   const swap = (key: T | "_") => {
     clear();
 
-    const nextScope = createScope();
+    const nextScope = createScope(resolveParentScope());
 
     try {
       const fn = cases[key];
@@ -181,7 +189,6 @@ export function match<T extends string | number | symbol>(
    * - dispose current case scope,
    * - remove mounted nodes.
    */
-  const parentScope = getCurrentScope();
   if (parentScope) {
     parentScope.onCleanup(() => {
       disposed = true;
