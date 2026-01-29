@@ -28,6 +28,17 @@ test('onCleanup after dispose runs immediately', () => {
   assert.equal(ran, true);
 });
 
+test('withScope throws when entering a disposed scope', () => {
+  const scope = createScope();
+  scope.dispose();
+
+  assert.throws(
+    () => withScope(scope, () => {}),
+    /withScope\(\) cannot enter a disposed scope/,
+    'Should throw when entering a disposed scope'
+  );
+});
+
 test('parent dispose cascades to child', () => {
   const parent = createScope();
   let childCleaned = false;
