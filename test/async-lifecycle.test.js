@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createScope, withScope } from "../dist/core/scope.js";
@@ -25,45 +25,45 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  */
 test("resource refresh() waits for the new fetch to complete", async () => {
   const scope = createScope();
+  let runs = 0;
+  let r;
 
-  await withScope(scope, async () => {
-    let runs = 0;
-
-    const r = createResource(async () => {
+  withScope(scope, () => {
+    r = createResource(async () => {
       runs++;
       await sleep(20);
       return `result-${runs}`;
     });
-
-    await flush();
-    await sleep(30);
-
-    assert.equal(runs, 1, "initial fetch should have completed");
-    assert.equal(r.data(), "result-1");
-
-    const refreshPromise = r.refresh({ force: true });
-
-    // Wait less than the fetch duration
-    await sleep(5);
-
-    // refresh() should not have resolved yet
-    let refreshResolved = false;
-    refreshPromise.then(() => {
-      refreshResolved = true;
-    });
-
-    await flush();
-    await sleep(5);
-
-    assert.equal(refreshResolved, false, "refresh() should NOT resolve before fetch completes");
-
-    // Now wait for fetch to complete
-    await sleep(30);
-
-    assert.equal(refreshResolved, true, "refresh() should resolve after fetch completes");
-    assert.equal(runs, 2);
-    assert.equal(r.data(), "result-2");
   });
+
+  await flush();
+  await sleep(30);
+
+  assert.equal(runs, 1, "initial fetch should have completed");
+  assert.equal(r.data(), "result-1");
+
+  const refreshPromise = r.refresh({ force: true });
+
+  // Wait less than the fetch duration
+  await sleep(5);
+
+  // refresh() should not have resolved yet
+  let refreshResolved = false;
+  refreshPromise.then(() => {
+    refreshResolved = true;
+  });
+
+  await flush();
+  await sleep(5);
+
+  assert.equal(refreshResolved, false, "refresh() should NOT resolve before fetch completes");
+
+  // Now wait for fetch to complete
+  await sleep(30);
+
+  assert.equal(refreshResolved, true, "refresh() should resolve after fetch completes");
+  assert.equal(runs, 2);
+  assert.equal(r.data(), "result-2");
 
   scope.dispose();
 });
@@ -85,18 +85,22 @@ test("queryGlobal staleTimer does not revalidate old key after key change", asyn
   clearResourceCache();
 
   const q = createQueryClient();
+  const scope = createScope();
   let fetchCounts = { key1: 0, key2: 0 };
 
   const userId = signal(1);
+  let user;
 
-  const user = q.queryGlobal({
-    key: () => q.key("user", userId()),
-    staleTime: 30,
-    fetch: async (_sig, [_, id]) => {
-      const key = `key${id}`;
-      fetchCounts[key]++;
-      return { id, fetchCount: fetchCounts[key] };
-    },
+  withScope(scope, () => {
+    user = q.queryGlobal({
+      key: () => q.key("user", userId()),
+      staleTime: 30,
+      fetch: async (_sig, [_, id]) => {
+        const key = `key${id}`;
+        fetchCounts[key]++;
+        return { id, fetchCount: fetchCounts[key] };
+      },
+    });
   });
 
   await flush();
@@ -123,6 +127,7 @@ test("queryGlobal staleTimer does not revalidate old key after key change", asyn
   assert.equal(fetchCounts.key1, 1, "key1 should NOT have been revalidated");
   assert.ok(fetchCounts.key2 >= 2, "key2 should have been revalidated");
 
+  scope.dispose();
   // Cleanup: clear cache to stop any pending timers
   clearResourceCache();
 });
@@ -142,11 +147,11 @@ test("queryGlobal staleTimer does not revalidate old key after key change", asyn
 test("mutation onSettled does not run when aborted", async () => {
   const scope = createScope();
   const q = createQueryClient();
+  let settledCalls = 0;
+  let m;
 
-  await withScope(scope, async () => {
-    let settledCalls = 0;
-
-    const m = q.mutation({
+  withScope(scope, () => {
+    m = q.mutation({
       mutate: async (sig, input) => {
         await new Promise((resolve, reject) => {
           const t = setTimeout(() => resolve({ ok: true, input }), 50);
@@ -163,23 +168,23 @@ test("mutation onSettled does not run when aborted", async () => {
         settledCalls++;
       },
     });
-
-    // Start run1
-    const p1 = m.run({ n: 1 });
-    await flush();
-    await sleep(5);
-
-    // Start run2 with force (aborts run1)
-    const p2 = m.run({ n: 2 }, { force: true });
-
-    // Wait for both to settle
-    await Promise.allSettled([p1, p2]);
-    await flush();
-    await sleep(60);
-
-    // onSettled should only be called for the non-aborted run (run2)
-    assert.equal(settledCalls, 1, "onSettled should only be called for non-aborted runs");
   });
+
+  // Start run1
+  const p1 = m.run({ n: 1 });
+  await flush();
+  await sleep(5);
+
+  // Start run2 with force (aborts run1)
+  const p2 = m.run({ n: 2 }, { force: true });
+
+  // Wait for both to settle
+  await Promise.allSettled([p1, p2]);
+  await flush();
+  await sleep(60);
+
+  // onSettled should only be called for the non-aborted run (run2)
+  assert.equal(settledCalls, 1, "onSettled should only be called for non-aborted runs");
 
   scope.dispose();
 });
@@ -200,12 +205,12 @@ test("mutation onSettled does not run when aborted", async () => {
  */
 test("resource refresh() waits for final fetch even with rerun during refresh", async () => {
   const scope = createScope();
+  const dep = signal(1);
+  let runs = 0;
+  let r;
 
-  await withScope(scope, async () => {
-    const dep = signal(1);
-    let runs = 0;
-
-    const r = createResource(async (sig) => {
+  withScope(scope, () => {
+    r = createResource(async (sig) => {
       const val = dep(); // Read reactive signal
       runs++;
       const currentRun = runs;
@@ -221,49 +226,47 @@ test("resource refresh() waits for final fetch even with rerun during refresh", 
 
       return `result-${val}-run${currentRun}`;
     });
-
-    await flush();
-    await sleep(40);
-
-    assert.equal(runs, 1);
-    assert.equal(r.data(), "result-1-run1");
-
-    // Start refresh
-    const refreshPromise = r.refresh({ force: true });
-
-    // Wait for fetch to start
-    await flush();
-    await sleep(5);
-
-    assert.equal(runs, 2, "refresh should have started run 2");
-
-    // Change dep DURING refresh (triggers rerun, aborting run 2)
-    dep.set(2);
-    await flush();
-    await sleep(5);
-
-    // Run 2 was aborted, run 3 started
-    assert.equal(runs, 3, "dep change should have triggered run 3");
-
-    // refreshPromise should NOT resolve until run 3 finishes
-    let refreshResolved = false;
-    refreshPromise.then(() => {
-      refreshResolved = true;
-    });
-
-    await flush();
-    await sleep(5);
-
-    // Before fix: refreshResolved could be true (run 2's waiter resolved early)
-    // After fix: should be false (waiting for run 3)
-    assert.equal(refreshResolved, false, "refresh() should NOT resolve when run 2 was aborted");
-
-    // Wait for run 3 to complete
-    await sleep(40);
-
-    assert.equal(refreshResolved, true, "refresh() should resolve after run 3 completes");
-    assert.equal(r.data(), "result-2-run3");
   });
+
+  await flush();
+  await sleep(40);
+
+  assert.equal(runs, 1);
+  assert.equal(r.data(), "result-1-run1");
+
+  // Start refresh
+  const refreshPromise = r.refresh({ force: true });
+
+  // Wait for fetch to start
+  await flush();
+  await sleep(5);
+
+  assert.equal(runs, 2, "refresh should have started run 2");
+
+  // Change dep DURING refresh (triggers rerun, aborting run 2)
+  dep.set(2);
+  await flush();
+  await sleep(5);
+
+  // Run 2 was aborted, run 3 started
+  assert.equal(runs, 3, "dep change should have triggered run 3");
+
+  // refreshPromise should NOT resolve until run 3 finishes
+  let refreshResolved = false;
+  refreshPromise.then(() => {
+    refreshResolved = true;
+  });
+
+  await flush();
+  await sleep(5);
+
+  assert.equal(refreshResolved, false, "refresh() should NOT resolve when run 2 was aborted");
+
+  // Wait for run 3 to complete
+  await sleep(40);
+
+  assert.equal(refreshResolved, true, "refresh() should resolve after run 3 completes");
+  assert.equal(r.data(), "result-2-run3");
 
   scope.dispose();
 });
