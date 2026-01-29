@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createScope, withScope } from "../dist/core/scope.js";
@@ -16,10 +16,10 @@ test("staleTime timers are cleared when scope is disposed", async () => {
   const scope = createScope();
 
   let runs = 0;
+  let id;
 
-  await withScope(scope, async () => {
-    const id = signal(1);
-
+  withScope(scope, () => {
+    id = signal(1);
     q.query({
       key: () => q.key("user", id()),
       staleTime: 30,
@@ -28,12 +28,12 @@ test("staleTime timers are cleared when scope is disposed", async () => {
         return { ok: true, runs };
       },
     });
-
-    await flush();
-    await sleep(5);
-
-    assert.equal(runs, 1);
   });
+
+  await flush();
+  await sleep(5);
+
+  assert.equal(runs, 1);
 
   // Dispose the scope before staleTime triggers.
   scope.dispose();

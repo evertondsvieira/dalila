@@ -1,7 +1,7 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { createScope, withScope } from "../dist/core/scope.js";
+import { createScope, withScope, getCurrentScope } from "../dist/core/scope.js";
 import { createCachedResource, clearResourceCache } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
@@ -14,7 +14,7 @@ test("cached resource evicts when no scopes reference it", async () => {
 
   // 1) Create inside a scope -> should fetch once
   const scope1 = createScope();
-  await withScope(scope1, async () => {
+  withScope(scope1, () => {
     createCachedResource(
       "user:1",
       async () => {
@@ -23,8 +23,8 @@ test("cached resource evicts when no scopes reference it", async () => {
       },
       {}
     );
-    await flush();
   });
+  await flush();
   scope1.dispose();
 
   // Give cleanup a tick (best-effort)
@@ -32,7 +32,7 @@ test("cached resource evicts when no scopes reference it", async () => {
 
   // 2) Create again (new scope) -> should fetch again if it was evicted
   const scope2 = createScope();
-  await withScope(scope2, async () => {
+  withScope(scope2, () => {
     createCachedResource(
       "user:1",
       async () => {
@@ -41,8 +41,8 @@ test("cached resource evicts when no scopes reference it", async () => {
       },
       {}
     );
-    await flush();
   });
+  await flush();
   scope2.dispose();
 
   assert.equal(started, 2);
@@ -52,10 +52,9 @@ test("cached resource refetches when ttl expires inside the same scope", async (
   clearResourceCache();
 
   const scope = createScope();
+  let runs = 0;
 
-  await withScope(scope, async () => {
-    let runs = 0;
-
+  withScope(scope, () => {
     createCachedResource(
       "user:ttl",
       async () => {
@@ -64,11 +63,13 @@ test("cached resource refetches when ttl expires inside the same scope", async (
       },
       { ttlMs: 0 }
     );
+  });
 
-    await flush();
-    await sleep(5);
-    assert.equal(runs, 1);
+  await flush();
+  await sleep(5);
+  assert.equal(runs, 1);
 
+  withScope(scope, () => {
     createCachedResource(
       "user:ttl",
       async () => {
@@ -77,11 +78,34 @@ test("cached resource refetches when ttl expires inside the same scope", async (
       },
       { ttlMs: 0 }
     );
+  });
 
-    await flush();
-    await sleep(5);
+  await flush();
+  await sleep(5);
 
-    assert.equal(runs, 2);
+  assert.equal(runs, 2);
+
+  scope.dispose();
+});
+
+test("cached resource creation does not mutate the current scope", async () => {
+  clearResourceCache();
+
+  const scope = createScope();
+
+  withScope(scope, () => {
+    const before = getCurrentScope();
+
+    createCachedResource(
+      "user:scope-guard",
+      async () => {
+        return "ok";
+      },
+      {}
+    );
+
+    const after = getCurrentScope();
+    assert.equal(after, before);
   });
 
   scope.dispose();
