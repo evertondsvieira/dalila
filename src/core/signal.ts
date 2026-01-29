@@ -118,9 +118,16 @@ function scheduleEffect(eff: EffectFn): void {
 }
 
 export interface Signal<T> {
+  /** Read the current value (with dependency tracking if inside an effect). */
   (): T;
+  /** Set a new value and notify subscribers. */
   set(value: T): void;
+  /** Update the value using a function. */
   update(fn: (v: T) => T): void;
+  /** Read the current value without creating a dependency (no tracking). */
+  peek(): T;
+  /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
+  on(callback: (value: T) => void): () => void;
 }
 
 /**
@@ -183,6 +190,29 @@ export function signal<T>(initialValue: T): Signal<T> {
 
   read.update = (fn: (v: T) => T) => {
     read.set(fn(value));
+  };
+
+  read.peek = () => value;
+
+  read.on = (callback: (value: T) => void): (() => void) => {
+    // Create a lightweight effect-like subscriber for manual subscriptions
+    const subscriber: EffectFn = (() => {
+      if (subscriber.disposed) return;
+      callback(value);
+    }) as EffectFn;
+
+    subscriber.disposed = false;
+
+    subscribers.add(subscriber);
+    (subscriber.deps ??= new Set()).add(subscribers);
+
+    // Return unsubscribe function
+    return () => {
+      if (subscriber.disposed) return;
+      subscriber.disposed = true;
+      subscribers.delete(subscriber);
+      subscriber.deps?.delete(subscribers);
+    };
   };
 
   return read as Signal<T>;
@@ -345,6 +375,50 @@ export function computed<T>(fn: () => T): Signal<T> {
     throw new Error('Cannot update a computed signal directly. Computed signals are derived from other signals.');
   };
 
+  read.peek = () => {
+    // For computed, peek still needs to compute if dirty, but without tracking
+    if (dirty) {
+      cleanupDeps();
+
+      const prevEffect = activeEffect;
+      const prevScope = activeScope;
+
+      activeEffect = markDirty;
+      activeScope = null;
+
+      try {
+        value = fn();
+        dirty = false;
+
+        if (markDirty.deps) trackedDeps = new Set(markDirty.deps);
+      } finally {
+        activeEffect = prevEffect;
+        activeScope = prevScope;
+      }
+    }
+    return value;
+  };
+
+  read.on = (callback: (value: T) => void): (() => void) => {
+    const subscriber: EffectFn = (() => {
+      if (subscriber.disposed) return;
+      // For computed, we need to get the latest value
+      callback(read.peek());
+    }) as EffectFn;
+
+    subscriber.disposed = false;
+
+    subscribers.add(subscriber);
+    (subscriber.deps ??= new Set()).add(subscribers);
+
+    return () => {
+      if (subscriber.disposed) return;
+      subscriber.disposed = true;
+      subscribers.delete(subscriber);
+      subscriber.deps?.delete(subscribers);
+    };
+  };
+
   return read as Signal<T>;
 }
 
@@ -406,4 +480,33 @@ export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
   if (owningScope) owningScope.onCleanup(dispose);
 
   return dispose;
+}
+
+/**
+ * Run a function without tracking any signal reads as dependencies.
+ *
+ * Use this inside an effect when you want to read a signal's value
+ * without creating a dependency on it.
+ *
+ * Example:
+ * ```ts
+ * effect(() => {
+ *   const tracked = count();        // This read is tracked
+ *   const untracked = untrack(() => other()); // This read is NOT tracked
+ * });
+ * ```
+ */
+export function untrack<T>(fn: () => T): T {
+  const prevEffect = activeEffect;
+  const prevScope = activeScope;
+
+  activeEffect = null;
+  activeScope = null;
+
+  try {
+    return fn();
+  } finally {
+    activeEffect = prevEffect;
+    activeScope = prevScope;
+  }
 }
