@@ -17,6 +17,35 @@ export interface Scope {
   readonly parent: Scope | null;
 }
 
+/** Tracks disposed scopes without mutating the public interface. */
+const disposedScopes = new WeakSet<Scope>();
+
+const scopeCreateListeners = new Set<(scope: Scope) => void>();
+const scopeDisposeListeners = new Set<(scope: Scope) => void>();
+
+/**
+ * Subscribe to scope creation events.
+ * Returns an unsubscribe function.
+ */
+export function onScopeCreate(fn: (scope: Scope) => void): () => void {
+  scopeCreateListeners.add(fn);
+  return () => scopeCreateListeners.delete(fn);
+}
+
+/**
+ * Subscribe to scope disposal events.
+ * Returns an unsubscribe function.
+ */
+export function onScopeDispose(fn: (scope: Scope) => void): () => void {
+  scopeDisposeListeners.add(fn);
+  return () => scopeDisposeListeners.delete(fn);
+}
+
+/** Returns true if the given scope has been disposed. */
+export function isScopeDisposed(scope: Scope): boolean {
+  return disposedScopes.has(scope);
+}
+
 /**
  * Creates a new Scope instance.
  *
@@ -26,14 +55,15 @@ export interface Scope {
  *   in the same dispose pass (because we snapshot via `splice(0)`).
  * - Parent is captured from the current scope context (set by withScope).
  */
-export function createScope(): Scope {
+export function createScope(parentOverride?: Scope | null): Scope {
   const cleanups: (() => void)[] = [];
-  const parent = currentScope;
-  let disposed = false;
+  const parent =
+    parentOverride === undefined ? currentScope : parentOverride === null ? null : parentOverride;
 
   const runCleanupSafely = (fn: () => void): unknown | undefined => {
     try {
-      return fn();
+      fn();
+      return undefined;
     } catch (err) {
       return err;
     }
@@ -41,7 +71,7 @@ export function createScope(): Scope {
 
   const scope: Scope = {
     onCleanup(fn: () => void) {
-      if (disposed) {
+      if (isScopeDisposed(scope)) {
         const error = runCleanupSafely(fn);
         if (error) {
           console.error('[Dalila] cleanup registered after dispose() threw:', error);
@@ -51,8 +81,8 @@ export function createScope(): Scope {
       cleanups.push(fn);
     },
     dispose() {
-      if (disposed) return;
-      disposed = true;
+      if (isScopeDisposed(scope)) return;
+      disposedScopes.add(scope);
 
       const snapshot = cleanups.splice(0);
       const errors: unknown[] = [];
@@ -65,12 +95,27 @@ export function createScope(): Scope {
       if (errors.length > 0) {
         console.error('[Dalila] scope.dispose() had cleanup errors:', errors);
       }
+      for (const listener of scopeDisposeListeners) {
+        try {
+          listener(scope);
+        } catch (err) {
+          console.error('[Dalila] scope.dispose() listener threw:', err);
+        }
+      }
     },
     parent,
   };
 
   if (parent) {
     parent.onCleanup(() => scope.dispose());
+  }
+
+  for (const listener of scopeCreateListeners) {
+    try {
+      listener(scope);
+    } catch (err) {
+      console.error('[Dalila] scope.create() listener threw:', err);
+    }
   }
 
   return scope;
@@ -85,6 +130,19 @@ let currentScope: Scope | null = null;
 /** Returns the current active scope (or null if none). */
 export function getCurrentScope(): Scope | null {
   return currentScope;
+}
+
+/**
+ * Returns the current scope hierarchy, from current scope up to the root.
+ */
+export function getCurrentScopeHierarchy(): Scope[] {
+  const scopes: Scope[] = [];
+  let current = currentScope;
+  while (current) {
+    scopes.push(current);
+    current = current.parent;
+  }
+  return scopes;
 }
 
 /**
@@ -103,6 +161,9 @@ export function setCurrentScope(scope: Scope | null): void {
  * - `effect()` can auto-dispose when the scope ends
  */
 export function withScope<T>(scope: Scope, fn: () => T): T {
+  if (isScopeDisposed(scope)) {
+    throw new Error('[Dalila] withScope() cannot enter a disposed scope.');
+  }
   const prevScope = currentScope;
   currentScope = scope;
   try {
