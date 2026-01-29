@@ -23,18 +23,48 @@
 type Task = () => void;
 
 /**
- * Hard limits to prevent runaway scheduling.
- *
- * A very high microtask cap is intentional: reactive systems may legitimately schedule
- * multiple microtask waves. Still, if we hit the cap, something is likely looping.
+ * Scheduler configuration.
  */
-const MAX_MICROTASK_ITERATIONS = 1000;
+interface SchedulerConfig {
+  /**
+   * Maximum microtask iterations before stopping (prevents infinite loops).
+   * A high value is intentional: reactive systems may legitimately schedule
+   * multiple microtask waves. Default: 1000.
+   */
+  maxMicrotaskIterations: number;
+
+  /**
+   * Maximum RAF iterations before stopping (prevents infinite loops).
+   * RAF work is typically heavier (DOM), so keep it lower. Default: 100.
+   */
+  maxRafIterations: number;
+}
+
+const schedulerConfig: SchedulerConfig = {
+  maxMicrotaskIterations: 1000,
+  maxRafIterations: 100,
+};
 
 /**
- * RAF flush tends to be heavier (DOM), so keep the cap smaller.
- * If we hit this, we likely have a feedback loop scheduling RAF repeatedly.
+ * Configure scheduler limits.
+ *
+ * Call this early in your app initialization if you need different limits.
+ *
+ * Example:
+ * ```ts
+ * configureScheduler({ maxMicrotaskIterations: 2000 });
+ * ```
  */
-const MAX_RAF_ITERATIONS = 100;
+export function configureScheduler(config: Partial<SchedulerConfig>): void {
+  Object.assign(schedulerConfig, config);
+}
+
+/**
+ * Get the current scheduler configuration.
+ */
+export function getSchedulerConfig(): Readonly<SchedulerConfig> {
+  return { ...schedulerConfig };
+}
 
 let rafScheduled = false;
 let microtaskScheduled = false;
@@ -169,17 +199,18 @@ function flushMicrotasks(): void {
   isFlushingMicrotasks = true;
 
   let iterations = 0;
+  const maxIterations = schedulerConfig.maxMicrotaskIterations;
 
   try {
-    while (microtaskQueue.length > 0 && iterations < MAX_MICROTASK_ITERATIONS) {
+    while (microtaskQueue.length > 0 && iterations < maxIterations) {
       iterations++;
       const tasks = microtaskQueue.splice(0);
       for (const t of tasks) t();
     }
 
-    if (iterations >= MAX_MICROTASK_ITERATIONS && microtaskQueue.length > 0) {
+    if (iterations >= maxIterations && microtaskQueue.length > 0) {
       console.error(
-        `[Dalila] Scheduler exceeded ${MAX_MICROTASK_ITERATIONS} microtask iterations. ` +
+        `[Dalila] Scheduler exceeded ${maxIterations} microtask iterations. ` +
           `Possible infinite loop detected. Remaining ${microtaskQueue.length} tasks discarded.`
       );
       microtaskQueue.length = 0;
@@ -208,17 +239,18 @@ function flushRaf(): void {
   isFlushingRaf = true;
 
   let iterations = 0;
+  const maxIterations = schedulerConfig.maxRafIterations;
 
   try {
-    while (rafQueue.length > 0 && iterations < MAX_RAF_ITERATIONS) {
+    while (rafQueue.length > 0 && iterations < maxIterations) {
       iterations++;
       const tasks = rafQueue.splice(0);
       for (const t of tasks) t();
     }
 
-    if (iterations >= MAX_RAF_ITERATIONS && rafQueue.length > 0) {
+    if (iterations >= maxIterations && rafQueue.length > 0) {
       console.error(
-        `[Dalila] Scheduler exceeded ${MAX_RAF_ITERATIONS} RAF iterations. ` +
+        `[Dalila] Scheduler exceeded ${maxIterations} RAF iterations. ` +
           `Possible infinite loop detected. Remaining ${rafQueue.length} tasks discarded.`
       );
       rafQueue.length = 0;
