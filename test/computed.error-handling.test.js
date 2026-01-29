@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createScope, withScope } from "../dist/core/scope.js";
@@ -189,11 +189,11 @@ test("mutation only aborts once per run", async () => {
 
   const scope = createScope();
   const q = createQueryClient();
+  let abortCount = 0;
+  let m;
 
-  await withScope(scope, async () => {
-    let abortCount = 0;
-
-    const m = q.mutation({
+  withScope(scope, () => {
+    m = q.mutation({
       mutate: async (sig, input) => {
         sig.addEventListener("abort", () => {
           abortCount++;
@@ -202,19 +202,19 @@ test("mutation only aborts once per run", async () => {
         return { ok: true, input };
       },
     });
-
-    // First run
-    const p1 = m.run({ n: 1 });
-
-    // Wait a bit then force a new run
-    await sleep(10);
-    const p2 = m.run({ n: 2 }, { force: true });
-
-    await p2;
-
-    // Should only abort once (the first run)
-    assert.equal(abortCount, 1);
   });
+
+  // First run
+  const p1 = m.run({ n: 1 });
+
+  // Wait a bit then force a new run
+  await sleep(10);
+  const p2 = m.run({ n: 2 }, { force: true });
+
+  await p2;
+
+  // Should only abort once (the first run)
+  assert.equal(abortCount, 1);
 
   scope.dispose();
 });
@@ -261,13 +261,13 @@ test("LRU cache evicts oldest entries when limit exceeded", async () => {
 
   const scope = createScope();
 
-  await withScope(scope, async () => {
-    // Create 5 resources - should evict the first 2
-    for (let i = 1; i <= 5; i++) {
+  // Create 5 resources - should evict the first 2
+  for (let i = 1; i <= 5; i++) {
+    withScope(scope, () => {
       createCachedResource(`test:${i}`, async () => ({ id: i }));
-      await sleep(5); // Ensure different timestamps
-    }
-  });
+    });
+    await sleep(5); // Ensure different timestamps
+  }
 
   scope.dispose();
   await flush();
