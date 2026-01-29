@@ -14,4 +14,4 @@ export * from "./resource.js";
 export * from "./query.js";
 export * from "./mutation.js";
 
-export { batch, measure, mutate } from "./scheduler.js";
+export { batch, measure, mutate, configureScheduler, getSchedulerConfig } from "./scheduler.js";
