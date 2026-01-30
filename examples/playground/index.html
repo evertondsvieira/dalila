@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dalila Playground</title>
+  <link rel="stylesheet" href="/examples/playground/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Dalila</h1>
+      <p class="tagline">DOM-first reactivity without the re-renders</p>
+    </header>
+
+    <main>
+      <!-- Counter Demo -->
+      <section class="card card-hero">
+        <div class="counter-display">
+          <button class="btn-circle" d-on-click="decrement">-</button>
+          <span class="counter-value">{counter}</span>
+          <button class="btn-circle" d-on-click="increment">+</button>
+        </div>
+        <p class="counter-status">{counterStatus}</p>
+      </section>
+
+      <div class="grid">
+        <!-- Context / Theme -->
+        <section class="card">
+          <h2>Context + Persist</h2>
+          <p class="description">Dependency injection with automatic localStorage sync.</p>
+          <div class="demo">
+            <div class="theme-toggle">
+              <button class="btn-sm" d-on-click="toggleTheme">{themeIcon} {themeName}</button>
+            </div>
+            <div class="output">
+              <small class="muted">Theme persisted and provided via context</small>
+            </div>
+          </div>
+        </section>
+
+        <!-- Reactive State -->
+        <section class="card">
+          <h2>Signals</h2>
+          <p class="description">Fine-grained reactivity. Only what changes, updates.</p>
+          <div class="demo">
+            <code>const count = signal(0)</code>
+            <div class="output">Value: <strong>{counter}</strong></div>
+          </div>
+        </section>
+
+        <!-- Computed -->
+        <section class="card">
+          <h2>Computed</h2>
+          <p class="description">Derived values that auto-update.</p>
+          <div class="demo">
+            <code>computed(() => count() * 2)</code>
+            <div class="output">Doubled: <strong>{doubled}</strong></div>
+          </div>
+        </section>
+
+        <!-- Effect -->
+        <section class="card">
+          <h2>effect()</h2>
+          <p class="description">Side effects that re-run on dependency changes.</p>
+          <div class="demo">
+            <code>effect(() => log(count()))</code>
+            <div class="output">Renders: <strong>{renderCount}</strong></div>
+          </div>
+        </section>
+
+        <!-- Batch -->
+        <section class="card">
+          <h2>batch()</h2>
+          <p class="description">Group multiple updates into a single render.</p>
+          <div class="demo">
+            <button class="btn-sm" d-on-click="runBatch">+10 (batched)</button>
+            <div class="output">
+              <small class="muted">{batchMessage}</small>
+            </div>
+          </div>
+        </section>
+
+        <!-- Conditional Rendering -->
+        <section class="card">
+          <h2>when()</h2>
+          <p class="description">Conditional rendering with automatic cleanup.</p>
+          <div class="demo">
+            <button class="btn-sm" d-on-click="toggleVisible">Toggle</button>
+            <div class="output">
+              <span when={isVisible}>🐵 Visible</span>
+              <span when={isHidden}>🙈 Hidden</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Pattern Matching -->
+        <section class="card">
+          <h2>match()</h2>
+          <p class="description">Switch-style rendering based on value.</p>
+          <div class="demo" id="match-demo"></div>
+        </section>
+
+        <!-- List Rendering -->
+        <section class="card">
+          <h2>createList()</h2>
+          <p class="description">Keyed list diffing with per-item scopes.</p>
+          <div class="demo">
+            <button class="btn-sm" d-on-click="addItem">+ Add Item</button>
+            <div class="list-container" id="list-container"></div>
+            <small class="muted">{listCount} items</small>
+          </div>
+        </section>
+
+        <!-- Scopes -->
+        <section class="card">
+          <h2>Scopes</h2>
+          <p class="description">Lifecycle containers with automatic cleanup.</p>
+          <div class="demo">
+            <button class="btn-sm" d-on-click="runScopeDemo">Run Demo</button>
+            <span class="badge" when={scopeActive}>running</span>
+            <div class="output">{scopeMessage}</div>
+          </div>
+        </section>
+
+        <!-- Data Fetching -->
+        <section class="card">
+          <h2>resource()</h2>
+          <p class="description">Async data with loading states and cancellation.</p>
+          <div class="demo">
+            <button class="btn-sm" d-on-click="refreshData">Refresh</button>
+            <div class="output">
+              <span when={dataLoading}>Loading...</span>
+              <img id="rabbit-img" class="rabbit-img" alt="" />
+              <span class="error" when={dataError}>{dataErrorMsg}</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Query -->
+        <section class="card">
+          <h2>query()</h2>
+          <p class="description">Cached queries with stale-time revalidation.</p>
+          <div class="demo">
+            <button class="btn-sm" d-on-click="nextPost">Next Post →</button>
+            <div class="output">
+              <small class="muted">#{postId}</small>
+              <div>{postTitle}</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Mutation -->
+        <section class="card">
+          <h2>mutation()</h2>
+          <p class="description">Write operations with optimistic updates.</p>
+          <div class="demo">
+            <button class="btn-sm" d-on-click="runMutation">Save</button>
+            <div class="output">
+              <span when={mutationSaving}>Saving...</span>
+              <span when={mutationIdle}>{mutationResult}</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      <p>Built with signals, scopes, and zero virtual DOM.</p>
+    </footer>
+  </div>
+</body>
+</html>
