@@ -4,13 +4,22 @@
 
 Dalila is a reactive framework built on signals. No virtual DOM, no JSX required — just HTML with declarative bindings.
 
-## Installation
+## Quick Start
+
+```bash
+npm create dalila my-app
+cd my-app
+npm install
+npm run dev
+```
+
+Open http://localhost:4242 to see your app.
+
+## Manual Installation
 
 ```bash
 npm install dalila
 ```
-
-## Quick Start
 
 ```html
 <div id="app">
@@ -39,7 +48,6 @@ bind(document.getElementById('app')!, ctx);
 
 - [Overview](./docs/index.md) — Philosophy and quick start
 - [Template Spec](./docs/template-spec.md) — Binding syntax reference
-- [Roadmap](./docs/roadmap.md) — Strengths, weaknesses, and goals
 
 ### Core
 
@@ -50,7 +58,7 @@ bind(document.getElementById('app')!, ctx);
 
 ### Runtime
 
-- [Template Binding](./docs/runtime/README.md) — `bind()`, text interpolation, events
+- [Template Binding](./docs/runtime/bind.md) — `bind()`, text interpolation, events
 - [FOUC Prevention](./docs/runtime/fouc-prevention.md) — Automatic token hiding
 
 ### Rendering
@@ -77,7 +85,6 @@ bind(document.getElementById('app')!, ctx);
 dalila           → signal, computed, effect, batch, ...
 dalila/runtime   → bind() for HTML templates
 dalila/context   → createContext, provide, inject
-dalila/router    → (in development)
 ```
 
 ### Signals
@@ -101,7 +108,6 @@ count.set(5); // logs: Count is 5
 import { bind } from 'dalila/runtime';
 
 // Binds {tokens}, d-on-*, when, match to the DOM
-// Dev-server auto-prevents FOUC (flash of tokens)
 const dispose = bind(rootElement, ctx);
 
 // Cleanup when done
@@ -136,30 +142,25 @@ provide(ThemeContext, 'dark');
 const theme = inject(ThemeContext); // 'dark'
 ```
 
+### Persist
+
+```ts
+import { signal, persist } from 'dalila';
+
+// Auto-saves to localStorage
+const theme = persist(signal('dark'), { name: 'app-theme' });
+
+theme.set('light'); // Saved automatically
+// On reload: theme starts as 'light'
+```
+
 ## Development
 
 ```bash
-# Install
 npm install
-
-# Build
 npm run build
-
-# Dev server with HMR
-npm run serve
-
-# Tests
+npm run serve   # Dev server with HMR
 npm test
-```
-
-## Architecture
-
-```
-src/
-├── core/       → Signals, effects, scopes, scheduler
-├── context/    → Dependency injection
-├── runtime/    → Template binding (bind, autoBind)
-└── router/     → Routing (in development)
 ```
 
 ## License
