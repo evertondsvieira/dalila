@@ -1,0 +1,17 @@
+{
+  "name": "dalila-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dalila-dev",
+    "build": "tsc",
+    "preview": "dalila-dev --dist"
+  },
+  "dependencies": {
+    "dalila": "^1.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

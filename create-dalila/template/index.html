@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dalila App</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div id="app" class="container">
+    <h1>Welcome to Dalila</h1>
+
+    <section class="card">
+      <h2>Counter: {count}</h2>
+      <p>Doubled: {doubled}</p>
+
+      <div class="buttons">
+        <button d-on-click="decrement">-</button>
+        <button d-on-click="increment">+</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <p when={isEven}>The count is even</p>
+      <p when={isOdd}>The count is odd</p>
+    </section>
+
+    <footer>
+      <p>Edit <code>src/main.ts</code> and save to see changes.</p>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
