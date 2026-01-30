@@ -318,6 +318,11 @@ export function bind(
 
   const htmlRoot = root as HTMLElement;
 
+  // HMR support: Register binding context globally in dev mode
+  if (isInDevMode()) {
+    (globalThis as any).__dalila_hmr_context = { root, ctx, options };
+  }
+
   // Create a scope for this template binding
   const templateScope = createScope();
   const cleanups: DisposeFunction[] = [];

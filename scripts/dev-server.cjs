@@ -250,17 +250,168 @@ function injectBindings(html, requestPath) {
     }
   </script>`;
 
-  // For user projects, just inject the import map (user provides their own script)
+  // For user projects, inject import map + HMR script
   if (!isDalilaRepo) {
     let output = addLoadingAttributes(html);
 
     // FOUC prevention CSS
     const foucPreventionCSS = `  <style>[d-loading]{visibility:hidden}</style>`;
 
+    // Smart HMR script for user projects
+    const hmrScript = `
+  <script type="module">
+    // HMR: Use native bind() HMR support
+    let disposeBinding = null;
+
+    const rebind = async () => {
+      const hmrContext = window.__dalila_hmr_context;
+      if (!hmrContext) {
+        console.warn('[HMR] Cannot rebind: bind() not called yet');
+        return;
+      }
+
+      try {
+        const { bind } = await import('${dalilaPath}/runtime/index.js');
+        const { root, ctx, options } = hmrContext;
+
+        // Dispose old bindings
+        if (disposeBinding) {
+          try { disposeBinding(); } catch (e) {}
+        }
+
+        // Rebind with preserved context
+        disposeBinding = bind(root, ctx, options);
+        console.log('[HMR] Rebound successfully');
+      } catch (e) {
+        console.error('[HMR] Rebind failed:', e);
+      }
+    };
+
+    const patchNode = (current, next) => {
+      if (!current || !next) return;
+
+      if (current.nodeType !== next.nodeType) {
+        current.replaceWith(next.cloneNode(true));
+        return;
+      }
+
+      if (current.nodeType === Node.TEXT_NODE) {
+        if (current.data !== next.data) current.data = next.data;
+        return;
+      }
+
+      if (current.nodeType === Node.ELEMENT_NODE) {
+        if (current.tagName !== next.tagName) {
+          current.replaceWith(next.cloneNode(true));
+          return;
+        }
+
+        const currentAttrs = current.getAttributeNames();
+        const nextAttrs = next.getAttributeNames();
+
+        currentAttrs.forEach((name) => {
+          if (!nextAttrs.includes(name)) current.removeAttribute(name);
+        });
+        nextAttrs.forEach((name) => {
+          const value = next.getAttribute(name);
+          if (current.getAttribute(name) !== value) {
+            if (value === null) {
+              current.removeAttribute(name);
+            } else {
+              current.setAttribute(name, value);
+            }
+          }
+        });
+
+        const currentChildren = Array.from(current.childNodes);
+        const nextChildren = Array.from(next.childNodes);
+        const max = Math.max(currentChildren.length, nextChildren.length);
+
+        for (let i = 0; i < max; i += 1) {
+          const currentChild = currentChildren[i];
+          const nextChild = nextChildren[i];
+
+          if (!currentChild && nextChild) {
+            current.appendChild(nextChild.cloneNode(true));
+          } else if (currentChild && !nextChild) {
+            currentChild.remove();
+          } else if (currentChild && nextChild) {
+            patchNode(currentChild, nextChild);
+          }
+        }
+      }
+    };
+
+    const refreshStyles = () => {
+      const links = document.querySelectorAll('link[rel="stylesheet"]');
+      links.forEach((link) => {
+        const url = new URL(link.href);
+        url.searchParams.set('v', String(Date.now()));
+        link.href = url.toString();
+      });
+    };
+
+    const refreshMarkup = async () => {
+      const res = await fetch(window.location.pathname, { cache: 'no-store' });
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+
+      // Find root element (prefer #app, fallback to body)
+      const nextRoot = doc.querySelector('#app') || doc.body;
+      const currentRoot = document.querySelector('#app') || document.body;
+
+      if (nextRoot && currentRoot) {
+        patchNode(currentRoot, nextRoot);
+        console.log('[HMR] HTML patched');
+
+        // Rebind after patching
+        rebind();
+      }
+    };
+
+    if (window.__dalila_hmr) {
+      window.__dalila_hmr.close();
+    }
+    const hmr = new EventSource('/__hmr');
+    window.__dalila_hmr = hmr;
+
+    hmr.addEventListener('update', async (event) => {
+      let file = '';
+      try {
+        const payload = JSON.parse(event.data || '{}');
+        file = payload.file || '';
+      } catch {
+        file = '';
+      }
+
+      console.log('[HMR] File changed:', file);
+
+      if (file.endsWith('.css')) {
+        refreshStyles();
+        console.log('[HMR] CSS reloaded');
+        return;
+      }
+
+      if (file.endsWith('.html')) {
+        await refreshMarkup();
+        return;
+      }
+
+      // For TS/JS files, full reload is needed to re-import modules
+      console.log('[HMR] Reloading page...');
+      location.reload();
+    });
+
+    hmr.onerror = () => {
+      console.warn('[HMR] Connection lost, will retry...');
+    };
+  </script>`;
+
+    // Inject HMR + import map in HEAD (HMR must load before user scripts)
     if (output.includes('</head>')) {
-      output = output.replace('</head>', `${foucPreventionCSS}\n${importMap}\n</head>`);
+      output = output.replace('</head>', `${foucPreventionCSS}\n${importMap}\n${hmrScript}\n</head>`);
     } else {
-      output = `${foucPreventionCSS}\n${importMap}\n${output}`;
+      output = `${foucPreventionCSS}\n${importMap}\n${hmrScript}\n${output}`;
     }
 
     return output;
