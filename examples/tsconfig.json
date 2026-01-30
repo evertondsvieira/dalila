@@ -8,6 +8,6 @@
       "dalila": ["src/index.ts"]
     }
   },
-  "include": ["./counter/**/*"],
+  "include": ["./playground/**/*"],
   "exclude": ["../node_modules", "../dist", "../**/*.test.ts"]
 }

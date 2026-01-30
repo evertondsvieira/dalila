@@ -9,6 +9,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./context": {
+      "types": "./dist/context/index.d.ts",
+      "default": "./dist/context/index.js"
+    },
+    "./context/raw": {
+      "types": "./dist/context/raw.d.ts",
+      "default": "./dist/context/raw.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
     }
   },
   "scripts": {
@@ -34,6 +50,7 @@
     "@playwright/test": "^1.57.0",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
+    "chokidar": "^3.6.0",
     "jest": "^29.5.0",
     "jest-environment-jsdom": "^29.5.0",
     "typescript": "^5.9.3"
