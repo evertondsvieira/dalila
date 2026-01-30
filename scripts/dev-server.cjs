@@ -1,16 +1,32 @@
-/* Simple static server for local demos - Dalila Framework */
+#!/usr/bin/env node
+/* Dalila Development Server */
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const ts = require('typescript');
 
 // ============================================================================
 // Configuration
 // ============================================================================
-const rootDir = fs.realpathSync(process.cwd()); // Resolve symlinks for safe comparison
+const rootDir = fs.realpathSync(process.cwd());
 const port = Number(process.env.PORT) || 4242;
-const defaultEntry = '/examples/playground/index.html';
+
+// Detect if running in dalila repo or user project
+const isDalilaRepo = fs.existsSync(path.join(rootDir, 'src', 'core', 'signal.ts'));
+const defaultEntry = isDalilaRepo ? '/examples/playground/index.html' : '/index.html';
+
+// Resolve dalila dist path
+const dalilaDistPath = isDalilaRepo
+  ? path.join(rootDir, 'dist')
+  : path.join(rootDir, 'node_modules', 'dalila', 'dist');
+
+// Load TypeScript (optional for user projects)
+let ts = null;
+try {
+  ts = require('typescript');
+} catch {
+  // TypeScript not available
+}
 
 // ============================================================================
 // HMR State
@@ -81,7 +97,9 @@ function getRequestPath(url) {
 }
 
 function shouldInjectBindings(requestPath) {
-  return requestPath === '/examples/playground/index.html';
+  // Inject bindings for playground (dalila repo) or root index.html (user projects)
+  return requestPath === '/examples/playground/index.html' ||
+         (!isDalilaRepo && (requestPath === '/index.html' || requestPath === '/'));
 }
 
 // ============================================================================
@@ -218,18 +236,37 @@ function addLoadingAttributes(html) {
 // ============================================================================
 // Binding Injection (for HTML files that need runtime bindings)
 // ============================================================================
-function injectBindings(html) {
+function injectBindings(html, requestPath) {
+  // Different paths for dalila repo vs user projects
+  const dalilaPath = isDalilaRepo ? '/dist' : '/node_modules/dalila/dist';
+
   const importMap = `
   <script type="importmap">
     {
       "imports": {
-        "dalila": "/dist/index.js",
-        "dalila/runtime": "/dist/runtime/index.js"
+        "dalila": "${dalilaPath}/index.js",
+        "dalila/runtime": "${dalilaPath}/runtime/index.js"
       }
     }
   </script>`;
 
-  // Uses the shared runtime bind() - same code in dev and prod
+  // For user projects, just inject the import map (user provides their own script)
+  if (!isDalilaRepo) {
+    let output = addLoadingAttributes(html);
+
+    // FOUC prevention CSS
+    const foucPreventionCSS = `  <style>[d-loading]{visibility:hidden}</style>`;
+
+    if (output.includes('</head>')) {
+      output = output.replace('</head>', `${foucPreventionCSS}\n${importMap}\n</head>`);
+    } else {
+      output = `${foucPreventionCSS}\n${importMap}\n${output}`;
+    }
+
+    return output;
+  }
+
+  // Dalila repo: full playground injection
   const script = `
   <script type="module">
     import { bind } from 'dalila/runtime';
@@ -478,8 +515,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // TypeScript transpilation
-  if (targetPath.endsWith('.ts')) {
+  // TypeScript transpilation (only if ts available)
+  if (targetPath.endsWith('.ts') && ts) {
     fs.readFile(targetPath, 'utf8', (err, source) => {
       if (err) {
         if (err.code === 'ENOENT' || err.code === 'EISDIR') {
@@ -536,7 +573,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (ext === '.html' && shouldInjectBindings(effectivePath)) {
-      const html = injectBindings(data.toString('utf8'));
+      const html = injectBindings(data.toString('utf8'), effectivePath);
       res.writeHead(200, headers);
       res.end(html);
       return;
@@ -550,9 +587,9 @@ const server = http.createServer((req, res) => {
 // ============================================================================
 // File Watcher (cross-platform)
 // ============================================================================
-const watchTargets = [
-  path.join(rootDir, 'examples', 'playground'),
-];
+const watchTargets = isDalilaRepo
+  ? [path.join(rootDir, 'examples', 'playground')]
+  : [path.join(rootDir, 'src'), rootDir];
 
 const watchers = [];
 
