@@ -172,3 +172,32 @@ export function withScope<T>(scope: Scope, fn: () => T): T {
     currentScope = prevScope;
   }
 }
+
+/**
+ * Async version of withScope that properly maintains scope during await.
+ *
+ * IMPORTANT: Use this instead of withScope when fn is async, because
+ * withScope() restores the previous scope immediately when the Promise
+ * is returned, not when it resolves. This means anything created after
+ * an await would not be in the scope.
+ *
+ * Example:
+ * ```ts
+ * await withScopeAsync(scope, async () => {
+ *   await fetch(...);
+ *   const sig = signal(0);  // ← This will be in scope
+ * });
+ * ```
+ */
+export async function withScopeAsync<T>(scope: Scope, fn: () => Promise<T>): Promise<T> {
+  if (isScopeDisposed(scope)) {
+    throw new Error('[Dalila] withScopeAsync() cannot enter a disposed scope.');
+  }
+  const prevScope = currentScope;
+  currentScope = scope;
+  try {
+    return await fn();
+  } finally {
+    currentScope = prevScope;
+  }
+}
