@@ -15,6 +15,12 @@ export interface BindOptions {
      * Selectors for elements where text interpolation should be skipped
      */
     rawTextSelectors?: string;
+    /**
+     * Internal flag — set by bindEach for clone bindings.
+     * Skips HMR context registration and d-ready/d-loading lifecycle.
+     * @internal
+     */
+    _internal?: boolean;
 }
 export interface BindContext {
     [key: string]: unknown;
