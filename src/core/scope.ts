@@ -57,8 +57,13 @@ export function isScopeDisposed(scope: Scope): boolean {
  */
 export function createScope(parentOverride?: Scope | null): Scope {
   const cleanups: (() => void)[] = [];
-  const parent =
+  const parentCandidate =
     parentOverride === undefined ? currentScope : parentOverride === null ? null : parentOverride;
+  // A stale async context can leave `currentScope` pointing to an already
+  // disposed scope; in that case we create a detached scope instead.
+  const parent = parentCandidate && isScopeDisposed(parentCandidate)
+    ? null
+    : parentCandidate;
 
   const runCleanupSafely = (fn: () => void): unknown | undefined => {
     try {
