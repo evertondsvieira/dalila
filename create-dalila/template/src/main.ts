@@ -1,30 +1,17 @@
-import { signal, computed, createScope, withScope } from 'dalila';
-import { bind } from 'dalila/runtime';
+import { createRouter } from 'dalila/router';
+import { routes } from '../routes.generated';
+import { routeManifest } from '../routes.generated.manifest';
 
-// Create app scope
-const app = createScope();
+const outlet = document.getElementById('app');
 
-withScope(app, () => {
-  // Reactive state
-  const count = signal(0);
-  const doubled = computed(() => count() * 2);
-  const isEven = computed(() => count() % 2 === 0);
-  const isOdd = computed(() => count() % 2 !== 0);
+if (!outlet) {
+  throw new Error('Missing #app element');
+}
 
-  // Actions
-  const increment = () => count.update(n => n + 1);
-  const decrement = () => count.update(n => n - 1);
-
-  // Bind to DOM
-  const root = document.getElementById('app');
-  if (root) {
-    bind(root, {
-      count,
-      doubled,
-      isEven,
-      isOdd,
-      increment,
-      decrement,
-    });
-  }
+const router = createRouter({
+  outlet,
+  routes,
+  routeManifest
 });
+
+router.start();

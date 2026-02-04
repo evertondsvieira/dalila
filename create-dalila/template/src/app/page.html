@@ -1,0 +1,14 @@
+<section class="card">
+  <h2>Counter: {count}</h2>
+  <p>Doubled: {doubled}</p>
+
+  <div class="buttons">
+    <button type="button" d-on-click="decrement">-</button>
+    <button type="button" d-on-click="increment">+</button>
+  </div>
+</section>
+
+<section class="card">
+  <p when={isEven}>The count is even.</p>
+  <p when={isOdd}>The count is odd.</p>
+</section>

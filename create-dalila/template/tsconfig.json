@@ -8,5 +8,10 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "routes.generated.ts",
+    "routes.generated.manifest.ts",
+    "routes.generated.types.ts"
+  ]
 }

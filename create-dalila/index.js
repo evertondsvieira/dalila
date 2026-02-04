@@ -104,6 +104,9 @@ function main() {
   console.log(`  ${cyan('npm install')}`);
   console.log(`  ${cyan('npm run dev')}`);
   console.log();
+  console.log('When you update files in src/app, regenerate routes with:');
+  console.log(`  ${cyan('npm run routes')}`);
+  console.log();
   console.log(`Open ${cyan('http://localhost:4242')} to see your app.`);
   console.log();
 }
