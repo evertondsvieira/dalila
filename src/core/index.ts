@@ -6,7 +6,6 @@ export * from "./when.js";
 export * from "./match.js";
 
 export * from "./for.js";
-export * from "./virtual.js";
 export * from "./html.js";
 
 export * from "./dev.js";
