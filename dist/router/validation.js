@@ -14,6 +14,24 @@ function toLength(value) {
         return value;
     return null;
 }
+function toNumericOrLength(value) {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed.length === 0)
+            return 0;
+        const numeric = Number(trimmed);
+        if (Number.isFinite(numeric))
+            return numeric;
+        return value.length;
+    }
+    if (Array.isArray(value)) {
+        return value.length;
+    }
+    return null;
+}
 function toNumber(value) {
     if (typeof value === 'number')
         return Number.isFinite(value) ? value : null;
@@ -50,7 +68,7 @@ function buildBuiltinRule(name, rawArg, message) {
             if (min === null)
                 return () => undefined;
             return value => {
-                const size = toLength(value);
+                const size = toNumericOrLength(value);
                 if (size === null)
                     return undefined;
                 return size >= min ? undefined : fail(`Must be at least ${min}.`);
@@ -61,7 +79,7 @@ function buildBuiltinRule(name, rawArg, message) {
             if (max === null)
                 return () => undefined;
             return value => {
-                const size = toLength(value);
+                const size = toNumericOrLength(value);
                 if (size === null)
                     return undefined;
                 return size <= max ? undefined : fail(`Must be at most ${max}.`);
