@@ -1,6 +1,6 @@
 import { signal } from '../core/signal.js';
 import { createScope, withScope, withScopeAsync } from '../core/scope.js';
-import { normalizeRules, validateValue } from '../form/index.js';
+import { normalizeRules, validateValue } from './validation.js';
 import { compileRoutes, findCompiledRouteStackResult, normalizePath } from './route-tables.js';
 /** Singleton reference to the most recently created router. */
 let currentRouter = null;

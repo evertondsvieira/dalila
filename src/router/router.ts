@@ -1,6 +1,6 @@
 import { Signal, signal } from '../core/signal.js';
 import { createScope, withScope, withScopeAsync, type Scope } from '../core/scope.js';
-import { normalizeRules, validateValue, type RuleFn } from '../form/index.js';
+import { normalizeRules, validateValue, type RuleFn } from './validation.js';
 import {
   RouteTable,
   RouteState,

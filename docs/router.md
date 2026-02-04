@@ -206,7 +206,7 @@ createRouter({ outlet: app, routes, globalMiddleware: [analyticsMiddleware] });
 
 ### Validation
 
-Validates params/query before loaders execute (same rule format as `dalila/form`):
+Validates params/query before loaders execute (router built-in rule format):
 
 ```ts
 {

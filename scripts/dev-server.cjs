@@ -287,7 +287,6 @@ function injectBindings(html, requestPath) {
         "dalila/core": "${dalilaPath}/core/index.js",
         "dalila/context": "${dalilaPath}/context/index.js",
         "dalila/context/raw": "${dalilaPath}/context/raw.js",
-        "dalila/form": "${dalilaPath}/form/index.js",
         "dalila/runtime": "${dalilaPath}/runtime/index.js",
         "dalila/router": "${dalilaPath}/router/index.js",
         "@/": "/src/"

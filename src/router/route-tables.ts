@@ -1,5 +1,5 @@
 import type { Scope } from '../core/scope.js';
-import type { Rule } from '../form/index.js';
+import type { Rule } from './validation.js';
 
 /** Options for programmatic navigation. */
 export interface NavigateOptions {
@@ -27,7 +27,7 @@ export type RouteParamValidationValue = RouteParamValue | undefined;
 export type RouteQueryValidationSchema = Record<string, Array<Rule<RouteQueryValue, RouteQueryValues>>>;
 export type RouteParamsValidationSchema = Record<string, Array<Rule<RouteParamValidationValue, RouteParamsValues>>>;
 
-/** Schema for params/query validation (uses same rule format as dalila/form). */
+/** Schema for params/query validation (router built-in rule format). */
 export interface RouteValidationConfig {
   query?: RouteQueryValidationSchema;
   params?: RouteParamsValidationSchema;

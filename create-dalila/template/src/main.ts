@@ -1,6 +1,6 @@
 import { createRouter } from 'dalila/router';
-import { routes } from '../routes.generated.ts';
-import { routeManifest } from '../routes.generated.manifest.ts';
+import { routes } from '../routes.generated.js';
+import { routeManifest } from '../routes.generated.manifest.js';
 
 const outlet = document.getElementById('app');
 
