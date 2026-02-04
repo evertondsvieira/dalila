@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "bin": {
-    "dalila-dev": "./scripts/dev-server.cjs"
+    "dalila-dev": "./scripts/dev-server.cjs",
+    "dalila": "./dist/cli/index.js"
   },
   "exports": {
     ".": {
@@ -28,10 +29,18 @@
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
+    },
+    "./form": {
+      "types": "./dist/form/index.d.ts",
+      "default": "./dist/form/index.js"
+    },
+    "./router": {
+      "types": "./dist/router/index.d.ts",
+      "default": "./dist/router/index.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/ensure-cli-executable.cjs",
     "dev": "tsc --watch",
     "serve": "node scripts/dev-server.cjs",
     "test": "npm run build && node --test",

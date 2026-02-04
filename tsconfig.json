@@ -5,7 +5,9 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "dalila": ["src/index.ts"]
+      "@/*": ["src/*"],
+      "dalila": ["src/index.ts"],
+      "dalila/*": ["src/*"]
     },
     "strict": true,
     "esModuleInterop": true,

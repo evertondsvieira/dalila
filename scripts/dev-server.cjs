@@ -42,6 +42,7 @@ const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
+  '.ts': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
@@ -96,10 +97,47 @@ function getRequestPath(url) {
   return decodeURIComponent(url.split('?')[0].split('#')[0]);
 }
 
-function shouldInjectBindings(requestPath) {
-  // Inject bindings for playground (dalila repo) or root index.html (user projects)
-  return requestPath === '/examples/playground/index.html' ||
-         (!isDalilaRepo && (requestPath === '/index.html' || requestPath === '/'));
+function normalizeHtmlRequestPath(requestPath) {
+  return requestPath.endsWith('/') ? `${requestPath}index.html` : requestPath;
+}
+
+function resolveSpaFallbackPath(requestPath) {
+  const normalized = requestPath.split('?')[0].split('#')[0];
+  if (!normalized.startsWith('/')) return null;
+  if (path.extname(normalized)) return null;
+
+  const parts = normalized.split('/').filter(Boolean);
+  while (parts.length > 0) {
+    const candidate = `/${parts.join('/')}/index.html`;
+    const candidateFsPath = resolvePath(candidate);
+    if (candidateFsPath && fs.existsSync(candidateFsPath)) {
+      return { requestPath: candidate, fsPath: candidateFsPath };
+    }
+    parts.pop();
+  }
+
+  return null;
+}
+
+function shouldInjectBindings(requestPath, htmlContent = '') {
+  // Inject bindings for playground and module-based pages.
+  const normalizedPath = normalizeHtmlRequestPath(requestPath);
+  if (!normalizedPath.endsWith('.html')) return false;
+
+  // Respect existing import maps that already define "dalila".
+  const hasImportMap = /<script[^>]*type=["']importmap["'][^>]*>/i.test(htmlContent);
+  const mapsDalila = /"dalila"\s*:/.test(htmlContent);
+  if (hasImportMap && mapsDalila) return false;
+
+  if (isDalilaRepo) {
+    // Playground uses special full injection path.
+    if (normalizedPath === '/examples/playground/index.html') return true;
+    // Any HTML entry with module scripts may import Dalila bare specifiers.
+    return /<script[^>]*type=["']module["'][^>]*>/i.test(htmlContent);
+  }
+
+  // User project mode keeps root-only behavior.
+  return normalizedPath === '/index.html';
 }
 
 // ============================================================================
@@ -237,6 +275,7 @@ function addLoadingAttributes(html) {
 // Binding Injection (for HTML files that need runtime bindings)
 // ============================================================================
 function injectBindings(html, requestPath) {
+  const normalizedPath = normalizeHtmlRequestPath(requestPath);
   // Different paths for dalila repo vs user projects
   const dalilaPath = isDalilaRepo ? '/dist' : '/node_modules/dalila/dist';
 
@@ -245,7 +284,13 @@ function injectBindings(html, requestPath) {
     {
       "imports": {
         "dalila": "${dalilaPath}/index.js",
-        "dalila/runtime": "${dalilaPath}/runtime/index.js"
+        "dalila/core": "${dalilaPath}/core/index.js",
+        "dalila/context": "${dalilaPath}/context/index.js",
+        "dalila/context/raw": "${dalilaPath}/context/raw.js",
+        "dalila/form": "${dalilaPath}/form/index.js",
+        "dalila/runtime": "${dalilaPath}/runtime/index.js",
+        "dalila/router": "${dalilaPath}/router/index.js",
+        "@/": "/src/"
       }
     }
   </script>`;
@@ -415,6 +460,14 @@ function injectBindings(html, requestPath) {
     }
 
     return output;
+  }
+
+  // Dalila repo: only inject import map for non-playground pages
+  if (normalizedPath !== '/examples/playground/index.html') {
+    if (html.includes('</head>')) {
+      return html.replace('</head>', `${importMap}\n</head>`);
+    }
+    return `${importMap}\n${html}`;
   }
 
   // Dalila repo: full playground injection
@@ -648,6 +701,7 @@ const server = http.createServer((req, res) => {
   const requestPath = getRequestPath(req.url);
   const effectivePath =
     requestPath === '/' || requestPath === '/index.html' ? defaultEntry : requestPath;
+  let resolvedRequestPath = effectivePath;
   const fsPath = resolvePath(effectivePath);
 
   if (!fsPath) {
@@ -659,11 +713,34 @@ const server = http.createServer((req, res) => {
   try {
     const stat = fs.statSync(targetPath);
     if (stat.isDirectory()) {
+      // Redirect directory URLs without trailing slash to include it
+      if (!requestPath.endsWith('/')) {
+        res.writeHead(301, { 'Location': requestPath + '/' });
+        res.end();
+        return;
+      }
       targetPath = path.join(targetPath, 'index.html');
     }
   } catch {
-    send(res, 404, 'Not Found');
-    return;
+    // If .js file not found, try .ts alternative
+    if (targetPath.endsWith('.js')) {
+      const tsPath = targetPath.replace(/\.js$/, '.ts');
+      if (fs.existsSync(tsPath)) {
+        targetPath = tsPath;
+      } else {
+        send(res, 404, 'Not Found');
+        return;
+      }
+    } else {
+      const spaFallback = resolveSpaFallbackPath(requestPath);
+      if (spaFallback) {
+        targetPath = spaFallback.fsPath;
+        resolvedRequestPath = spaFallback.requestPath;
+      } else {
+        send(res, 404, 'Not Found');
+        return;
+      }
+    }
   }
 
   // TypeScript transpilation (only if ts available)
@@ -706,6 +783,36 @@ const server = http.createServer((req, res) => {
   fs.readFile(targetPath, (err, data) => {
     if (err) {
       if (err.code === 'ENOENT' || err.code === 'EISDIR') {
+        const spaFallback = resolveSpaFallbackPath(requestPath);
+        if (spaFallback) {
+          targetPath = spaFallback.fsPath;
+          resolvedRequestPath = spaFallback.requestPath;
+          fs.readFile(targetPath, (fallbackErr, fallbackData) => {
+            if (fallbackErr) {
+              send(res, 404, 'Not Found');
+              return;
+            }
+
+            const htmlSource = fallbackData.toString('utf8');
+            const headers = {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'no-store, no-cache, must-revalidate',
+              'Pragma': 'no-cache',
+            };
+
+            if (shouldInjectBindings(resolvedRequestPath, htmlSource)) {
+              const html = injectBindings(htmlSource, resolvedRequestPath);
+              res.writeHead(200, headers);
+              res.end(html);
+              return;
+            }
+
+            res.writeHead(200, headers);
+            res.end(fallbackData);
+          });
+          return;
+        }
+
         send(res, 404, 'Not Found');
         return;
       }
@@ -723,11 +830,14 @@ const server = http.createServer((req, res) => {
       headers['Pragma'] = 'no-cache';
     }
 
-    if (ext === '.html' && shouldInjectBindings(effectivePath)) {
-      const html = injectBindings(data.toString('utf8'), effectivePath);
-      res.writeHead(200, headers);
-      res.end(html);
-      return;
+    if (ext === '.html') {
+      const htmlSource = data.toString('utf8');
+      if (shouldInjectBindings(resolvedRequestPath, htmlSource)) {
+        const html = injectBindings(htmlSource, resolvedRequestPath);
+        res.writeHead(200, headers);
+        res.end(html);
+        return;
+      }
     }
 
     res.writeHead(200, headers);
