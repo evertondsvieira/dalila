@@ -57,7 +57,8 @@ export function fromHtml(html: string, options: FromHtmlOptions = {}): HTMLEleme
     }
   }
 
-  const dispose = bind(container, data ?? {});
+  // Router/template rendering should not register global HMR bind context.
+  const dispose = bind(container, data ?? {}, { _internal: true });
   if (scope) {
     scope.onCleanup(dispose);
   }
