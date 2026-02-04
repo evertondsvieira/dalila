@@ -7,3 +7,4 @@
  * @module dalila/runtime
  */
 export { bind, autoBind } from './bind.js';
+export { fromHtml } from './fromHtml.js';
