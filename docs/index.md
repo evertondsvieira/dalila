@@ -96,7 +96,7 @@ npm install dalila
 
 ### vs React
 
-```tsx
+```jsx
 // React: component re-executes on every state change
 function Counter() {
   const [count, setCount] = useState(0);

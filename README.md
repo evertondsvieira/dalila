@@ -61,6 +61,10 @@ bind(document.getElementById('app')!, ctx);
 - [Template Binding](./docs/runtime/bind.md) — `bind()`, text interpolation, events
 - [FOUC Prevention](./docs/runtime/fouc-prevention.md) — Automatic token hiding
 
+### Routing
+
+- [Router](./docs/router.md) — Client-side routing with nested layouts, preloading, and file-based route generation
+
 ### Rendering
 
 - [when](./docs/core/when.md) — Conditional visibility

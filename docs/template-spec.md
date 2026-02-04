@@ -22,6 +22,7 @@ const dispose = bind(rootElement, ctx);
 
 A binding can contain:
 - `name` (e.g., `"increment"`)
+- `{name}` (e.g., `"{increment}"`)
 - Optionally simple path `a.b.c` (if supported)
 
 **Not supported:**
@@ -119,7 +120,91 @@ Reactive via `effect()`, cleaned up on `dispose()`.
 
 Reactive via `effect()`, cleaned up on `dispose()`.
 
-## 7. Lifecycle and Cleanup
+## 7. `d-if` Directive
+
+### Syntax
+
+```html
+<div d-if="hasUsers">...</div>
+```
+
+### Rules
+
+| Condition | Behavior |
+|-----------|----------|
+| `ctx.cond` is signal | Uses `cond()` |
+| `ctx.cond` is function | Calls `cond()` |
+| Otherwise | Uses value directly |
+
+When truthy, the element is inserted in the DOM. When falsy, the element is
+removed from the DOM entirely (a comment placeholder keeps the position).
+
+**Note:** `d-if` removes/reattaches nodes. Use `when` if you only need
+visibility toggling via `display: none`.
+
+## 8. `d-each` Directive
+
+### Syntax
+
+```html
+<li d-each="users">{name}</li>
+```
+
+### Rules
+
+| Condition | Behavior |
+|-----------|----------|
+| `ctx.list` is signal | Uses `list()` |
+| `ctx.list` is array | Uses array directly |
+| Otherwise | Warning and renders empty |
+
+Behavior:
+- The element with `d-each` is treated as a template.
+- The template is removed from the DOM and replaced with a comment marker.
+- For each item, the template is cloned and bound.
+- If the item is an object, its properties become the binding context.
+- If the item is not an object, it is exposed as `{item}`.
+
+**Note:** Updates re-render the entire list (no keyed diff).
+
+## 9. `d-html` Directive
+
+### Syntax
+
+```html
+<div d-html="content"></div>
+```
+
+### Rules
+
+| Condition | Behavior |
+|-----------|----------|
+| `ctx.html` is signal | Uses `html()` and updates reactively |
+| Otherwise | Renders once |
+
+`d-html` sets `innerHTML` directly. Values are **not sanitized** — only use
+trusted HTML or sanitize before binding.
+
+## 10. `d-attr-*` Directive
+
+### Syntax
+
+```html
+<a d-attr-href="url">Profile</a>
+<div d-attr-class="className"></div>
+```
+
+### Rules
+
+| Condition | Behavior |
+|-----------|----------|
+| `ctx.value` is signal | Uses `value()` and updates reactively |
+| Otherwise | Renders once |
+
+`d-attr-*` removes the directive attribute and sets the target attribute to
+`String(value)` for any attribute name (e.g. `href`, `class`, `style`, `id`).
+
+## 11. Lifecycle and Cleanup
 
 ```
 bind() creates:
@@ -135,7 +220,7 @@ dispose() cleans up:
   └── Disconnects observers (if any)
 ```
 
-## 8. Dev Mode
+## 12. Dev Mode
 
 In dev mode, the runtime logs warnings:
 
@@ -145,8 +230,13 @@ In dev mode, the runtime logs warnings:
 | `ctx.foo` is not a function | `Event handler "foo" is not a function` |
 | `{x}` but `ctx.x` undefined | `Text interpolation: "x" not found in context` |
 | `when="y"` but `ctx.y` undefined | `when: "y" not found in context` |
+| `d-if="y"` but `ctx.y` undefined | `d-if: "y" not found in context` |
+| `d-each="list"` but `ctx.list` undefined | `d-each: "list" not found in context` |
+| `d-each="list"` but not array/signal | `d-each: "list" is not an array or signal` |
+| `d-html="x"` but `ctx.x` undefined | `d-html: "x" not found in context` |
+| `d-attr-href="x"` but `ctx.x` undefined | `d-attr-href: "x" not found in context` |
 
-## 9. Future Compatibility (Compiler)
+## 13. Future Compatibility (Compiler)
 
 This spec defines **semantics**. A future compiler must generate code that produces the **same result** as the runtime, following these exact rules.
 
