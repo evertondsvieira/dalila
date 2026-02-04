@@ -46,6 +46,13 @@ export function fromHtml(html: string, options: FromHtmlOptions = {}): HTMLEleme
   container.style.display = 'contents';
   container.appendChild(template.content);
 
+  // Bind BEFORE inserting children so the layout's bind() only processes
+  // the layout's own HTML — children are already bound by their own fromHtml() call.
+  const dispose = bind(container, data ?? {}, { _internal: true });
+  if (scope) {
+    scope.onCleanup(dispose);
+  }
+
   if (children) {
     const slot = container.querySelector('[data-slot="children"]');
     if (slot) {
@@ -55,12 +62,6 @@ export function fromHtml(html: string, options: FromHtmlOptions = {}): HTMLEleme
         slot.replaceChildren(children);
       }
     }
-  }
-
-  // Router/template rendering should not register global HMR bind context.
-  const dispose = bind(container, data ?? {}, { _internal: true });
-  if (scope) {
-    scope.onCleanup(dispose);
   }
 
   return container;
