@@ -8,8 +8,6 @@ if (!outlet) {
   throw new Error('Missing #app element');
 }
 
-outlet.removeAttribute('d-loading');
-
 const router = createRouter({
   outlet,
   routes,

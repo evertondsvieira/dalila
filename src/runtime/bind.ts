@@ -25,11 +25,18 @@ export interface BindOptions {
   rawTextSelectors?: string;
 
   /**
-   * Internal flag — set by bindEach for clone bindings.
-   * Skips HMR context registration and d-ready/d-loading lifecycle.
+   * Internal flag — set by fromHtml for router/template rendering.
+   * Skips HMR context registration but KEEPS d-ready/d-loading lifecycle.
    * @internal
    */
   _internal?: boolean;
+
+  /**
+   * Internal flag — set by bindEach for clone bindings.
+   * Skips both HMR context registration AND d-ready/d-loading lifecycle.
+   * @internal
+   */
+  _skipLifecycle?: boolean;
 }
 
 export interface BindContext {
@@ -383,7 +390,7 @@ function bindEach(
         // (text, attrs, events …) skip this subtree entirely.
         clone.setAttribute('data-dalila-internal-bound', '');
 
-        const dispose = bind(clone, itemCtx, { _internal: true });
+        const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
         currentDisposes.push(dispose);
 
         comment.parentNode?.insertBefore(clone, comment);
@@ -682,7 +689,7 @@ export function bind(
 
   // Bindings complete: remove loading state and mark as ready.
   // Only the top-level bind owns this lifecycle — d-each clones skip it.
-  if (!options._internal) {
+  if (!options._skipLifecycle) {
     queueMicrotask(() => {
       htmlRoot.removeAttribute('d-loading');
       htmlRoot.setAttribute('d-ready', '');

@@ -830,6 +830,17 @@ export function createRouter(config: RouterConfig): Router {
   }
 
   /**
+   * Mount nodes into outlet and remove loading state
+   */
+  function mountToOutlet(...nodes: Node[]): void {
+    outletElement.replaceChildren(...nodes);
+    queueMicrotask(() => {
+      outletElement.removeAttribute('d-loading');
+      outletElement.setAttribute('d-ready', '');
+    });
+  }
+
+  /**
    * Core navigation pipeline.
    *
    * Runs guards, middleware, validation, data loading, and view mounting
@@ -947,7 +958,7 @@ export function createRouter(config: RouterConfig): Router {
                   true
                 );
                 const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-                outletElement.replaceChildren(...nodes);
+                mountToOutlet(...nodes);
               } catch (renderError) {
                 console.error('[Dalila] Error view failed:', renderError);
               }
@@ -1072,9 +1083,9 @@ export function createRouter(config: RouterConfig): Router {
         if (notFoundView) {
           const result = withScope(scope, () => notFoundView(ctx));
           const nodes = Array.isArray(result) ? result : [result];
-          outletElement.replaceChildren(...nodes);
+          mountToOutlet(...nodes);
         } else {
-          outletElement.replaceChildren();
+          mountToOutlet();
         }
       } catch (error) {
         console.error('[Dalila] notFoundView failed:', error);
@@ -1104,14 +1115,14 @@ export function createRouter(config: RouterConfig): Router {
           const result = withScope(scope, () => boundaryMatch.route.notFound!(boundaryCtx));
           const wrapped = wrapWithLayouts(matchStack, boundaryCtx, result, [], notFoundIndex, true);
           const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-          outletElement.replaceChildren(...nodes);
+          mountToOutlet(...nodes);
         } else if (notFoundView) {
           const result = withScope(scope, () => notFoundView(ctx));
           const wrapped = wrapWithLayouts(matchStack, ctx, result, [], matchStack.length - 1, true);
           const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-          outletElement.replaceChildren(...nodes);
+          mountToOutlet(...nodes);
         } else {
-          outletElement.replaceChildren();
+          mountToOutlet();
         }
       } catch (error) {
         console.error('[Dalila] Segment notFound render failed:', error);
@@ -1155,11 +1166,11 @@ export function createRouter(config: RouterConfig): Router {
           const result = withScope(scope, () => pendingMatch.route.pending!(pendingCtx));
           const wrapped = wrapWithLayouts(matchStack, pendingCtx, result, [], pendingIndex, true);
           const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-          outletElement.replaceChildren(...nodes);
+          mountToOutlet(...nodes);
         } else if (pendingView) {
           const result = withScope(scope, () => pendingView(ctx));
           const nodes = Array.isArray(result) ? result : [result];
-          outletElement.replaceChildren(...nodes);
+          mountToOutlet(...nodes);
         }
       } catch (error) {
         console.error('[Dalila] Pending view failed:', error);
@@ -1210,7 +1221,7 @@ export function createRouter(config: RouterConfig): Router {
               true
             );
             const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-            outletElement.replaceChildren(...nodes);
+            mountToOutlet(...nodes);
           } catch (err) {
             console.error('[Dalila] Error view failed:', err);
           }
@@ -1310,7 +1321,7 @@ export function createRouter(config: RouterConfig): Router {
 
       if (content) {
         const nodes = Array.isArray(content) ? content : [content];
-        outletElement.replaceChildren(...nodes);
+        mountToOutlet(...nodes);
       }
     } catch (error) {
       console.error('[Dalila] Error mounting view stack:', error);

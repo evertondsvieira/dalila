@@ -16,11 +16,17 @@ export interface BindOptions {
      */
     rawTextSelectors?: string;
     /**
-     * Internal flag — set by bindEach for clone bindings.
-     * Skips HMR context registration and d-ready/d-loading lifecycle.
+     * Internal flag — set by fromHtml for router/template rendering.
+     * Skips HMR context registration but KEEPS d-ready/d-loading lifecycle.
      * @internal
      */
     _internal?: boolean;
+    /**
+     * Internal flag — set by bindEach for clone bindings.
+     * Skips both HMR context registration AND d-ready/d-loading lifecycle.
+     * @internal
+     */
+    _skipLifecycle?: boolean;
 }
 export interface BindContext {
     [key: string]: unknown;

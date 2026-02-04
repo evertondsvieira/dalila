@@ -293,7 +293,7 @@ function bindEach(root, ctx, cleanups) {
                 // Mark BEFORE bind() so the parent's subsequent global passes
                 // (text, attrs, events …) skip this subtree entirely.
                 clone.setAttribute('data-dalila-internal-bound', '');
-                const dispose = bind(clone, itemCtx, { _internal: true });
+                const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
                 currentDisposes.push(dispose);
                 comment.parentNode?.insertBefore(clone, comment);
                 currentClones.push(clone);
@@ -548,7 +548,7 @@ export function bind(root, ctx, options = {}) {
     });
     // Bindings complete: remove loading state and mark as ready.
     // Only the top-level bind owns this lifecycle — d-each clones skip it.
-    if (!options._internal) {
+    if (!options._skipLifecycle) {
         queueMicrotask(() => {
             htmlRoot.removeAttribute('d-loading');
             htmlRoot.setAttribute('d-ready', '');
