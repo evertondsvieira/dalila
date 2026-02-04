@@ -1,6 +1,6 @@
 {
   "name": "create-dalila",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Create Dalila apps with one command",
   "bin": {
     "create-dalila": "index.js"
@@ -8,7 +8,10 @@
   "type": "module",
   "files": [
     "index.js",
-    "template"
+    "template",
+    "template/routes.generated.ts",
+    "template/routes.generated.manifest.ts",
+    "template/routes.generated.types.ts"
   ],
   "keywords": [
     "dalila",
