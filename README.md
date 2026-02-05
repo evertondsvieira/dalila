@@ -158,6 +158,37 @@ theme.set('light'); // Saved automatically
 // On reload: theme starts as 'light'
 ```
 
+### File-Based Routing
+
+```txt
+src/app/
+├── layout.html
+├── page.html
+├── about/
+│   └── page.html
+└── users/
+    └── [id]/
+        └── page.html
+```
+
+```bash
+dalila routes generate
+```
+
+```ts
+import { createRouter } from 'dalila/router';
+import { routes } from './routes.generated.js';
+import { routeManifest } from './routes.generated.manifest.js';
+
+const router = createRouter({
+  outlet: document.getElementById('app')!,
+  routes,
+  routeManifest
+});
+
+router.start();
+```
+
 ## Development
 
 ```bash
