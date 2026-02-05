@@ -265,7 +265,12 @@ function bindWhen(
     }
 
     const htmlEl = el as HTMLElement;
-    // Effect is owned by templateScope — no need to track stop manually
+
+    // Apply initial state synchronously to avoid FOUC (flash of unstyled content)
+    const initialValue = !!resolve(binding);
+    htmlEl.style.display = initialValue ? '' : 'none';
+
+    // Then create reactive effect to keep it updated
     effect(() => {
       const value = !!resolve(binding);
       htmlEl.style.display = value ? '' : 'none';
@@ -298,9 +303,8 @@ function bindMatch(
       continue;
     }
 
-    effect(() => {
-      // Re-query cases on every run so dynamically added/removed [case]
-      // children (e.g. via d-if) are always up to date.
+    // Apply initial state synchronously to avoid FOUC
+    const applyMatch = () => {
       const cases = Array.from(el.querySelectorAll('[case]')) as HTMLElement[];
       const v = resolve(binding);
       const value = v == null ? '' : String(v);
@@ -325,6 +329,14 @@ function bindMatch(
       } else if (defaultEl) {
         defaultEl.style.display = '';
       }
+    };
+
+    // Apply initial state
+    applyMatch();
+
+    // Then create reactive effect to keep it updated
+    effect(() => {
+      applyMatch();
     });
   }
 }
@@ -458,6 +470,13 @@ function bindIf(
 
     const htmlEl = el as HTMLElement;
 
+    // Apply initial state synchronously to avoid FOUC
+    const initialValue = !!resolve(binding);
+    if (initialValue) {
+      comment.parentNode?.insertBefore(htmlEl, comment);
+    }
+
+    // Then create reactive effect to keep it updated
     effect(() => {
       const value = !!resolve(binding);
       if (value) {
