@@ -8,7 +8,8 @@
     "routes": "dalila routes generate",
     "routes:watch": "dalila routes watch",
     "build": "tsc",
-    "preview": "dalila-dev --dist"
+    "preview": "dalila-dev --dist",
+    "postinstall": "dalila routes generate"
   },
   "dependencies": {
     "dalila": "latest"

@@ -101,13 +101,13 @@ function main() {
   console.log(`${green('Done!')} Created ${bold(projectName)}\n`);
   console.log('Next steps:\n');
   console.log(`  ${cyan('cd')} ${projectName}`);
-  console.log(`  ${cyan('npm install')}`);
+  console.log(`  ${cyan('npm install')}  ${green('(routes will be generated automatically)')}`);
   console.log(`  ${cyan('npm run dev')}`);
+  console.log();
+  console.log(`Open ${cyan('http://localhost:4242')} to see your app.`);
   console.log();
   console.log('When you update files in src/app, regenerate routes with:');
   console.log(`  ${cyan('npm run routes')}`);
-  console.log();
-  console.log(`Open ${cyan('http://localhost:4242')} to see your app.`);
   console.log();
 }
 
