@@ -177,14 +177,15 @@ function bindEvents(root, ctx, events, cleanups) {
  * Bind all [d-when] directives within root
  */
 function bindWhen(root, ctx, cleanups) {
-    const elements = qsaIncludingRoot(root, '[d-when]');
+    const elements = qsaIncludingRoot(root, '[when], [d-when]');
     for (const el of elements) {
-        const bindingName = normalizeBinding(el.getAttribute('d-when'));
+        const attrName = el.hasAttribute('when') ? 'when' : 'd-when';
+        const bindingName = normalizeBinding(el.getAttribute(attrName));
         if (!bindingName)
             continue;
         const binding = ctx[bindingName];
         if (binding === undefined) {
-            warn(`d-when: "${bindingName}" not found in context`);
+            warn(`when: "${bindingName}" not found in context`);
             continue;
         }
         const htmlEl = el;

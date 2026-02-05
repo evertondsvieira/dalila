@@ -250,16 +250,17 @@ function bindWhen(
   ctx: BindContext,
   cleanups: DisposeFunction[]
 ): void {
-  const elements = qsaIncludingRoot(root, '[d-when]');
+  const elements = qsaIncludingRoot(root, '[when], [d-when]');
 
   for (const el of elements) {
-    const bindingName = normalizeBinding(el.getAttribute('d-when'));
+    const attrName = el.hasAttribute('when') ? 'when' : 'd-when';
+    const bindingName = normalizeBinding(el.getAttribute(attrName));
     if (!bindingName) continue;
 
     const binding = ctx[bindingName];
 
     if (binding === undefined) {
-      warn(`d-when: "${bindingName}" not found in context`);
+      warn(`when: "${bindingName}" not found in context`);
       continue;
     }
 
@@ -384,13 +385,13 @@ function bindEach(
           Object.assign(itemCtx, item as Record<string, unknown>);
         }
         // Always expose raw item + positional / collection helpers
-        itemCtx.item   = item;
+        itemCtx.item = item;
         itemCtx.$index = i;
         itemCtx.$count = items.length;
         itemCtx.$first = i === 0;
-        itemCtx.$last  = i === items.length - 1;
-        itemCtx.$odd   = i % 2 !== 0;
-        itemCtx.$even  = i % 2 === 0;
+        itemCtx.$last = i === items.length - 1;
+        itemCtx.$odd = i % 2 !== 0;
+        itemCtx.$even = i % 2 === 0;
 
         // Mark BEFORE bind() so the parent's subsequent global passes
         // (text, attrs, events …) skip this subtree entirely.
@@ -534,7 +535,7 @@ function bindHtml(
 // setAttribute('checked') / setAttribute('value') do NOT update the live
 // state of an input after the user has interacted with it.
 const BOOLEAN_PROPS = new Set(['checked', 'selected', 'disabled', 'indeterminate']);
-const STRING_PROPS  = new Set(['value']);
+const STRING_PROPS = new Set(['value']);
 
 function applyAttr(el: Element, attrName: string, value: unknown): void {
   // Fast-path: known IDL properties set as properties on the element
