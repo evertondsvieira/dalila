@@ -101,10 +101,10 @@ test('root inclusive – d-on-click on root element', async () => {
   });
 });
 
-test('root inclusive – when on root element', async () => {
+test('root inclusive – d-when on root element', async () => {
   await withDom(async (doc) => {
     const visible = signal(false);
-    const root = el(doc, '<div when="visible">text</div>');
+    const root = el(doc, '<div d-when="visible">text</div>');
     bind(root, { visible });
     await tick(10);
     assert.equal(root.style.display, 'none');
@@ -236,10 +236,10 @@ test('manual bind() on sub-element inside d-each clone works correctly', async (
 
 // ─── 5  resolve() guard ─────────────────────────────────────────────────────
 
-test('resolve guard – handler in when= is never called, warns in dev', async () => {
+test('resolve guard – handler in d-when= is never called, warns in dev', async () => {
   await withDom(async (doc) => {
     let called = false;
-    const root = el(doc, '<div when="handler">text</div>');
+    const root = el(doc, '<div d-when="handler">text</div>');
 
     const warns = await captureWarns(async () => {
       bind(root, { handler: (e) => { called = true; } });
@@ -263,6 +263,28 @@ test('resolve guard – handler in d-if= is never called, element removed (falsy
 
     assert.equal(called, false);
     assert.ok(!doc.body.contains(root), 'undefined → falsy → removed');
+  });
+});
+
+test('d-when rejects braced attribute bindings', async () => {
+  await withDom(async (doc) => {
+    const visible = signal(false);
+    const root = el(doc, '<div d-when="{visible}">text</div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { visible });
+      await tick(10);
+    });
+
+    assert.equal(root.style.display, '', 'd-when binding should be ignored when using braces');
+
+    visible.set(true);
+    await tick(10);
+    assert.equal(root.style.display, '', 'ignored binding must not become reactive');
+    assert.ok(
+      warns.some(w => w.includes('plain identifiers')),
+      'must warn about deprecated braced attribute syntax'
+    );
   });
 });
 
@@ -313,11 +335,11 @@ test('d-attr-disabled toggles .disabled reactively', async () => {
 
 // ─── 7  match with dynamic cases ────────────────────────────────────────────
 
-test('match – dynamically appended [case] is found on next signal change', async () => {
+test('d-match – dynamically appended [case] is found on next signal change', async () => {
   await withDom(async (doc) => {
     const mode = signal('a');
     const root = el(doc, `
-      <div match="mode">
+      <div d-match="mode">
         <div case="a">A</div>
         <div case="b">B</div>
       </div>
@@ -474,11 +496,11 @@ test('d-html – getter returning undefined renders empty innerHTML', async () =
   });
 });
 
-test('match – null signal normalises to empty string, matches case=""', async () => {
+test('d-match – null signal normalises to empty string, matches case=""', async () => {
   await withDom(async (doc) => {
     const mode = signal(null);
     const root = el(doc, `
-      <div match="mode">
+      <div d-match="mode">
         <div case="">empty</div>
         <div case="a">A</div>
       </div>

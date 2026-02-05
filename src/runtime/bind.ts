@@ -75,14 +75,20 @@ function resolve(value: unknown): unknown {
 
 /**
  * Normalize binding attribute value
- * Handles both "name" and "{name}" formats
+ * Attributes use plain identifiers only (e.g. "count")
  */
 function normalizeBinding(raw: string | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
-  // Match {name} format and extract name
-  const match = trimmed.match(/^\{\s*([a-zA-Z_$][\w$]*)\s*\}$/);
-  return match ? match[1] : trimmed;
+  if (!trimmed) return null;
+
+  const braced = trimmed.match(/^\{\s*([a-zA-Z_$][\w$]*)\s*\}$/);
+  if (braced) {
+    warn(`Attribute bindings must use plain identifiers (no braces). Use "${braced[1]}" instead of "${trimmed}".`);
+    return null;
+  }
+
+  return trimmed;
 }
 
 /**
@@ -233,27 +239,27 @@ function bindEvents(
 }
 
 // ============================================================================
-// when Directive
+// d-when Directive
 // ============================================================================
 
 /**
- * Bind all [when] directives within root
+ * Bind all [d-when] directives within root
  */
 function bindWhen(
   root: Element,
   ctx: BindContext,
   cleanups: DisposeFunction[]
 ): void {
-  const elements = qsaIncludingRoot(root, '[when]');
+  const elements = qsaIncludingRoot(root, '[d-when]');
 
   for (const el of elements) {
-    const bindingName = normalizeBinding(el.getAttribute('when'));
+    const bindingName = normalizeBinding(el.getAttribute('d-when'));
     if (!bindingName) continue;
 
     const binding = ctx[bindingName];
 
     if (binding === undefined) {
-      warn(`when: "${bindingName}" not found in context`);
+      warn(`d-when: "${bindingName}" not found in context`);
       continue;
     }
 
@@ -267,27 +273,27 @@ function bindWhen(
 }
 
 // ============================================================================
-// match Directive
+// d-match Directive
 // ============================================================================
 
 /**
- * Bind all [match] directives within root
+ * Bind all [d-match] directives within root
  */
 function bindMatch(
   root: Element,
   ctx: BindContext,
   cleanups: DisposeFunction[]
 ): void {
-  const elements = qsaIncludingRoot(root, '[match]');
+  const elements = qsaIncludingRoot(root, '[d-match]');
 
   for (const el of elements) {
-    const bindingName = normalizeBinding(el.getAttribute('match'));
+    const bindingName = normalizeBinding(el.getAttribute('d-match'));
     if (!bindingName) continue;
 
     const binding = ctx[bindingName];
 
     if (binding === undefined) {
-      warn(`match: "${bindingName}" not found in context`);
+      warn(`d-match: "${bindingName}" not found in context`);
       continue;
     }
 
@@ -425,7 +431,7 @@ function bindEach(
 
 /**
  * Bind all [d-if] directives within root.
- * Unlike [when] which toggles display, d-if adds/removes the element from
+ * Unlike [d-when] which toggles display, d-if adds/removes the element from
  * the DOM entirely. A comment node is left as placeholder for insertion position.
  */
 function bindIf(
@@ -677,10 +683,10 @@ export function bind(
     // 5. Event bindings
     bindEvents(root, ctx, events, cleanups);
 
-    // 6. when directive
+    // 6. d-when directive
     bindWhen(root, ctx, cleanups);
 
-    // 7. match directive
+    // 7. d-match directive
     bindMatch(root, ctx, cleanups);
 
     // 8. d-if — must run last: elements are fully bound before conditional removal

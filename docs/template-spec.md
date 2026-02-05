@@ -20,15 +20,15 @@ const dispose = bind(rootElement, ctx);
 
 ## 2. Naming Conventions
 
-A binding can contain:
+Directive attribute bindings use:
 - `name` (e.g., `"increment"`)
-- `{name}` (e.g., `"{increment}"`)
-- Optionally simple path `a.b.c` (if supported)
 
 **Not supported:**
 - Function calls: `foo()`
 - Operators: `a + b`
 - Inline JS
+
+Text interpolation still uses `{token}` inside text nodes.
 
 If the identifier doesn't exist in `ctx`, the binding is ignored (with warning in dev mode).
 
@@ -74,12 +74,12 @@ If the identifier doesn't exist in `ctx`, the binding is ignored (with warning i
 
 **Exception:** Interpolation does not run inside `<pre>` and `<code>` (raw text).
 
-## 5. `when` Directive
+## 5. `d-when` Directive
 
 ### Syntax
 
 ```html
-<div when="isLoggedIn">...</div>
+<div d-when="isLoggedIn">...</div>
 ```
 
 ### Rules
@@ -96,12 +96,12 @@ The element becomes:
 
 Reactive via `effect()`, cleaned up on `dispose()`.
 
-## 6. `match` and `case` Directive
+## 6. `d-match` and `case` Directive
 
 ### Syntax
 
 ```html
-<div match="status">
+<div d-match="status">
   <section case="loading">Loading...</section>
   <section case="success">OK</section>
   <section case="error">Error</section>
@@ -111,7 +111,7 @@ Reactive via `effect()`, cleaned up on `dispose()`.
 
 ### Rules
 
-1. `match="x"` resolves `ctx.x` (same rules as `when`)
+1. `d-match="x"` resolves `ctx.x` (same rules as `d-when`)
 2. Value is compared as `String(value)`
 3. Behavior:
    - Hide all `[case]` elements
@@ -139,7 +139,7 @@ Reactive via `effect()`, cleaned up on `dispose()`.
 When truthy, the element is inserted in the DOM. When falsy, the element is
 removed from the DOM entirely (a comment placeholder keeps the position).
 
-**Note:** `d-if` removes/reattaches nodes. Use `when` if you only need
+**Note:** `d-if` removes/reattaches nodes. Use `d-when` if you only need
 visibility toggling via `display: none`.
 
 ## 8. `d-each` Directive
@@ -210,8 +210,8 @@ trusted HTML or sanitize before binding.
 bind() creates:
   └── templateScope (root Scope)
        ├── effect() for each {interpolation}
-       ├── effect() for each [when]
-       ├── effect() for each [match]
+       ├── effect() for each [d-when]
+       ├── effect() for each [d-match]
        └── event listeners
 
 dispose() cleans up:
@@ -229,7 +229,7 @@ In dev mode, the runtime logs warnings:
 | `d-on-click="foo"` but `ctx.foo` undefined | `Event handler "foo" not found in context` |
 | `ctx.foo` is not a function | `Event handler "foo" is not a function` |
 | `{x}` but `ctx.x` undefined | `Text interpolation: "x" not found in context` |
-| `when="y"` but `ctx.y` undefined | `when: "y" not found in context` |
+| `d-when="y"` but `ctx.y` undefined | `d-when: "y" not found in context` |
 | `d-if="y"` but `ctx.y` undefined | `d-if: "y" not found in context` |
 | `d-each="list"` but `ctx.list` undefined | `d-each: "list" not found in context` |
 | `d-each="list"` but not array/signal | `d-each: "list" is not an array or signal` |
@@ -242,7 +242,7 @@ This spec defines **semantics**. A future compiler must generate code that produ
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    HTML Template                     │
+│                    HTML Template                    │
 │  <button d-on-click="inc">{count}</button>          │
 └─────────────────────────────────────────────────────┘
                          │
@@ -255,7 +255,7 @@ This spec defines **semantics**. A future compiler must generate code that produ
           │                             │
           ▼                             ▼
    ┌─────────────────────────────────────────────────┐
-   │              Same behavior                       │
+   │              Same behavior                      │
    │  - addEventListener('click', ctx.inc)           │
    │  - effect(() => textNode.data = ctx.count())    │
    └─────────────────────────────────────────────────┘

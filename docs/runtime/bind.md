@@ -17,8 +17,8 @@ No `eval`, no inline JS — every directive resolves identifiers from the contex
 │                          ├─ 3  d-attr-*    attributes / props      │
 │                          ├─ 4  d-html      innerHTML               │
 │                          ├─ 5  d-on-*      event listeners         │
-│                          ├─ 6  when        display toggle          │
-│                          ├─ 7  match/case  conditional show        │
+│                          ├─ 6  d-when      display toggle          │
+│                          ├─ 7  d-match/case conditional show       │
 │                          └─ 8  d-if        add / remove from DOM   │
 │                                                                    │
 │   All reactive effects are owned by a scope.                       │
@@ -70,7 +70,7 @@ Convenience wrapper — waits for `DOMContentLoaded` if the document is still lo
   <p>Count: {count}</p>
   <button d-on-click="increment">+</button>
   <button d-on-click="decrement">−</button>
-  <p when="isEven">Even number</p>
+  <p d-when="isEven">Even number</p>
 </div>
 ```
 
@@ -135,12 +135,14 @@ Listeners are removed automatically when `dispose()` is called.
 
 ---
 
-### Conditional visibility `when`
+Directive attribute values use plain identifiers only: `d-when="isVisible"` (not `d-when="{isVisible}"`).
+
+### Conditional visibility `d-when`
 
 Toggles `display` style.  The element stays in the DOM at all times.
 
 ```html
-<div when="isVisible">Shown when truthy</div>
+<div d-when="isVisible">Shown when truthy</div>
 ```
 
 Reactive: re-evaluates whenever the bound signal changes.
@@ -155,16 +157,16 @@ Adds or removes the element from the DOM entirely.  A comment node is left as a 
 <div d-if="hasData">Content</div>
 ```
 
-Use `d-if` instead of `when` when you want the element's subtree to be removed (saves layout/paint cost) or when you need to prevent its children from being visible at all.
+Use `d-if` instead of `d-when` when you want the element's subtree to be removed (saves layout/paint cost) or when you need to prevent its children from being visible at all.
 
 ---
 
-### Pattern matching `match` / `case`
+### Pattern matching `d-match` / `case`
 
 Shows exactly one child based on the resolved value of the binding.  All other children are hidden.
 
 ```html
-<div match="status">
+<div d-match="status">
   <p case="loading">Loading…</p>
   <p case="error">Something went wrong</p>
   <p case="success">Done!</p>
@@ -174,7 +176,7 @@ Shows exactly one child based on the resolved value of the binding.  All other c
 
 `case="default"` is the fallback when no other case matches.
 
-Cases are **re-queried on every signal change**, so `[case]` children can be added or removed dynamically (e.g. via `d-if` inside the match container) and will be picked up on the next update.
+Cases are **re-queried on every signal change**, so `[case]` children can be added or removed dynamically (e.g. via `d-if` inside the d-match container) and will be picked up on the next update.
 
 `null` / `undefined` values normalise to the empty string before matching.
 
@@ -217,7 +219,7 @@ Each clone's context **inherits from the parent** via the prototype chain.  Hand
 | `$even` | `true` on even indices (0, 2 …) | |
 
 ```html
-<li d-each="tags" when="$odd" class="alt">
+<li d-each="tags" d-when="$odd" class="alt">
   {$index}: {item}
 </li>
 ```
@@ -300,7 +302,7 @@ fn.length > 0     →  warn in dev, return undefined      (never executed)
 anything else     →  return as-is                       (static)
 ```
 
-This single rule keeps the entire runtime safe from accidentally executing event handlers as getters.  If you accidentally write `when="onClick"` where `onClick` is `(e) => …`, the runtime will warn and treat it as `undefined` (falsy) rather than calling your handler.
+This single rule keeps the entire runtime safe from accidentally executing event handlers as getters.  If you accidentally write `d-when="onClick"` where `onClick` is `(e) => …`, the runtime will warn and treat it as `undefined` (falsy) rather than calling your handler.
 
 ## Lifecycle
 
@@ -442,7 +444,7 @@ bind(root, { val: () => val() ?? 'N/A' });
 
 ```html
 <!-- Cases are re-queried on every signal change, so this works: -->
-<div match="mode">
+<div d-match="mode">
   <div case="a">A</div>
   <div case="b" d-if="showB">B</div>  <!-- added/removed dynamically -->
 </div>

@@ -88,8 +88,8 @@
           <div class="demo">
             <button class="btn-sm" d-on-click="toggleVisible">Toggle</button>
             <div class="output">
-              <span when={isVisible}>🐵 Visible</span>
-              <span when={isHidden}>🙈 Hidden</span>
+              <span d-when="isVisible">🐵 Visible</span>
+              <span d-when="isHidden">🙈 Hidden</span>
             </div>
           </div>
         </section>
@@ -118,7 +118,7 @@
           <p class="description">Lifecycle containers with automatic cleanup.</p>
           <div class="demo">
             <button class="btn-sm" d-on-click="runScopeDemo">Run Demo</button>
-            <span class="badge" when={scopeActive}>running</span>
+            <span class="badge" d-when="scopeActive">running</span>
             <div class="output">{scopeMessage}</div>
           </div>
         </section>
@@ -130,9 +130,9 @@
           <div class="demo">
             <button class="btn-sm" d-on-click="refreshData">Refresh</button>
             <div class="output">
-              <span when={dataLoading}>Loading...</span>
+              <span d-when="dataLoading">Loading...</span>
               <img id="rabbit-img" class="rabbit-img" alt="" />
-              <span class="error" when={dataError}>{dataErrorMsg}</span>
+              <span class="error" d-when="dataError">{dataErrorMsg}</span>
             </div>
           </div>
         </section>
@@ -157,8 +157,8 @@
           <div class="demo">
             <button class="btn-sm" d-on-click="runMutation">Save</button>
             <div class="output">
-              <span when={mutationSaving}>Saving...</span>
-              <span when={mutationIdle}>{mutationResult}</span>
+              <span d-when="mutationSaving">Saving...</span>
+              <span d-when="mutationIdle">{mutationResult}</span>
             </div>
           </div>
         </section>

@@ -111,7 +111,7 @@ count.set(5); // logs: Count is 5
 ```ts
 import { bind } from 'dalila/runtime';
 
-// Binds {tokens}, d-on-*, when, match to the DOM
+// Binds {tokens}, d-on-*, d-when, d-match to the DOM
 const dispose = bind(rootElement, ctx);
 
 // Cleanup when done

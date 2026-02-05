@@ -242,7 +242,7 @@ function generatePreloadScript(name, defaultValue, storageType = 'localStorage')
 function addLoadingAttributes(html) {
   // Match elements with:
   // 1. Text containing {tokens}
-  // 2. Attributes like d-on-*, when, match
+  // 2. Attributes like d-on-*, d-when, d-match
 
   // Simple regex-based approach: find elements with tokens or d-* attributes
   // Look for opening tags that contain either {tokens} in their content or d-* attributes
