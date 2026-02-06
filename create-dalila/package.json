@@ -25,6 +25,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/evertonccarvalho/dalila"
-  }
+    "url": "https://github.com/evertondsvieira/dalila.git"
+  },
+  "bugs": {
+    "url": "https://github.com/evertondsvieira/dalila/issues"
+  },
+  "homepage": "https://github.com/evertondsvieira/dalila/blob/main/README.md"
 }
