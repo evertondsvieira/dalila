@@ -16,7 +16,7 @@ Open http://localhost:4242 to see your app.
 ## What's Included
 
 - Counter example with signals and computed values
-- Hot reload development server
+- Hot reload development server + route generation watcher
 - TypeScript support out of the box
 - Minimal CSS styling
 
@@ -34,7 +34,7 @@ my-app/
 
 ## Scripts
 
-- `npm run dev` - Start development server
+- `npm run dev` - Start dev server and route watcher
 - `npm run build` - Compile TypeScript
 
 ## Learn More

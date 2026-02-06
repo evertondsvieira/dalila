@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "dalila-dev",
+    "dev": "node dev.mjs",
     "routes": "dalila routes generate",
     "routes:watch": "dalila routes watch",
     "build": "tsc",
