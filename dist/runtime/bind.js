@@ -6,7 +6,8 @@
  *
  * @module dalila/runtime
  */
-import { effect, createScope, withScope, isInDevMode } from '../core/index.js';
+import { effect, createScope, withScope, isInDevMode, signal } from '../core/index.js';
+import { WRAPPED_HANDLER } from '../form/index.js';
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -485,6 +486,554 @@ function bindAttrs(root, ctx, cleanups) {
     }
 }
 // ============================================================================
+// Form Directives
+// ============================================================================
+/**
+ * Bind all [d-form] directives within root.
+ * Associates a form element with a Form instance from the context.
+ * Also auto-wraps d-on-submit handlers through form.handleSubmit().
+ */
+function bindForm(root, ctx, cleanups) {
+    const elements = qsaIncludingRoot(root, '[d-form]');
+    for (const el of elements) {
+        // Skip forms inside d-each templates
+        // They'll be bound when the template is cloned and bound individually
+        if (el.closest('[d-each]')) {
+            continue;
+        }
+        if (!(el instanceof HTMLFormElement)) {
+            warn('d-form: must be used on a <form> element');
+            continue;
+        }
+        const bindingName = normalizeBinding(el.getAttribute('d-form'));
+        if (!bindingName)
+            continue;
+        const form = ctx[bindingName];
+        if (!form || typeof form !== 'object' || !('handleSubmit' in form)) {
+            warn(`d-form: "${bindingName}" is not a valid Form instance`);
+            continue;
+        }
+        // Register form element with the Form instance
+        if ('_setFormElement' in form && typeof form._setFormElement === 'function') {
+            form._setFormElement(el);
+        }
+        // Auto-wrap d-on-submit handler through form.handleSubmit()
+        // Don't mutate shared ctx - add listener directly to this form element
+        const submitHandlerName = normalizeBinding(el.getAttribute('d-on-submit'));
+        if (submitHandlerName) {
+            const originalHandler = ctx[submitHandlerName];
+            if (typeof originalHandler === 'function') {
+                // Check if handler is already wrapped to avoid double-wrapping
+                // If user did: const save = form.handleSubmit(...), don't wrap again
+                const isAlreadyWrapped = originalHandler[WRAPPED_HANDLER] === true;
+                const finalHandler = isAlreadyWrapped
+                    ? originalHandler
+                    : form.handleSubmit(originalHandler);
+                // Add submit listener directly to form element (not via d-on-submit)
+                // This avoids mutating the shared context
+                el.addEventListener('submit', finalHandler);
+                // Remove d-on-submit to prevent bindEvents from adding duplicate listener
+                el.removeAttribute('d-on-submit');
+                // Restore attribute on cleanup so dispose()+bind() (HMR) can rediscover it
+                cleanups.push(() => {
+                    el.removeEventListener('submit', finalHandler);
+                    el.setAttribute('d-on-submit', submitHandlerName);
+                });
+            }
+        }
+    }
+}
+/**
+ * Bind all [d-field] directives within root.
+ * Registers field elements with their Form instance and sets up a11y attributes.
+ */
+function bindField(root, ctx, cleanups) {
+    const elements = qsaIncludingRoot(root, '[d-field]');
+    for (const el of elements) {
+        // Prefer data-field-path (set by d-array) over d-field for full path
+        const dataFieldPath = el.getAttribute('data-field-path');
+        const dFieldPath = normalizeBinding(el.getAttribute('d-field'));
+        const fieldPath = dataFieldPath || dFieldPath;
+        if (!fieldPath)
+            continue;
+        // Find the form element - use context first (for detached clones), then closest()
+        // When bind() runs on d-array clones, the clone is still detached from DOM,
+        // so el.closest('form[d-form]') returns null. We pass form refs through context.
+        const formEl = ctx._formElement || el.closest('form[d-form]');
+        if (!formEl) {
+            warn(`d-field: field "${fieldPath}" must be inside a [d-form]`);
+            continue;
+        }
+        const formBinding = ctx._formBinding || normalizeBinding(formEl.getAttribute('d-form'));
+        if (!formBinding)
+            continue;
+        const form = ctx[formBinding];
+        if (!form || typeof form !== 'object')
+            continue;
+        const htmlEl = el;
+        // Set name attribute if not already set (use full path)
+        if (!htmlEl.getAttribute('name')) {
+            htmlEl.setAttribute('name', fieldPath);
+        }
+        // Register field with form using full path
+        if ('_registerField' in form && typeof form._registerField === 'function') {
+            const unregister = form._registerField(fieldPath, htmlEl);
+            cleanups.push(unregister);
+        }
+        // Setup reactive aria-invalid based on error state
+        if ('error' in form && typeof form.error === 'function') {
+            effect(() => {
+                // Read current path from DOM attribute inside effect
+                // This allows the effect to see updated paths after array reorder
+                const currentPath = htmlEl.getAttribute('data-field-path') || htmlEl.getAttribute('name') || fieldPath;
+                const errorMsg = form.error(currentPath);
+                if (errorMsg) {
+                    htmlEl.setAttribute('aria-invalid', 'true');
+                    // Use form prefix for unique IDs across multiple forms
+                    const errorId = `${formBinding}_${currentPath.replace(/[.\[\]]/g, '_')}_error`;
+                    htmlEl.setAttribute('aria-describedby', errorId);
+                }
+                else {
+                    htmlEl.removeAttribute('aria-invalid');
+                    htmlEl.removeAttribute('aria-describedby');
+                }
+            });
+        }
+    }
+}
+/**
+ * Bind all [d-error] directives within root.
+ * Displays error messages for specific fields.
+ */
+function bindError(root, ctx, cleanups) {
+    const elements = qsaIncludingRoot(root, '[d-error]');
+    for (const el of elements) {
+        // Prefer data-error-path (set by d-array) over d-error for full path
+        const dataErrorPath = el.getAttribute('data-error-path');
+        const dErrorPath = normalizeBinding(el.getAttribute('d-error'));
+        const fieldPath = dataErrorPath || dErrorPath;
+        if (!fieldPath)
+            continue;
+        // Find the form element - use context first (for detached clones), then closest()
+        // When bind() runs on d-array clones, the clone is still detached from DOM,
+        // so el.closest('form[d-form]') returns null. We pass form refs through context.
+        const formEl = ctx._formElement || el.closest('form[d-form]');
+        if (!formEl) {
+            warn(`d-error: error for "${fieldPath}" must be inside a [d-form]`);
+            continue;
+        }
+        const formBinding = ctx._formBinding || normalizeBinding(formEl.getAttribute('d-form'));
+        if (!formBinding)
+            continue;
+        const form = ctx[formBinding];
+        if (!form || typeof form !== 'object' || !('error' in form))
+            continue;
+        const htmlEl = el;
+        // Generate stable ID with form prefix to avoid duplicate IDs
+        // Multiple forms on same page can have fields with same names
+        const errorId = `${formBinding}_${fieldPath.replace(/[.\[\]]/g, '_')}_error`;
+        htmlEl.id = errorId;
+        // Set role for accessibility
+        htmlEl.setAttribute('role', 'alert');
+        htmlEl.setAttribute('aria-live', 'polite');
+        // Reactive error display
+        effect(() => {
+            // Read current path from DOM attribute inside effect
+            // This allows the effect to see updated paths after array reorder
+            const currentPath = htmlEl.getAttribute('data-error-path') || fieldPath;
+            const errorMsg = form.error(currentPath);
+            if (errorMsg) {
+                // Update ID to match current path (with form prefix for uniqueness)
+                const errorId = `${formBinding}_${currentPath.replace(/[.\[\]]/g, '_')}_error`;
+                htmlEl.id = errorId;
+                htmlEl.textContent = errorMsg;
+                htmlEl.style.display = '';
+            }
+            else {
+                htmlEl.textContent = '';
+                htmlEl.style.display = 'none';
+            }
+        });
+    }
+}
+/**
+ * Bind all [d-form-error] directives within root.
+ * Displays form-level error messages.
+ */
+function bindFormError(root, ctx, cleanups) {
+    const elements = qsaIncludingRoot(root, '[d-form-error]');
+    for (const el of elements) {
+        // Use the attribute value as explicit form binding name when provided
+        const explicitBinding = normalizeBinding(el.getAttribute('d-form-error'));
+        // Fall back to finding the form element via context or closest()
+        const formEl = ctx._formElement || el.closest('form[d-form]');
+        const formBinding = explicitBinding
+            || ctx._formBinding
+            || (formEl ? normalizeBinding(formEl.getAttribute('d-form')) : null);
+        if (!formBinding) {
+            warn('d-form-error: must specify a form binding or be inside a [d-form]');
+            continue;
+        }
+        const form = ctx[formBinding];
+        if (!form || typeof form !== 'object' || !('formError' in form))
+            continue;
+        const htmlEl = el;
+        // Set role for accessibility
+        htmlEl.setAttribute('role', 'alert');
+        htmlEl.setAttribute('aria-live', 'polite');
+        // Reactive form error display
+        effect(() => {
+            const errorMsg = form.formError();
+            if (errorMsg) {
+                htmlEl.textContent = errorMsg;
+                htmlEl.style.display = '';
+            }
+            else {
+                htmlEl.textContent = '';
+                htmlEl.style.display = 'none';
+            }
+        });
+    }
+}
+/**
+ * Bind all [d-array] directives within root.
+ * Renders field arrays with stable keys for reordering.
+ * Preserves DOM state by reusing keyed nodes instead of full teardown.
+ */
+function bindArray(root, ctx, cleanups) {
+    const elements = qsaIncludingRoot(root, '[d-array]')
+        // Skip d-array inside d-each templates
+        // They'll be bound when the template is cloned
+        // Note: qsaIncludingRoot's boundary logic already prevents duplicate processing,
+        // so we don't need an additional filter for nested d-arrays
+        .filter(el => !el.closest('[d-each]'));
+    for (const el of elements) {
+        // Prefer data-array-path (set by parent d-array for nested arrays) over d-array
+        const dataArrayPath = el.getAttribute('data-array-path');
+        const dArrayAttr = normalizeBinding(el.getAttribute('d-array'));
+        const arrayPath = dataArrayPath || dArrayAttr;
+        if (!arrayPath)
+            continue;
+        // Find the form element — use context first (for detached clones), then closest()
+        const formEl = ctx._formElement || el.closest('form[d-form]');
+        if (!formEl) {
+            warn(`d-array: array "${arrayPath}" must be inside a [d-form]`);
+            continue;
+        }
+        const formBinding = ctx._formBinding || normalizeBinding(formEl.getAttribute('d-form'));
+        if (!formBinding)
+            continue;
+        const form = ctx[formBinding];
+        if (!form || typeof form !== 'object' || !('fieldArray' in form))
+            continue;
+        // Get or create the field array
+        const fieldArray = form.fieldArray(arrayPath);
+        // Find the template element (d-each inside d-array)
+        const templateElement = el.querySelector('[d-each]');
+        if (!templateElement) {
+            warn(`d-array: array "${arrayPath}" must contain a [d-each] template`);
+            continue;
+        }
+        // Store template reference for closure (TypeScript assertion)
+        const template = templateElement;
+        const comment = document.createComment(`d-array:${arrayPath}`);
+        template.parentNode?.replaceChild(comment, template);
+        template.removeAttribute('d-each');
+        // Track clones by key to preserve DOM state on reorder
+        const clonesByKey = new Map();
+        const disposesByKey = new Map();
+        const metadataByKey = new Map();
+        const itemSignalsByKey = new Map();
+        function createClone(key, value, index, count) {
+            const clone = template.cloneNode(true);
+            // Create context for this item
+            const itemCtx = Object.create(ctx);
+            // Create signal for item so bindings can react to updates
+            const itemSignal = signal(value);
+            // Create signals for spread properties (if value is an object)
+            // This allows {propName} bindings to update when value changes
+            const spreadProps = new Map();
+            if (typeof value === 'object' && value !== null) {
+                for (const [propKey, propValue] of Object.entries(value)) {
+                    const propSignal = signal(propValue);
+                    spreadProps.set(propKey, propSignal);
+                    itemCtx[propKey] = propSignal;
+                }
+            }
+            itemSignalsByKey.set(key, { item: itemSignal, spreadProps });
+            // Use signals for metadata so they can be updated on reorder
+            const metadata = {
+                $index: signal(index),
+                $count: signal(count),
+                $first: signal(index === 0),
+                $last: signal(index === count - 1),
+                $odd: signal(index % 2 !== 0),
+                $even: signal(index % 2 === 0),
+            };
+            metadataByKey.set(key, metadata);
+            // Expose item signal and metadata to context
+            itemCtx.item = itemSignal;
+            itemCtx.key = key;
+            itemCtx.$index = metadata.$index;
+            itemCtx.$count = metadata.$count;
+            itemCtx.$first = metadata.$first;
+            itemCtx.$last = metadata.$last;
+            itemCtx.$odd = metadata.$odd;
+            itemCtx.$even = metadata.$even;
+            // Pass form reference for bindField/bindError to use
+            // When clone is detached, el.closest('form[d-form]') returns null
+            itemCtx._formElement = formEl;
+            itemCtx._formBinding = formBinding;
+            // Expose array operations bound to this item's key (not index)
+            itemCtx.$remove = () => fieldArray.remove(key);
+            itemCtx.$moveUp = () => {
+                const currentIndex = fieldArray._getIndex(key);
+                if (currentIndex > 0)
+                    fieldArray.move(currentIndex, currentIndex - 1);
+            };
+            itemCtx.$moveDown = () => {
+                const currentIndex = fieldArray._getIndex(key);
+                if (currentIndex < fieldArray.length() - 1)
+                    fieldArray.move(currentIndex, currentIndex + 1);
+            };
+            // Mark and bind clone
+            clone.setAttribute('data-dalila-internal-bound', '');
+            clone.setAttribute('data-array-key', key);
+            // Update field names and d-field to include full path
+            // Include clone root itself (for primitive arrays like <input d-each="items" d-field="value">)
+            const fields = [];
+            if (clone.hasAttribute('d-field'))
+                fields.push(clone);
+            fields.push(...Array.from(clone.querySelectorAll('[d-field]')));
+            for (const field of fields) {
+                const relativeFieldPath = field.getAttribute('d-field');
+                if (relativeFieldPath) {
+                    const fullPath = `${arrayPath}[${index}].${relativeFieldPath}`;
+                    field.setAttribute('name', fullPath);
+                    // Set data-field-path for bindField to use full path
+                    field.setAttribute('data-field-path', fullPath);
+                }
+            }
+            // Also update d-error elements to use full path (including root)
+            const errors = [];
+            if (clone.hasAttribute('d-error'))
+                errors.push(clone);
+            errors.push(...Array.from(clone.querySelectorAll('[d-error]')));
+            for (const errorEl of errors) {
+                const relativeErrorPath = errorEl.getAttribute('d-error');
+                if (relativeErrorPath) {
+                    const fullPath = `${arrayPath}[${index}].${relativeErrorPath}`;
+                    errorEl.setAttribute('data-error-path', fullPath);
+                }
+            }
+            // Update nested d-array elements to use full path (for nested field arrays)
+            const nestedArrays = clone.querySelectorAll('[d-array]');
+            for (const nestedArr of nestedArrays) {
+                const relativeArrayPath = nestedArr.getAttribute('d-array');
+                if (relativeArrayPath) {
+                    const fullPath = `${arrayPath}[${index}].${relativeArrayPath}`;
+                    nestedArr.setAttribute('data-array-path', fullPath);
+                }
+            }
+            // Set type="button" on array control buttons to prevent form submit
+            // Buttons like d-on-click="$remove" inside templates aren't processed by
+            // bindArrayOperations (they don't exist yet), so set it here during clone creation
+            const controlButtons = clone.querySelectorAll('button[d-on-click*="$remove"], button[d-on-click*="$moveUp"], button[d-on-click*="$moveDown"], button[d-on-click*="$swap"]');
+            for (const btn of controlButtons) {
+                if (btn.getAttribute('type') !== 'button') {
+                    btn.setAttribute('type', 'button');
+                }
+            }
+            const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
+            disposesByKey.set(key, dispose);
+            clonesByKey.set(key, clone);
+            return clone;
+        }
+        function updateCloneIndex(clone, key, value, index, count) {
+            // Update field names with new index (values stay in DOM)
+            // Include clone root itself (for primitive arrays)
+            const fields = [];
+            if (clone.hasAttribute('d-field'))
+                fields.push(clone);
+            fields.push(...Array.from(clone.querySelectorAll('[d-field]')));
+            for (const field of fields) {
+                const relativeFieldPath = field.getAttribute('d-field');
+                if (relativeFieldPath) {
+                    const fullPath = `${arrayPath}[${index}].${relativeFieldPath}`;
+                    field.setAttribute('name', fullPath);
+                    field.setAttribute('data-field-path', fullPath);
+                }
+            }
+            // Update d-error elements (including root)
+            const errors = [];
+            if (clone.hasAttribute('d-error'))
+                errors.push(clone);
+            errors.push(...Array.from(clone.querySelectorAll('[d-error]')));
+            for (const errorEl of errors) {
+                const relativeErrorPath = errorEl.getAttribute('d-error');
+                if (relativeErrorPath) {
+                    const fullPath = `${arrayPath}[${index}].${relativeErrorPath}`;
+                    errorEl.setAttribute('data-error-path', fullPath);
+                }
+            }
+            // Update nested d-array paths
+            const nestedArrays = clone.querySelectorAll('[d-array]');
+            for (const nestedArr of nestedArrays) {
+                const relativeArrayPath = nestedArr.getAttribute('d-array');
+                if (relativeArrayPath) {
+                    const fullPath = `${arrayPath}[${index}].${relativeArrayPath}`;
+                    nestedArr.setAttribute('data-array-path', fullPath);
+                }
+            }
+            // Update metadata signals with new index values
+            const metadata = metadataByKey.get(key);
+            if (metadata) {
+                metadata.$index.set(index);
+                metadata.$count.set(count);
+                metadata.$first.set(index === 0);
+                metadata.$last.set(index === count - 1);
+                metadata.$odd.set(index % 2 !== 0);
+                metadata.$even.set(index % 2 === 0);
+            }
+            // Update item signals when value changes via updateAt()
+            const itemSignals = itemSignalsByKey.get(key);
+            if (itemSignals) {
+                // Update the item signal
+                itemSignals.item.set(value);
+                // Update spread property signals
+                if (typeof value === 'object' && value !== null) {
+                    const newProps = new Set(Object.keys(value));
+                    // Update existing props and clear removed ones
+                    for (const [propKey, propSignal] of itemSignals.spreadProps) {
+                        if (newProps.has(propKey)) {
+                            propSignal.set(value[propKey]);
+                        }
+                        else {
+                            // Property was removed - clear to undefined
+                            propSignal.set(undefined);
+                        }
+                    }
+                }
+                else {
+                    // Value is not an object (null, primitive, etc) - clear all spread props
+                    for (const [, propSignal] of itemSignals.spreadProps) {
+                        propSignal.set(undefined);
+                    }
+                }
+            }
+        }
+        function renderList() {
+            const items = fieldArray.fields();
+            const newKeys = new Set(items.map((item) => item.key));
+            // Remove clones for keys that no longer exist
+            for (const [key, clone] of clonesByKey) {
+                if (!newKeys.has(key)) {
+                    clone.remove();
+                    clonesByKey.delete(key);
+                    metadataByKey.delete(key);
+                    itemSignalsByKey.delete(key);
+                    const dispose = disposesByKey.get(key);
+                    if (dispose) {
+                        dispose();
+                        disposesByKey.delete(key);
+                    }
+                }
+            }
+            // Build new DOM order, reusing existing clones
+            const parent = comment.parentNode;
+            if (!parent)
+                return;
+            // Collect all clones in new order
+            const orderedClones = [];
+            for (let i = 0; i < items.length; i++) {
+                const { key, value } = items[i];
+                let clone = clonesByKey.get(key);
+                if (clone) {
+                    // Reuse existing clone, update index-based attributes and item value
+                    updateCloneIndex(clone, key, value, i, items.length);
+                }
+                else {
+                    // Create new clone for new key
+                    clone = createClone(key, value, i, items.length);
+                }
+                orderedClones.push(clone);
+            }
+            // Reorder DOM nodes efficiently
+            // Remove all clones from current positions
+            for (const clone of orderedClones) {
+                if (clone.parentNode) {
+                    clone.parentNode.removeChild(clone);
+                }
+            }
+            // Insert in correct order before the comment
+            for (const clone of orderedClones) {
+                parent.insertBefore(clone, comment);
+            }
+        }
+        // Reactive rendering
+        effect(() => {
+            renderList();
+        });
+        // Bind array operation buttons
+        bindArrayOperations(el, fieldArray, cleanups);
+        cleanups.push(() => {
+            for (const clone of clonesByKey.values()) {
+                clone.remove();
+            }
+            for (const dispose of disposesByKey.values()) {
+                dispose();
+            }
+            clonesByKey.clear();
+            disposesByKey.clear();
+            metadataByKey.clear();
+            itemSignalsByKey.clear();
+        });
+    }
+}
+/**
+ * Bind array operation buttons: d-append, d-remove, d-insert, d-move-up, d-move-down, d-swap
+ */
+function bindArrayOperations(container, fieldArray, cleanups) {
+    // d-append: append new item
+    const appendButtons = container.querySelectorAll('[d-append]');
+    for (const btn of appendButtons) {
+        // Set type="button" to prevent form submit
+        // Inside <form>, buttons default to type="submit"
+        if (btn.getAttribute('type') !== 'button' && btn.tagName === 'BUTTON') {
+            btn.setAttribute('type', 'button');
+        }
+        const handler = (e) => {
+            e.preventDefault(); // Extra safety
+            const defaultValue = btn.getAttribute('d-append');
+            try {
+                const value = defaultValue ? JSON.parse(defaultValue) : {};
+                fieldArray.append(value);
+            }
+            catch {
+                fieldArray.append({});
+            }
+        };
+        btn.addEventListener('click', handler);
+        cleanups.push(() => btn.removeEventListener('click', handler));
+    }
+    // d-remove: remove item (uses context from bindArray)
+    const removeButtons = container.querySelectorAll('[d-remove]');
+    for (const btn of removeButtons) {
+        // This is handled in the item context during bindArray
+        // Just prevent default if it's a button
+        if (btn.getAttribute('type') !== 'button' && btn.tagName === 'BUTTON') {
+            btn.setAttribute('type', 'button');
+        }
+    }
+    // d-move-up, d-move-down: handled in item context
+    const moveButtons = container.querySelectorAll('[d-move-up], [d-move-down]');
+    for (const btn of moveButtons) {
+        if (btn.getAttribute('type') !== 'button' && btn.tagName === 'BUTTON') {
+            btn.setAttribute('type', 'button');
+        }
+    }
+}
+// ============================================================================
 // Main bind() Function
 // ============================================================================
 /**
@@ -524,9 +1073,13 @@ export function bind(root, ctx, options = {}) {
     const cleanups = [];
     // Run all bindings within the template scope
     withScope(templateScope, () => {
-        // 1. d-each — must run first: removes templates before TreeWalker visits them
+        // 1. Form setup — must run very early to register form instances
+        bindForm(root, ctx, cleanups);
+        // 2. d-array — must run before d-each to setup field arrays
+        bindArray(root, ctx, cleanups);
+        // 3. d-each — must run early: removes templates before TreeWalker visits them
         bindEach(root, ctx, cleanups);
-        // 2. Text interpolation
+        // 4. Text interpolation
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         const textNodes = [];
         // Same boundary logic as qsaIncludingRoot: only visit text nodes that
@@ -553,17 +1106,22 @@ export function bind(root, ctx, options = {}) {
         for (const node of textNodes) {
             bindTextNode(node, ctx, cleanups);
         }
-        // 3. d-attr bindings
+        // 5. d-attr bindings
         bindAttrs(root, ctx, cleanups);
-        // 4. d-html bindings
+        // 6. d-html bindings
         bindHtml(root, ctx, cleanups);
-        // 5. Event bindings
+        // 7. Form fields — register fields with form instances
+        bindField(root, ctx, cleanups);
+        // 8. Event bindings
         bindEvents(root, ctx, events, cleanups);
-        // 6. d-when directive
+        // 9. d-when directive
         bindWhen(root, ctx, cleanups);
-        // 7. d-match directive
+        // 10. d-match directive
         bindMatch(root, ctx, cleanups);
-        // 8. d-if — must run last: elements are fully bound before conditional removal
+        // 11. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
+        bindError(root, ctx, cleanups);
+        bindFormError(root, ctx, cleanups);
+        // 12. d-if — must run last: elements are fully bound before conditional removal
         bindIf(root, ctx, cleanups);
     });
     // Bindings complete: remove loading state and mark as ready.
