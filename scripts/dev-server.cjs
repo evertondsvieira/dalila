@@ -883,94 +883,49 @@ const notifyHmr = (filename) => {
 };
 
 /**
- * Use chokidar for reliable cross-platform watching.
- * Falls back to polling-based fs.watch if chokidar is not available.
+ * Use native fs.watch for file watching.
  */
 function setupWatcher() {
-  let chokidar;
-  try {
-    chokidar = require('chokidar');
-  } catch {
-    chokidar = null;
-  }
+  // Manual directory walking + fs.watch on each file/subdir
+  // fs.watch with recursive:true doesn't work reliably on Linux
+  console.log('[Watcher] Using fs.watch');
 
-  if (chokidar) {
-    // Use chokidar for reliable watching on all platforms
-    console.log('[Watcher] Using chokidar');
+  function watchDirectory(dir) {
+    if (!fs.existsSync(dir)) return;
 
-    watchTargets.forEach((dir) => {
-      if (!fs.existsSync(dir)) return;
-
-      const watcher = chokidar.watch(dir, {
-        ignored: /(^|[\/\\])\../, // Ignore dotfiles
-        persistent: true,
-        ignoreInitial: true,
-        awaitWriteFinish: {
-          stabilityThreshold: 100,
-          pollInterval: 50,
-        },
-      });
-
-      watcher.on('change', (filePath) => {
-        if (filePath.endsWith('.map')) return;
-        const filename = path.relative(dir, filePath);
+    try {
+      // Watch the directory itself
+      const watcher = fs.watch(dir, (eventType, filename) => {
+        if (!filename) return;
+        if (filename.endsWith('.map')) return;
         notifyHmr(filename);
-      });
 
-      watcher.on('add', (filePath) => {
-        if (filePath.endsWith('.map')) return;
-        const filename = path.relative(dir, filePath);
-        notifyHmr(filename);
+        // Check if a new subdirectory was added
+        if (eventType === 'rename') {
+          const fullPath = path.join(dir, filename);
+          try {
+            const stat = fs.statSync(fullPath);
+            if (stat.isDirectory()) {
+              watchDirectory(fullPath);
+            }
+          } catch { /* file might have been deleted */ }
+        }
       });
-
-      watcher.on('error', (err) => {
-        console.error('[Watcher] Error:', err);
-      });
-
       watchers.push(watcher);
-    });
-  } else {
-    // Fallback: Manual directory walking + fs.watch on each file/subdir
-    // fs.watch with recursive:true doesn't work reliably on Linux
-    console.log('[Watcher] Using fs.watch fallback (install chokidar for better performance)');
 
-    function watchDirectory(dir) {
-      if (!fs.existsSync(dir)) return;
-
-      try {
-        // Watch the directory itself
-        const watcher = fs.watch(dir, (eventType, filename) => {
-          if (!filename) return;
-          if (filename.endsWith('.map')) return;
-          notifyHmr(filename);
-
-          // Check if a new subdirectory was added
-          if (eventType === 'rename') {
-            const fullPath = path.join(dir, filename);
-            try {
-              const stat = fs.statSync(fullPath);
-              if (stat.isDirectory()) {
-                watchDirectory(fullPath);
-              }
-            } catch { /* file might have been deleted */ }
-          }
-        });
-        watchers.push(watcher);
-
-        // Watch subdirectories recursively
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        entries.forEach((entry) => {
-          if (entry.isDirectory() && !entry.name.startsWith('.')) {
-            watchDirectory(path.join(dir, entry.name));
-          }
-        });
-      } catch (err) {
-        console.warn('[Watcher] Could not watch:', dir, err.message);
-      }
+      // Watch subdirectories recursively
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries.forEach((entry) => {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          watchDirectory(path.join(dir, entry.name));
+        }
+      });
+    } catch (err) {
+      console.warn('[Watcher] Could not watch:', dir, err.message);
     }
-
-    watchTargets.forEach((dir) => watchDirectory(dir));
   }
+
+  watchTargets.forEach((dir) => watchDirectory(dir));
 }
 
 // ============================================================================
