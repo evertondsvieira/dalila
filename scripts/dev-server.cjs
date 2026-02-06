@@ -116,6 +116,11 @@ function resolveSpaFallbackPath(requestPath) {
     parts.pop();
   }
 
+  const rootIndex = resolvePath('/index.html');
+  if (rootIndex && fs.existsSync(rootIndex)) {
+    return { requestPath: '/index.html', fsPath: rootIndex };
+  }
+
   return null;
 }
 
