@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dalila Forms Examples</title>
+  <link rel="stylesheet" href="/examples/forms/style.css">
+  <script type="module" src="/examples/forms/script.ts"></script>
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>Dalila Forms</h1>
+      <p class="tagline">DOM-first reactive form management</p>
+    </header>
+
+    <main>
+      <!-- Basic Form -->
+      <section class="card">
+        <h2>Basic Form with Validation</h2>
+        <p class="description">Simple form with client-side validation and error display.</p>
+
+        <form d-form="basicForm" d-on-submit="handleBasicSubmit" class="demo-form">
+          <div class="form-group">
+            <label for="name">Name *</label>
+            <input d-field="name" id="name" type="text" />
+            <span d-error="name" class="error"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="email">Email *</label>
+            <input d-field="email" id="email" type="email" />
+            <span d-error="email" class="error"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="age">Age</label>
+            <input d-field="age" id="age" type="number" />
+            <span d-error="age" class="error"></span>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">
+              <span d-when="basicSubmitting" hidden>Saving...</span>
+              <span d-when="basicIdle">Save</span>
+            </button>
+            <button type="button" class="btn-secondary" d-on-click="resetBasic">Reset</button>
+          </div>
+
+          <span d-form-error="basicForm" class="form-error"></span>
+          <div d-when="basicSuccess" class="success" hidden>Form submitted successfully!</div>
+
+          <div class="output">
+            <strong>Submitted Data:</strong>
+            <div class="code">{basicData}</div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Checkboxes -->
+      <section class="card">
+        <h2>Checkboxes & Select</h2>
+        <p class="description">Single checkbox (boolean), multiple checkboxes (array), and select multiple.</p>
+
+        <form d-form="checkboxForm" d-on-submit="handleCheckboxSubmit" class="demo-form">
+          <div class="form-group">
+            <label>
+              <input d-field="agree" type="checkbox" />
+              I agree to terms (single checkbox → boolean)
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label>Favorite Colors (multiple checkboxes → array)</label>
+            <div class="checkbox-group">
+              <label>
+                <input d-field="colors" type="checkbox" value="red" />
+                Red
+              </label>
+              <label>
+                <input d-field="colors" type="checkbox" value="blue" />
+                Blue
+              </label>
+              <label>
+                <input d-field="colors" type="checkbox" value="green" />
+                Green
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="tags">Tags (select multiple → array)</label>
+            <select d-field="tags" id="tags" multiple size="4">
+              <option value="js">JavaScript</option>
+              <option value="ts">TypeScript</option>
+              <option value="css">CSS</option>
+              <option value="html">HTML</option>
+            </select>
+            <small class="muted">💡 Hold Ctrl/Cmd to select multiple</small>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Submit</button>
+          </div>
+
+          <div class="output">
+            <strong>Form Data:</strong>
+            <div class="code">{checkboxData}</div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Field Arrays -->
+      <section class="card">
+        <h2>Dynamic Field Arrays</h2>
+        <p class="description">Add, remove, and reorder form fields with stable keys.</p>
+
+        <form d-form="arrayForm" d-on-submit="handleArraySubmit" class="demo-form">
+          <div class="form-group">
+            <label for="contact-name">Contact Name</label>
+            <input d-field="contactName" id="contact-name" type="text" />
+          </div>
+
+          <div class="form-group">
+            <label>Phone Numbers</label>
+            <div d-array="phones" class="field-array">
+              <div d-each="items" class="array-item">
+                <div class="array-item-content">
+                  <input d-field="number" type="tel" placeholder="Phone number" />
+                  <select d-field="type">
+                    <option value="mobile">Mobile</option>
+                    <option value="home">Home</option>
+                    <option value="work">Work</option>
+                  </select>
+
+                  <div class="array-item-actions">
+                    <button type="button" class="btn-icon" d-on-click="$moveUp" title="Move up">↑</button>
+                    <button type="button" class="btn-icon" d-on-click="$moveDown" title="Move down">↓</button>
+                    <button type="button" class="btn-icon btn-danger" d-on-click="$remove" title="Remove">×</button>
+                  </div>
+
+                  <small class="muted">Item {$index} • <span d-when="$first">First</span><span
+                      d-when="$last">Last</span></small>
+                </div>
+                <span d-error="number" class="error"></span>
+              </div>
+
+              <button type="button" class="btn-secondary" d-append="{ number: '', type: 'mobile' }">
+                + Add Phone
+              </button>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Submit</button>
+          </div>
+
+          <div class="output">
+            <strong>Form Data:</strong>
+            <div class="code">{arrayData}</div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Nested Objects -->
+      <section class="card">
+        <h2>Nested Objects</h2>
+        <p class="description">Dot notation for nested object structures.</p>
+
+        <form d-form="nestedForm" d-on-submit="handleNestedSubmit" class="demo-form">
+          <fieldset>
+            <legend>User Info</legend>
+            <div class="form-group">
+              <label for="user-name">Name</label>
+              <input d-field="user.name" id="user-name" type="text" />
+              <span d-error="user.name" class="error"></span>
+            </div>
+
+            <div class="form-group">
+              <label for="user-email">Email</label>
+              <input d-field="user.email" id="user-email" type="email" />
+              <span d-error="user.email" class="error"></span>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Address</legend>
+            <div class="form-group">
+              <label for="address-street">Street</label>
+              <input d-field="address.street" id="address-street" type="text" />
+            </div>
+
+            <div class="form-group">
+              <label for="address-city">City</label>
+              <input d-field="address.city" id="address-city" type="text" />
+            </div>
+
+            <div class="form-group">
+              <label for="address-zip">ZIP</label>
+              <input d-field="address.zip" id="address-zip" type="text" />
+            </div>
+          </fieldset>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Submit</button>
+          </div>
+
+          <div class="output">
+            <strong>Form Data:</strong>
+            <div class="code">{nestedData}</div>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <footer>
+      <p>Built with Dalila - DOM-first reactivity</p>
+    </footer>
+  </div>
+</body>
+
+</html>

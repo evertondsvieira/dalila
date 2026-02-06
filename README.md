@@ -77,6 +77,10 @@ bind(document.getElementById('app')!, ctx);
 - [Query](./docs/core/query.md) — Cached queries
 - [Mutations](./docs/core/mutation.md) — Write operations
 
+### Forms
+
+- [Forms](./docs/forms.md) — DOM-first form management with validation, field arrays, and accessibility
+
 ### Utilities
 
 - [Scheduler](./docs/core/scheduler.md) — Batching and coordination
@@ -187,6 +191,49 @@ const router = createRouter({
 });
 
 router.start();
+```
+
+### Forms
+
+```ts
+import { createForm } from 'dalila';
+
+const userForm = createForm({
+  defaultValues: { name: '', email: '' },
+  validate: (data) => {
+    const errors: Record<string, string> = {};
+    if (!data.name) errors.name = 'Name is required';
+    if (!data.email?.includes('@')) errors.email = 'Invalid email';
+    return errors;
+  }
+});
+
+async function handleSubmit(data, { signal }) {
+  await fetch('/api/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+    signal
+  });
+}
+```
+
+```html
+<form d-form="userForm" d-on-submit="handleSubmit">
+  <label>
+    Name
+    <input d-field="name" />
+  </label>
+  <span d-error="name"></span>
+
+  <label>
+    Email
+    <input d-field="email" type="email" />
+  </label>
+  <span d-error="email"></span>
+
+  <button type="submit">Save</button>
+  <span d-form-error="userForm"></span>
+</form>
 ```
 
 ## Development
