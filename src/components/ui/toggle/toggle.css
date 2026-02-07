@@ -1,0 +1,90 @@
+/* Dalila UI — Toggle */
+
+.d-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--d-space-3);
+
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  color: var(--d-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.d-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.d-toggle-track {
+  position: relative;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 1.5rem;
+
+  background: var(--d-surface-raised);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-full);
+
+  transition: background var(--d-duration-fast) ease, border-color var(--d-duration-fast) ease;
+}
+
+.d-toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1.125rem;
+  height: 1.125rem;
+
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform var(--d-duration) var(--d-ease-bounce);
+}
+
+[data-theme="light"] .d-toggle-track::after {
+  background: #0a0a0a;
+}
+
+.d-toggle input:checked + .d-toggle-track {
+  background: var(--d-accent);
+  border-color: var(--d-accent);
+}
+
+.d-toggle input:checked + .d-toggle-track::after {
+  transform: translateX(1.25rem);
+}
+
+.d-toggle input:focus-visible + .d-toggle-track {
+  outline: none;
+  box-shadow: var(--d-shadow-glow);
+}
+
+.d-toggle input:disabled + .d-toggle-track {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.d-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.d-toggle-sm .d-toggle-track {
+  width: 2.25rem;
+  height: 1.25rem;
+}
+
+.d-toggle-sm .d-toggle-track::after {
+  width: 0.875rem;
+  height: 0.875rem;
+  top: 2px;
+  left: 2px;
+}
+
+.d-toggle-sm input:checked + .d-toggle-track::after {
+  transform: translateX(1rem);
+}

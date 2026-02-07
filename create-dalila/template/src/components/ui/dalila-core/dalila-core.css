@@ -1,0 +1,14 @@
+/*
+ * Dalila UI — Core (minimal)
+ * Tokens + typography + layout + button + input + form.
+ *
+ * Usage:
+ *   <link rel="stylesheet" href="dalila-core.css" />
+ */
+
+@import "./tokens.css";
+@import "./typography.css";
+@import "./layout.css";
+@import "./button.css";
+@import "./input.css";
+@import "./form.css";

@@ -1,0 +1,78 @@
+/* Dalila UI — Alert */
+
+.d-alert {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-space-1);
+
+  padding: var(--d-space-4) var(--d-space-5);
+
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  color: var(--d-text-primary);
+
+  background: var(--d-surface-card);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+  box-shadow: inset 3px 0 0 var(--d-accent);
+}
+
+.d-alert-title {
+  font-size: var(--d-text-base);
+  font-weight: var(--d-font-semibold);
+  line-height: 1.3;
+}
+
+.d-alert-text {
+  margin: 0;
+  font-size: var(--d-text-sm);
+  color: var(--d-text-secondary);
+  line-height: var(--d-leading);
+}
+
+.d-alert-success {
+  background: var(--d-success-light);
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--d-success);
+}
+
+.d-alert-error {
+  background: var(--d-error-light);
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--d-error);
+}
+
+.d-alert-warning {
+  background: var(--d-warning-light);
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--d-warning);
+}
+
+.d-alert-info {
+  background: var(--d-info-light);
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--d-info);
+}
+
+.d-alert-success .d-alert-title { color: var(--d-success); }
+.d-alert-error .d-alert-title { color: var(--d-error); }
+.d-alert-warning .d-alert-title { color: var(--d-warning); }
+.d-alert-info .d-alert-title { color: var(--d-info); }
+
+.d-alert-dismiss {
+  position: absolute;
+  top: var(--d-space-3);
+  right: var(--d-space-3);
+  padding: var(--d-space-1);
+  background: none;
+  border: none;
+  color: var(--d-text-muted);
+  cursor: pointer;
+  border-radius: var(--d-radius-sm);
+  transition: color var(--d-duration-fast) ease;
+}
+
+.d-alert-dismiss:hover {
+  color: var(--d-text-primary);
+}

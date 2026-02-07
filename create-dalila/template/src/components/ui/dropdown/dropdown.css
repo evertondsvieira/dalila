@@ -1,0 +1,87 @@
+/* Dalila UI — Dropdown & Menu */
+
+.d-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.d-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: var(--d-z-dropdown);
+  min-width: 12rem;
+  padding: var(--d-space-1) 0;
+  background: var(--d-surface-card);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+  box-shadow: var(--d-shadow-md);
+
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: all var(--d-duration-fast) ease;
+}
+
+.d-dropdown.open .d-menu,
+.d-menu.open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.d-menu-right {
+  left: auto;
+  right: 0;
+}
+
+.d-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--d-space-2);
+  width: 100%;
+  padding: var(--d-space-2) var(--d-space-3);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  color: var(--d-text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background var(--d-duration-fast) ease;
+  text-align: left;
+  text-decoration: none;
+}
+
+.d-menu-item:hover {
+  background: var(--d-surface-raised);
+}
+
+.d-menu-item-danger {
+  color: var(--d-error);
+}
+
+.d-menu-item-danger:hover {
+  background: var(--d-error-light);
+}
+
+.d-menu-item:disabled,
+.d-menu-item[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.d-menu-separator {
+  height: 1px;
+  background: var(--d-border-color);
+  margin: var(--d-space-1) 0;
+}
+
+.d-menu-label {
+  padding: var(--d-space-2) var(--d-space-3);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-xs);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

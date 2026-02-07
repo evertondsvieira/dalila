@@ -1,0 +1,71 @@
+/* Dalila UI — Badge */
+
+.d-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--d-space-1);
+
+  padding: 0.2rem 0.6rem;
+
+  font-family: var(--d-font-sans);
+  font-size: 0.7rem;
+  font-weight: var(--d-font-semibold);
+  line-height: 1.5;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  color: var(--d-text-primary);
+
+  background: var(--d-surface-raised);
+  border: 1px solid var(--d-border-color);
+  border-radius: 4px;
+}
+
+.d-badge-primary {
+  color: #ffffff;
+  background: var(--d-accent);
+  border-color: var(--d-accent);
+}
+
+.d-badge-accent {
+  color: #ffffff;
+  background: var(--d-accent-500);
+  border-color: var(--d-accent-500);
+}
+
+.d-badge-success {
+  color: var(--d-success);
+  background: var(--d-success-light);
+  border-color: transparent;
+}
+
+.d-badge-error {
+  color: var(--d-error);
+  background: var(--d-error-light);
+  border-color: transparent;
+}
+
+.d-badge-warning {
+  color: var(--d-warning);
+  background: var(--d-warning-light);
+  border-color: transparent;
+}
+
+.d-badge-outline {
+  background: transparent;
+}
+
+.d-badge-solid {
+  color: #ffffff;
+  background: var(--d-gradient-brand);
+  border-color: transparent;
+}
+
+.d-badge-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}

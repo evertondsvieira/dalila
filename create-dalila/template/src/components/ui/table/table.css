@@ -1,0 +1,54 @@
+/* Dalila UI — Table */
+
+.d-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+}
+
+.d-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  color: var(--d-text-primary);
+}
+
+.d-table th {
+  padding: var(--d-space-3) var(--d-space-4);
+  font-weight: var(--d-font-semibold);
+  font-size: var(--d-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--d-text-muted);
+  text-align: left;
+  background: var(--d-surface-raised);
+  border-bottom: 1px solid var(--d-border-color);
+}
+
+.d-table td {
+  padding: var(--d-space-3) var(--d-space-4);
+  border-bottom: 1px solid var(--d-border-color);
+}
+
+.d-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.d-table tbody tr {
+  transition: background var(--d-duration-fast) ease;
+}
+
+.d-table tbody tr:hover {
+  background: var(--d-surface-raised);
+}
+
+.d-table-striped tbody tr:nth-child(even) {
+  background: var(--d-surface-card);
+}
+
+.d-table-compact th,
+.d-table-compact td {
+  padding: var(--d-space-2) var(--d-space-3);
+}

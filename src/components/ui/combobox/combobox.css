@@ -1,0 +1,85 @@
+/* Dalila UI — Combobox */
+
+.d-combobox {
+  position: relative;
+}
+
+.d-combobox-input {
+  width: 100%;
+  padding-right: var(--d-space-8);
+}
+
+.d-combobox-trigger {
+  position: absolute;
+  right: var(--d-space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  background: none;
+  border: none;
+  color: var(--d-text-muted);
+  cursor: pointer;
+  border-radius: var(--d-radius-sm);
+  transition: color var(--d-duration-fast) ease;
+}
+
+.d-combobox-trigger:hover {
+  color: var(--d-text-primary);
+}
+
+.d-combobox-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: var(--d-z-dropdown);
+  max-height: 12rem;
+  overflow-y: auto;
+  padding: var(--d-space-1) 0;
+  background: var(--d-surface-card);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+  box-shadow: var(--d-shadow-md);
+  list-style: none;
+  margin: 0;
+
+  opacity: 0;
+  visibility: hidden;
+  transition: all var(--d-duration-fast) ease;
+}
+
+.d-combobox.open .d-combobox-list {
+  opacity: 1;
+  visibility: visible;
+}
+
+.d-combobox-option {
+  padding: var(--d-space-2) var(--d-space-3);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  color: var(--d-text-primary);
+  cursor: pointer;
+  transition: background var(--d-duration-fast) ease;
+}
+
+.d-combobox-option:hover,
+.d-combobox-option.highlighted {
+  background: var(--d-surface-raised);
+}
+
+.d-combobox-option.selected {
+  color: var(--d-accent);
+  font-weight: var(--d-font-medium);
+}
+
+.d-combobox-empty {
+  padding: var(--d-space-3);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  color: var(--d-text-muted);
+  text-align: center;
+}

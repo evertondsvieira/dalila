@@ -1,0 +1,57 @@
+/* Dalila UI — Checkbox */
+
+.d-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--d-space-2);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  color: var(--d-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.d-checkbox input {
+  position: relative;
+  appearance: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+  background: var(--d-surface-page);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-sm);
+  cursor: pointer;
+  transition: all var(--d-duration-fast) ease;
+}
+
+.d-checkbox input:checked {
+  background: var(--d-accent);
+  border-color: var(--d-accent);
+}
+
+.d-checkbox input:checked::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.d-checkbox input:focus-visible {
+  outline: none;
+  box-shadow: var(--d-shadow-glow);
+}
+
+.d-checkbox input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.d-checkbox:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

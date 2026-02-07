@@ -1,0 +1,38 @@
+/* Dalila UI — Spinner */
+
+@keyframes d-spin {
+  to { transform: rotate(360deg); }
+}
+
+.d-spinner {
+  display: inline-block;
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--d-border-color);
+  border-top-color: var(--d-accent);
+  border-radius: 50%;
+  animation: d-spin 0.6s linear infinite;
+}
+
+.d-spinner-sm {
+  width: 1rem;
+  height: 1rem;
+  border-width: 1.5px;
+}
+
+.d-spinner-lg {
+  width: 2rem;
+  height: 2rem;
+  border-width: 3px;
+}
+
+.d-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--d-space-3);
+  padding: var(--d-space-8);
+  color: var(--d-text-muted);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+}

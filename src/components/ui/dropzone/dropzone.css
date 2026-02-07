@@ -1,0 +1,47 @@
+/* Dalila UI — Dropzone / File Upload */
+
+.d-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--d-space-3);
+  padding: var(--d-space-8);
+  background: var(--d-surface-page);
+  border: 2px dashed var(--d-border-color);
+  border-radius: var(--d-radius-lg);
+  cursor: pointer;
+  transition: all var(--d-duration-fast) ease;
+  text-align: center;
+  font-family: var(--d-font-sans);
+}
+
+.d-dropzone:hover,
+.d-dropzone.dragover {
+  border-color: var(--d-accent);
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.d-dropzone-icon {
+  font-size: 2rem;
+  color: var(--d-text-muted);
+}
+
+.d-dropzone-text {
+  font-size: var(--d-text-sm);
+  color: var(--d-text-muted);
+}
+
+.d-dropzone-text strong {
+  color: var(--d-accent);
+  font-weight: var(--d-font-medium);
+}
+
+.d-dropzone-hint {
+  font-size: var(--d-text-xs);
+  color: var(--d-text-muted);
+}
+
+.d-dropzone input[type="file"] {
+  display: none;
+}

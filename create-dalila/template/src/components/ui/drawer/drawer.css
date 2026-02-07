@@ -1,0 +1,122 @@
+/* Dalila UI — Drawer & Sheet */
+
+.d-drawer::backdrop {
+  background: var(--d-surface-overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.d-drawer {
+  position: fixed;
+  margin: 0;
+  border: none;
+  padding: 0;
+  max-height: 100vh;
+  height: 100%;
+  background: var(--d-surface-card);
+  color: var(--d-text-primary);
+  box-shadow: var(--d-shadow-lg);
+  overflow: hidden;
+
+  inset: 0 0 0 auto;
+  width: min(24rem, 85vw);
+  border-left: 1px solid var(--d-border-color);
+
+  opacity: 0;
+  transform: translateX(1rem);
+  transition:
+    transform var(--d-duration-slow) var(--d-ease),
+    opacity var(--d-duration-slow) var(--d-ease),
+    overlay var(--d-duration-slow) var(--d-ease) allow-discrete,
+    display var(--d-duration-slow) var(--d-ease) allow-discrete;
+}
+
+.d-drawer[open] {
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@starting-style {
+  .d-drawer[open] {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+}
+
+/* Left variant */
+.d-drawer-left {
+  inset: 0 auto 0 0;
+  border-left: none;
+  border-right: 1px solid var(--d-border-color);
+  transform: translateX(-1rem);
+}
+
+.d-drawer-left[open] {
+  transform: translateX(0);
+}
+
+@starting-style {
+  .d-drawer-left[open] {
+    opacity: 0;
+    transform: translateX(-1rem);
+  }
+}
+
+.d-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--d-space-4);
+  padding: var(--d-space-6);
+  border-bottom: 1px solid var(--d-border-color);
+  flex-shrink: 0;
+}
+
+.d-drawer-title {
+  margin: 0;
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-xl);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-primary);
+}
+
+.d-drawer-body {
+  padding: var(--d-space-6);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.d-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--d-space-3);
+  padding: var(--d-space-4) var(--d-space-6);
+  border-top: 1px solid var(--d-border-color);
+  flex-shrink: 0;
+}
+
+/* Sheet variant (bottom) */
+.d-sheet {
+  inset: auto 0 0 0;
+  width: 100%;
+  height: auto;
+  max-height: 85vh;
+  border-left: none;
+  border-top: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-lg) var(--d-radius-lg) 0 0;
+  transform: translateY(100%);
+}
+
+.d-sheet[open] {
+  display: flex;
+  flex-direction: column;
+  transform: translateY(0);
+}
+
+@starting-style {
+  .d-sheet[open] {
+    transform: translateY(100%);
+  }
+}

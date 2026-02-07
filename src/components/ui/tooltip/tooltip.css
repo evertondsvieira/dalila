@@ -1,0 +1,53 @@
+/* Dalila UI — Tooltip */
+
+.d-tooltip {
+  position: relative;
+}
+
+.d-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--d-space-1) var(--d-space-2);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-xs);
+  font-weight: var(--d-font-medium);
+  color: #fff;
+  background: var(--d-slate-900);
+  border-radius: var(--d-radius-sm);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--d-duration-fast) ease;
+  z-index: var(--d-z-tooltip);
+}
+
+[data-theme="light"] .d-tooltip::after {
+  background: var(--d-slate-800);
+}
+
+.d-tooltip:hover::after {
+  opacity: 1;
+}
+
+.d-tooltip-bottom::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+
+.d-tooltip-left::after {
+  bottom: auto;
+  top: 50%;
+  left: auto;
+  right: calc(100% + 6px);
+  transform: translateY(-50%);
+}
+
+.d-tooltip-right::after {
+  bottom: auto;
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
+}

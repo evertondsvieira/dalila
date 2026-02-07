@@ -1,0 +1,62 @@
+/* Dalila UI — Layout */
+
+.d-container {
+  width: 100%;
+  max-width: 56rem;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--d-space-6);
+  padding-right: var(--d-space-6);
+}
+
+.d-container-sm { max-width: 40rem; }
+.d-container-lg { max-width: 72rem; }
+.d-container-xl { max-width: 90rem; }
+
+.d-box {
+  padding: var(--d-space-4);
+}
+
+.d-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-space-4);
+}
+
+.d-stack-1 { gap: var(--d-space-1); }
+.d-stack-2 { gap: var(--d-space-2); }
+.d-stack-3 { gap: var(--d-space-3); }
+.d-stack-6 { gap: var(--d-space-6); }
+.d-stack-8 { gap: var(--d-space-8); }
+
+.d-flex {
+  display: flex;
+  gap: var(--d-space-3);
+}
+
+.d-flex-wrap { flex-wrap: wrap; }
+.d-flex-center { align-items: center; justify-content: center; }
+.d-flex-between { justify-content: space-between; }
+.d-flex-end { justify-content: flex-end; }
+.d-flex-col { flex-direction: column; }
+
+.d-grid {
+  display: grid;
+  gap: var(--d-space-4);
+}
+
+.d-grid-2 { grid-template-columns: repeat(2, 1fr); }
+.d-grid-3 { grid-template-columns: repeat(3, 1fr); }
+.d-grid-4 { grid-template-columns: repeat(4, 1fr); }
+.d-grid-auto { grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+
+@media (max-width: 640px) {
+  .d-grid-2, .d-grid-3, .d-grid-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .d-container {
+    padding-left: var(--d-space-4);
+    padding-right: var(--d-space-4);
+  }
+}

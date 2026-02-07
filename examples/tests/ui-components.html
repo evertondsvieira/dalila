@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dalila UI — E2E Test Fixture</title>
+  <link rel="stylesheet" href="../../src/ui/dalila.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; }
+    body { font-family: var(--d-font-sans); background: var(--d-surface-page); color: var(--d-text-primary); padding: 2rem; }
+  </style>
+</head>
+<body>
+
+  <!-- Dialog -->
+  <section id="dialog-section">
+    <button id="dialog-open" class="d-btn d-btn-primary">Open dialog</button>
+    <dialog id="test-dialog" class="d-dialog">
+      <div class="d-dialog-header">
+        <h3 class="d-dialog-title">Test Dialog</h3>
+        <button id="dialog-close" class="d-dialog-close" type="button">&times;</button>
+      </div>
+      <div class="d-dialog-body">
+        <p>Dialog body content</p>
+      </div>
+      <div class="d-dialog-footer">
+        <button id="dialog-cancel" class="d-btn" type="button">Cancel</button>
+        <button id="dialog-confirm" class="d-btn d-btn-primary" type="button">Confirm</button>
+      </div>
+    </dialog>
+  </section>
+
+  <!-- Drawer -->
+  <section id="drawer-section">
+    <button id="drawer-open" class="d-btn">Open drawer</button>
+    <dialog id="test-drawer" class="d-drawer">
+      <div class="d-drawer-header">
+        <h3 class="d-drawer-title">Test Drawer</h3>
+        <button id="drawer-close" class="d-dialog-close" type="button">&times;</button>
+      </div>
+      <div class="d-drawer-body">
+        <p>Drawer body content</p>
+      </div>
+    </dialog>
+  </section>
+
+  <!-- Dropdown -->
+  <section id="dropdown-section">
+    <div id="test-dropdown" class="d-dropdown">
+      <button id="dropdown-trigger" class="d-btn" type="button">Menu</button>
+      <div class="d-menu" role="menu">
+        <button class="d-menu-item" type="button" data-action="edit">Edit</button>
+        <button class="d-menu-item" type="button" data-action="delete">Delete</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tabs -->
+  <section id="tabs-section">
+    <div id="test-tabs" class="d-tabs">
+      <div class="d-tab-list">
+        <button data-tab="alpha" class="d-tab" type="button">Alpha</button>
+        <button data-tab="beta" class="d-tab" type="button">Beta</button>
+        <button data-tab="gamma" class="d-tab" type="button">Gamma</button>
+      </div>
+      <div class="d-tab-panel" id="panel-alpha">Alpha content</div>
+      <div class="d-tab-panel" id="panel-beta">Beta content</div>
+      <div class="d-tab-panel" id="panel-gamma">Gamma content</div>
+    </div>
+  </section>
+
+  <!-- Combobox -->
+  <section id="combobox-section">
+    <div id="test-combobox" class="d-combobox">
+      <input class="d-input d-combobox-input" type="text" placeholder="Search..." autocomplete="off" />
+      <button class="d-combobox-trigger" type="button">&#9662;</button>
+      <ul class="d-combobox-list">
+        <li class="d-combobox-option" data-value="apple">Apple</li>
+        <li class="d-combobox-option" data-value="banana">Banana</li>
+        <li class="d-combobox-option" data-value="cherry">Cherry</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Accordion -->
+  <section id="accordion-section">
+    <div id="test-accordion" class="d-accordion">
+      <details data-accordion="item1" class="d-accordion-item">
+        <summary>Item 1</summary>
+        <div class="d-accordion-body">Content 1</div>
+      </details>
+      <details data-accordion="item2" class="d-accordion-item">
+        <summary>Item 2</summary>
+        <div class="d-accordion-body">Content 2</div>
+      </details>
+    </div>
+  </section>
+
+  <!-- Popover -->
+  <section id="popover-section">
+    <button id="popover-trigger" class="d-btn" type="button">Show popover</button>
+    <div id="test-popover" class="d-popover" popover="manual">
+      <p class="d-popover-title">Popover Title</p>
+      <p class="d-popover-text">Popover content text.</p>
+    </div>
+  </section>
+
+  <script type="module">
+    import { signal } from '../../dist/core/index.js';
+    import {
+      createDialog,
+      createDrawer,
+      createDropdown,
+      createCombobox,
+      createTabs,
+      createPopover,
+      createAccordion,
+      createCalendar,
+      createToast,
+      createDropzone,
+      mountUI,
+    } from '../../dist/ui/index.js';
+    import { createScope, withScope } from '../../dist/core/scope.js';
+    import { bind } from '../../dist/runtime/bind.js';
+
+    const scope = createScope();
+
+    withScope(scope, () => {
+      // Dialog
+      const dialog = createDialog();
+      const dialogEl = document.getElementById('test-dialog');
+      dialogEl.showModal = function() { this.open = true; this.setAttribute('open', ''); };
+      dialogEl.close = function() { this.open = false; this.removeAttribute('open'); };
+      dialog._attachTo(dialogEl);
+      document.getElementById('dialog-open').addEventListener('click', () => dialog.show());
+      document.getElementById('dialog-close').addEventListener('click', () => dialog.close());
+      document.getElementById('dialog-cancel').addEventListener('click', () => dialog.close());
+      document.getElementById('dialog-confirm').addEventListener('click', () => dialog.close());
+      window.__dialog = dialog;
+
+      // Drawer
+      const drawer = createDrawer({ side: 'left' });
+      const drawerEl = document.getElementById('test-drawer');
+      drawerEl.showModal = function() { this.open = true; this.setAttribute('open', ''); };
+      drawerEl.close = function() { this.open = false; this.removeAttribute('open'); };
+      drawer._attachTo(drawerEl);
+      document.getElementById('drawer-open').addEventListener('click', () => drawer.show());
+      document.getElementById('drawer-close').addEventListener('click', () => drawer.close());
+      window.__drawer = drawer;
+
+      // Dropdown
+      const dropdown = createDropdown();
+      dropdown._attachTo(document.getElementById('test-dropdown'));
+      document.getElementById('dropdown-trigger').addEventListener('click', (e) => dropdown.toggle(e));
+      window.__dropdown = dropdown;
+
+      // Tabs
+      const tabs = createTabs({ initial: 'alpha' });
+      tabs._attachTo(document.getElementById('test-tabs'));
+      const tabList = document.querySelector('#test-tabs .d-tab-list');
+      tabList.addEventListener('click', tabs.handleClick);
+      window.__tabs = tabs;
+
+      // Combobox
+      const combo = createCombobox({
+        options: [
+          { value: 'apple', label: 'Apple' },
+          { value: 'banana', label: 'Banana' },
+          { value: 'cherry', label: 'Cherry' },
+        ],
+      });
+      combo._attachTo(document.getElementById('test-combobox'));
+      const comboInput = document.querySelector('#test-combobox input');
+      comboInput.addEventListener('input', combo.handleInput);
+      comboInput.addEventListener('keydown', combo.handleKeydown);
+      document.querySelectorAll('#test-combobox .d-combobox-option').forEach(opt => {
+        opt.addEventListener('click', combo.handleSelect);
+      });
+      window.__combo = combo;
+
+      // Accordion
+      const accordion = createAccordion({ single: true });
+      accordion._attachTo(document.getElementById('test-accordion'));
+      window.__accordion = accordion;
+
+      // Popover
+      const popover = createPopover({ placement: 'bottom' });
+      popover._attachTo(
+        document.getElementById('popover-trigger'),
+        document.getElementById('test-popover')
+      );
+      document.getElementById('popover-trigger').addEventListener('click', () => popover.toggle());
+      window.__popover = popover;
+    });
+  </script>
+</body>
+</html>

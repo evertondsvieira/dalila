@@ -1,0 +1,60 @@
+/* Dalila UI — Slider */
+
+.d-slider {
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: var(--d-border-color);
+  border: none;
+  border-radius: var(--d-radius-full);
+  outline: none;
+  cursor: pointer;
+}
+
+.d-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  background: var(--d-accent);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform var(--d-duration-fast) var(--d-ease-bounce);
+}
+
+.d-slider::-moz-range-thumb {
+  width: 1.125rem;
+  height: 1.125rem;
+  background: var(--d-accent);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform var(--d-duration-fast) var(--d-ease-bounce);
+}
+
+.d-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.d-slider:hover::-moz-range-thumb {
+  transform: scale(1.15);
+}
+
+.d-slider:focus-visible {
+  box-shadow: var(--d-shadow-glow);
+}
+
+.d-slider:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.d-slider:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+}
+
+.d-slider:disabled::-moz-range-thumb {
+  cursor: not-allowed;
+}

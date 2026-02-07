@@ -1,0 +1,38 @@
+/* Dalila UI — Separator */
+
+.d-separator {
+  border: none;
+  height: 1px;
+  background: var(--d-border-color);
+  margin: var(--d-space-4) 0;
+}
+
+.d-separator-vertical {
+  width: 1px;
+  height: auto;
+  align-self: stretch;
+  margin: 0 var(--d-space-4);
+}
+
+.d-separator-sm { margin: var(--d-space-2) 0; }
+.d-separator-lg { margin: var(--d-space-8) 0; }
+
+.d-separator-label {
+  display: flex;
+  align-items: center;
+  gap: var(--d-space-3);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-xs);
+  color: var(--d-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: var(--d-space-4) 0;
+}
+
+.d-separator-label::before,
+.d-separator-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--d-border-color);
+}

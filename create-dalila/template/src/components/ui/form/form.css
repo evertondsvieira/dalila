@@ -1,0 +1,44 @@
+/* Dalila UI — Form */
+
+.d-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-space-5);
+}
+
+.d-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-space-4);
+}
+
+.d-form-section-title {
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-lg);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-primary);
+  padding-bottom: var(--d-space-2);
+  border-bottom: 1px solid var(--d-border-color);
+  margin: 0;
+}
+
+.d-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--d-space-4);
+}
+
+.d-form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--d-space-3);
+  padding-top: var(--d-space-4);
+}
+
+.d-form-actions-end {
+  justify-content: flex-end;
+}
+
+.d-form-actions-between {
+  justify-content: space-between;
+}

@@ -1,0 +1,45 @@
+/* Dalila UI — Avatar */
+
+.d-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--d-surface-raised);
+  border: 1px solid var(--d-border-color);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-muted);
+  flex-shrink: 0;
+}
+
+.d-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.d-avatar-sm { width: 2rem; height: 2rem; font-size: var(--d-text-xs); }
+.d-avatar-lg { width: 3.5rem; height: 3.5rem; font-size: var(--d-text-lg); }
+.d-avatar-xl { width: 5rem; height: 5rem; font-size: var(--d-text-2xl); }
+
+.d-avatar-square {
+  border-radius: var(--d-radius-md);
+}
+
+.d-avatar-group {
+  display: flex;
+}
+
+.d-avatar-group .d-avatar {
+  margin-left: -0.5rem;
+  border: 2px solid var(--d-surface-page);
+}
+
+.d-avatar-group .d-avatar:first-child {
+  margin-left: 0;
+}

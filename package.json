@@ -37,7 +37,60 @@
     "./form": {
       "types": "./dist/form/index.d.ts",
       "default": "./dist/form/index.js"
-    }
+    },
+    "./components/ui": {
+      "types": "./dist/components/ui/index.d.ts",
+      "default": "./dist/components/ui/index.js"
+    },
+    "./components/ui/dialog": {
+      "types": "./dist/components/ui/dialog/index.d.ts",
+      "default": "./dist/components/ui/dialog/index.js"
+    },
+    "./components/ui/drawer": {
+      "types": "./dist/components/ui/drawer/index.d.ts",
+      "default": "./dist/components/ui/drawer/index.js"
+    },
+    "./components/ui/popover": {
+      "types": "./dist/components/ui/popover/index.d.ts",
+      "default": "./dist/components/ui/popover/index.js"
+    },
+    "./components/ui/dropdown": {
+      "types": "./dist/components/ui/dropdown/index.d.ts",
+      "default": "./dist/components/ui/dropdown/index.js"
+    },
+    "./components/ui/combobox": {
+      "types": "./dist/components/ui/combobox/index.d.ts",
+      "default": "./dist/components/ui/combobox/index.js"
+    },
+    "./components/ui/accordion": {
+      "types": "./dist/components/ui/accordion/index.d.ts",
+      "default": "./dist/components/ui/accordion/index.js"
+    },
+    "./components/ui/tabs": {
+      "types": "./dist/components/ui/tabs/index.d.ts",
+      "default": "./dist/components/ui/tabs/index.js"
+    },
+    "./components/ui/calendar": {
+      "types": "./dist/components/ui/calendar/index.d.ts",
+      "default": "./dist/components/ui/calendar/index.js"
+    },
+    "./components/ui/toast": {
+      "types": "./dist/components/ui/toast/index.d.ts",
+      "default": "./dist/components/ui/toast/index.js"
+    },
+    "./components/ui/dropzone": {
+      "types": "./dist/components/ui/dropzone/index.d.ts",
+      "default": "./dist/components/ui/dropzone/index.js"
+    },
+    "./components/ui/runtime": {
+      "types": "./dist/components/ui/runtime.d.ts",
+      "default": "./dist/components/ui/runtime.js"
+    },
+    "./components/ui/env": {
+      "types": "./dist/components/ui/env.d.ts",
+      "default": "./dist/components/ui/env.js"
+    },
+    "./components/ui/*/*.css": "./src/components/ui/*/*.css"
   },
   "scripts": {
     "build": "tsc && node scripts/ensure-cli-executable.cjs",
@@ -69,6 +122,7 @@
   },
   "files": [
     "dist",
+    "src/components/ui/*/*.css",
     "scripts/dev-server.cjs",
     "README.md"
   ],

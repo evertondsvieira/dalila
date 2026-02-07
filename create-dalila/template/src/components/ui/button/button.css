@@ -1,0 +1,135 @@
+/* Dalila UI — Button */
+
+.d-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--d-space-2);
+
+  padding: var(--d-space-2) var(--d-space-4);
+  min-height: 2.25rem;
+
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-medium);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--d-text-primary);
+  text-decoration: none;
+
+  background: var(--d-surface-raised);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--d-duration-fast) ease;
+}
+
+.d-btn:hover {
+  background: var(--d-accent);
+  border-color: var(--d-accent);
+  color: #fff;
+}
+
+.d-btn:active {
+  transform: scale(0.98);
+}
+
+.d-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--d-shadow-glow);
+}
+
+.d-btn:disabled,
+.d-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.d-btn-primary {
+  color: #ffffff;
+  background: var(--d-accent);
+  border-color: var(--d-accent);
+}
+
+.d-btn-primary:hover {
+  background: var(--d-accent-hover);
+  border-color: var(--d-accent-hover);
+}
+
+.d-btn-accent {
+  color: #ffffff;
+  background: var(--d-accent-500);
+  border-color: var(--d-accent-500);
+}
+
+.d-btn-accent:hover {
+  background: var(--d-accent-600);
+  border-color: var(--d-accent-600);
+}
+
+.d-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.d-btn-ghost:hover {
+  background: var(--d-surface-raised);
+  border-color: var(--d-border-color);
+  color: var(--d-text-primary);
+}
+
+.d-btn-danger {
+  color: #ffffff;
+  background: var(--d-error);
+  border-color: var(--d-error);
+}
+
+.d-btn-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.d-btn-sm {
+  padding: var(--d-space-1) var(--d-space-3);
+  min-height: 1.8rem;
+  font-size: var(--d-text-xs);
+}
+
+.d-btn-lg {
+  padding: var(--d-space-3) var(--d-space-6);
+  min-height: 2.7rem;
+  font-size: var(--d-text-base);
+}
+
+.d-btn-icon {
+  padding: var(--d-space-2);
+  min-height: auto;
+  aspect-ratio: 1;
+}
+
+.d-btn-icon svg {
+  width: 1.125em;
+  height: 1.125em;
+}
+
+.d-btn-group {
+  display: inline-flex;
+}
+
+.d-btn-group .d-btn {
+  border-radius: 0;
+}
+
+.d-btn-group .d-btn:first-child {
+  border-radius: var(--d-radius-md) 0 0 var(--d-radius-md);
+}
+
+.d-btn-group .d-btn:last-child {
+  border-radius: 0 var(--d-radius-md) var(--d-radius-md) 0;
+}
+
+.d-btn-group .d-btn + .d-btn {
+  border-left-width: 0;
+}

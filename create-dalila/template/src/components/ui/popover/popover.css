@@ -1,0 +1,55 @@
+/* Dalila UI — Popover */
+
+.d-popover {
+  margin: 0;
+  padding: var(--d-space-4);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+  background: var(--d-surface-card);
+  color: var(--d-text-primary);
+  box-shadow: var(--d-shadow-md);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  min-width: 12rem;
+  max-width: 20rem;
+  z-index: var(--d-z-dropdown);
+  isolation: isolate;
+
+  opacity: 0;
+  transform: scale(0.97);
+  transition:
+    opacity var(--d-duration-fast) ease,
+    transform var(--d-duration-fast) ease,
+    overlay var(--d-duration-fast) ease allow-discrete,
+    display var(--d-duration-fast) ease allow-discrete;
+}
+
+.d-popover:popover-open {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@starting-style {
+  .d-popover:popover-open {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+.d-popover::backdrop {
+  background: transparent;
+}
+
+.d-popover-title {
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-primary);
+  margin: 0 0 var(--d-space-2);
+}
+
+.d-popover-text {
+  font-size: var(--d-text-sm);
+  color: var(--d-text-secondary);
+  line-height: var(--d-leading);
+  margin: 0;
+}

@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dalila UI — Component Showcase</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Dalila UI -->
+  <link rel="stylesheet" href="../../src/components/ui/dalila/dalila.css" />
+
+  <!-- Showcase styles -->
+  <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+  <!-- Theme toggle -->
+  <div class="theme-toggle">
+    <d-toggle size="sm">
+      <input type="checkbox" d-on-change="onThemeToggle" />
+      <d-toggle-track></d-toggle-track>
+      <span style="font-size: var(--d-text-sm);">Dark</span>
+    </d-toggle>
+  </div>
+
+  <!-- Header -->
+  <header class="showcase-header">
+    <h1 class="showcase-title">Dalila UI</h1>
+    <p class="showcase-subtitle">Grounded Warmth — a design system that feels alive.</p>
+  </header>
+
+  <!-- ============================================ -->
+  <!-- TYPOGRAPHY -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Typography</h2>
+    <p>Headings, text, links, code and keyboard hints.</p>
+
+    <div class="label">Headings</div>
+    <div style="display: flex; flex-direction: column; gap: var(--d-space-2); margin-bottom: var(--d-space-4);">
+      <d-h1>Heading 1</d-h1>
+      <d-h2 style="border: none; padding: 0;">Heading 2</d-h2>
+      <d-h3>Heading 3</d-h3>
+      <d-h4>Heading 4</d-h4>
+      <d-h5>Heading 5</d-h5>
+      <d-h6>Heading 6</d-h6>
+    </div>
+
+    <div class="label">Text variants</div>
+    <div style="display: flex; flex-direction: column; gap: var(--d-space-2); margin-bottom: var(--d-space-4);">
+      <d-text>Default text — the quick brown fox jumps over the lazy dog.</d-text>
+      <d-text tone="muted">Muted text for secondary information.</d-text>
+      <d-text tone="accent">Accent colored text.</d-text>
+      <d-text tone="success">Success text.</d-text>
+      <d-text tone="error">Error text.</d-text>
+      <d-text tone="mono">Monospace text for code context.</d-text>
+    </div>
+
+    <div class="label">Links</div>
+    <div class="component-row">
+      <d-link href="#">Primary link</d-link>
+      <d-link href="#" tone="muted">Muted link</d-link>
+    </div>
+
+    <div class="label">Inline elements</div>
+    <div class="component-row">
+      <d-code-inline>const x = 42</d-code-inline>
+      <span>Press <d-kbd>Ctrl</d-kbd> + <d-kbd>S</d-kbd> to save</span>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- BUTTONS -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Buttons</h2>
+    <p>Accent fill on hover. Clean and minimal at rest.</p>
+
+    <div class="label">Variants</div>
+    <div class="component-row">
+      <d-button>Default</d-button>
+      <d-button variant="primary">Primary</d-button>
+      <d-button variant="accent">Accent</d-button>
+      <d-button variant="ghost">Ghost</d-button>
+      <d-button variant="danger">Danger</d-button>
+    </div>
+
+    <div class="label">Sizes</div>
+    <div class="component-row">
+      <d-button variant="primary" size="sm">Small</d-button>
+      <d-button variant="primary">Default</d-button>
+      <d-button variant="primary" size="lg">Large</d-button>
+    </div>
+
+    <div class="label">States</div>
+    <div class="component-row">
+      <d-button variant="primary" disabled>Disabled</d-button>
+      <d-button variant="ghost" icon>
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+      </d-button>
+    </div>
+
+    <div class="label">Button group</div>
+    <div class="component-row">
+      <d-button-group>
+        <d-button>Left</d-button>
+        <d-button>Center</d-button>
+        <d-button>Right</d-button>
+      </d-button-group>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- INPUTS -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Inputs</h2>
+    <p>Clean uniform border. Accent ring on focus.</p>
+
+    <div class="component-grid">
+      <d-field>
+        <d-field-label>Full name</d-field-label>
+        <d-input type="text" placeholder="Everton Silva"></d-input>
+      </d-field>
+
+      <d-field>
+        <d-field-label>Email</d-field-label>
+        <d-input type="email" placeholder="you@example.com"></d-input>
+        <d-field-hint>We'll never share your email.</d-field-hint>
+      </d-field>
+
+      <d-field>
+        <d-field-label>Password</d-field-label>
+        <d-input type="password" placeholder="••••••••"></d-input>
+      </d-field>
+
+      <d-field>
+        <d-field-label>Country</d-field-label>
+        <d-select>
+          <option>Brazil</option>
+          <option>Portugal</option>
+          <option>United States</option>
+        </d-select>
+      </d-field>
+
+      <d-field>
+        <d-field-label>With error</d-field-label>
+        <d-input type="email" value="invalid-email" aria-invalid="true"></d-input>
+        <d-field-error>Enter a valid email address.</d-field-error>
+      </d-field>
+
+      <d-field>
+        <d-field-label>Disabled</d-field-label>
+        <d-input type="text" value="Can't touch this" disabled></d-input>
+      </d-field>
+    </div>
+
+    <d-field style="max-width: 24rem;">
+      <d-field-label>Bio</d-field-label>
+      <d-textarea rows="3" placeholder="Tell us about yourself..."></d-textarea>
+    </d-field>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- CHECKBOX -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Checkbox</h2>
+    <p>Custom checkmark. Accent fill when checked.</p>
+
+    <div class="component-stack">
+      <d-checkbox>
+        <input type="checkbox" checked />
+        <span>Accept terms and conditions</span>
+      </d-checkbox>
+      <d-checkbox>
+        <input type="checkbox" />
+        <span>Subscribe to newsletter</span>
+      </d-checkbox>
+      <d-checkbox>
+        <input type="checkbox" disabled />
+        <span>Disabled option</span>
+      </d-checkbox>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- RADIO -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Radio</h2>
+    <p>Thick inner ring on selection. Clean grouped layout.</p>
+
+    <div class="label">Vertical group</div>
+    <d-radio-group style="margin-bottom: var(--d-space-4);">
+      <d-radio>
+        <input type="radio" name="plan" checked />
+        <span>Free plan</span>
+      </d-radio>
+      <d-radio>
+        <input type="radio" name="plan" />
+        <span>Pro plan</span>
+      </d-radio>
+      <d-radio>
+        <input type="radio" name="plan" />
+        <span>Enterprise plan</span>
+      </d-radio>
+      <d-radio>
+        <input type="radio" name="plan" disabled />
+        <span>Unavailable</span>
+      </d-radio>
+    </d-radio-group>
+
+    <div class="label">Horizontal group</div>
+    <d-radio-group variant="row">
+      <d-radio>
+        <input type="radio" name="size" checked />
+        <span>S</span>
+      </d-radio>
+      <d-radio>
+        <input type="radio" name="size" />
+        <span>M</span>
+      </d-radio>
+      <d-radio>
+        <input type="radio" name="size" />
+        <span>L</span>
+      </d-radio>
+      <d-radio>
+        <input type="radio" name="size" />
+        <span>XL</span>
+      </d-radio>
+    </d-radio-group>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- SLIDER -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Slider</h2>
+    <p>Accent thumb with bounce on hover. Smooth track.</p>
+
+    <div class="component-stack">
+      <d-field>
+        <d-field-label>Volume — {sliderValue}%</d-field-label>
+        <d-slider type="range" min="0" max="100" value="50" d-on-input="onSliderInput"></d-slider>
+      </d-field>
+      <d-field>
+        <d-field-label>Disabled</d-field-label>
+        <d-slider type="range" min="0" max="100" value="30" disabled></d-slider>
+      </d-field>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- TOGGLE / SWITCH -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Toggle / Switch</h2>
+    <p>Bouncy knob. Primary fill when checked.</p>
+
+    <div class="component-stack">
+      <d-toggle>
+        <input type="checkbox" checked />
+        <d-toggle-track></d-toggle-track>
+        <span>Enable notifications</span>
+      </d-toggle>
+
+      <d-toggle>
+        <input type="checkbox" />
+        <d-toggle-track></d-toggle-track>
+        <span>Dark mode</span>
+      </d-toggle>
+
+      <d-toggle>
+        <input type="checkbox" disabled />
+        <d-toggle-track></d-toggle-track>
+        <span>Disabled toggle</span>
+      </d-toggle>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- FORM LAYOUT -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Form Layout</h2>
+    <p>Structured forms with sections, rows, and action bars.</p>
+
+    <d-form onsubmit="return false" style="max-width: 36rem;">
+      <d-form-section-title>Personal Information</d-form-section-title>
+
+      <d-form-row>
+        <d-field>
+          <d-field-label>First name</d-field-label>
+          <d-input type="text" placeholder="Everton"></d-input>
+        </d-field>
+        <d-field>
+          <d-field-label>Last name</d-field-label>
+          <d-input type="text" placeholder="Silva"></d-input>
+        </d-field>
+      </d-form-row>
+
+      <d-field>
+        <d-field-label>Email</d-field-label>
+        <d-input type="email" placeholder="everton@example.com"></d-input>
+      </d-field>
+
+      <d-form-section-title>Preferences</d-form-section-title>
+
+      <d-checkbox>
+        <input type="checkbox" checked />
+        <span>Receive email updates</span>
+      </d-checkbox>
+
+      <d-form-actions align="end">
+        <d-button variant="ghost">Cancel</d-button>
+        <d-button variant="primary">Save changes</d-button>
+      </d-form-actions>
+    </d-form>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- CARDS -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Cards</h2>
+    <p>Sections, accent bar, hover. Inspired by Mantine.</p>
+
+    <div class="component-grid">
+      <!-- Card with image section -->
+      <d-card>
+        <d-card-section>
+          <img src="https://picsum.photos/id/1015/600/200" alt="Norway fjord landscape" />
+        </d-card-section>
+        <d-card-header>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <d-card-title>Norway Adventures</d-card-title>
+            <d-badge variant="accent">On sale</d-badge>
+          </div>
+          <d-card-description>Explore the fjord landscapes with tours and activities around Norway.</d-card-description>
+        </d-card-header>
+        <d-card-footer>
+          <d-button variant="primary" style="width: 100%;">Book classic tour now</d-button>
+        </d-card-footer>
+      </d-card>
+
+      <!-- Accent card -->
+      <d-card variant="accent">
+        <d-card-header>
+          <d-card-title>Accent card</d-card-title>
+          <d-card-description>Inset accent bar on the left.</d-card-description>
+        </d-card-header>
+        <d-card-body>
+          <p>The accent bar highlights important content without breaking the card border.</p>
+        </d-card-body>
+      </d-card>
+
+      <!-- Card with header + image + thumbnails -->
+      <d-card>
+        <d-card-header>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <d-card-title>Review pictures</d-card-title>
+            <d-button icon variant="ghost" style="font-size: 1rem;">&#8943;</d-button>
+          </div>
+        </d-card-header>
+        <d-card-body style="padding-bottom: var(--d-space-4);">
+          <d-card-description style="margin: 0;">
+            <d-link href="#">200+ images uploaded</d-link> since last visit, review them to select which should be added to your gallery
+          </d-card-description>
+        </d-card-body>
+        <d-card-section>
+          <img src="https://picsum.photos/id/1036/1400/560" alt="Gallery preview" style="height: 190px; object-fit: cover;" />
+        </d-card-section>
+        <d-card-footer style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--d-space-2);">
+          <img src="https://picsum.photos/id/1011/640/320" alt="Thumbnail 1" style="width: 100%; height: 48px; object-fit: cover; border-radius: var(--d-radius-sm);" />
+          <img src="https://picsum.photos/id/1020/640/320" alt="Thumbnail 2" style="width: 100%; height: 48px; object-fit: cover; border-radius: var(--d-radius-sm);" />
+          <img src="https://picsum.photos/id/1024/640/320" alt="Thumbnail 3" style="width: 100%; height: 48px; object-fit: cover; border-radius: var(--d-radius-sm);" />
+        </d-card-footer>
+      </d-card>
+
+      <!-- Default with footer -->
+      <d-card>
+        <d-card-header>
+          <d-card-title>Default card</d-card-title>
+          <d-card-description>A clean container for any content.</d-card-description>
+        </d-card-header>
+        <d-card-body>
+          <p>Card body goes here with any layout you need.</p>
+        </d-card-body>
+        <d-card-footer>
+          <d-button variant="ghost" size="sm">Cancel</d-button>
+          <d-button variant="primary" size="sm">Save</d-button>
+        </d-card-footer>
+      </d-card>
+
+      <!-- Hoverable -->
+      <d-card variant="hover">
+        <d-card-body style="padding: var(--d-space-6);">
+          <div style="display: flex; align-items: center; gap: var(--d-space-3);">
+            <d-avatar style="background: var(--d-primary-500); color: #fff;">ES</d-avatar>
+            <div>
+              <strong>Hoverable card</strong>
+              <p style="font-size: var(--d-text-sm); color: var(--d-text-secondary); margin: 0;">Lifts on hover. Try it.</p>
+            </div>
+          </div>
+        </d-card-body>
+      </d-card>
+
+      <!-- Flat -->
+      <d-card variant="flat">
+        <d-card-body style="padding: var(--d-space-6);">
+          <strong>Flat variant</strong>
+          <p style="font-size: var(--d-text-sm); color: var(--d-text-secondary); margin-top: var(--d-space-1);">No border, subtle background.</p>
+        </d-card-body>
+      </d-card>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- BADGES -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Badges</h2>
+    <p>Small indicators for status and categories.</p>
+
+    <div class="component-row">
+      <d-badge>Default</d-badge>
+      <d-badge variant="primary">Primary</d-badge>
+      <d-badge variant="accent">Accent</d-badge>
+      <d-badge variant="success">Success</d-badge>
+      <d-badge variant="error">Error</d-badge>
+      <d-badge variant="warning">Warning</d-badge>
+      <d-badge variant="outline">Outline</d-badge>
+      <d-badge variant="solid">Solid</d-badge>
+    </div>
+
+    <div class="label" style="margin-top: var(--d-space-4);">With dot indicator</div>
+    <div class="component-row">
+      <d-badge variant="success" dot>Online</d-badge>
+      <d-badge variant="error" dot>Offline</d-badge>
+      <d-badge variant="warning" dot>Away</d-badge>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- CHIPS / TAGS -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Chips / Tags</h2>
+    <p>Removable tags with semantic colors.</p>
+
+    <div class="component-row">
+      <d-chip>Default</d-chip>
+      <d-chip variant="primary">React</d-chip>
+      <d-chip variant="success">Active</d-chip>
+      <d-chip variant="error">Rejected</d-chip>
+      <d-chip variant="warning">Pending</d-chip>
+    </div>
+
+    <div class="label" style="margin-top: var(--d-space-4);">Removable</div>
+    <div class="component-row">
+      <d-chip variant="primary">TypeScript <d-chip-remove>&times;</d-chip-remove></d-chip>
+      <d-chip variant="primary">CSS <d-chip-remove>&times;</d-chip-remove></d-chip>
+      <d-chip variant="primary">HTML <d-chip-remove>&times;</d-chip-remove></d-chip>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- AVATAR -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Avatar</h2>
+    <p>Initials fallback. Group with overlap.</p>
+
+    <div class="label">Sizes</div>
+    <div class="component-row">
+      <d-avatar size="sm">ES</d-avatar>
+      <d-avatar>ES</d-avatar>
+      <d-avatar size="lg">ES</d-avatar>
+      <d-avatar size="xl">ES</d-avatar>
+    </div>
+
+    <div class="label">Variants</div>
+    <div class="component-row">
+      <d-avatar style="background: var(--d-primary-500); color: #fff;">AB</d-avatar>
+      <d-avatar style="background: var(--d-success); color: #fff;">CD</d-avatar>
+      <d-avatar shape="square">SQ</d-avatar>
+    </div>
+
+    <div class="label">Group</div>
+    <d-avatar-group>
+      <d-avatar style="background: var(--d-primary-500); color: #fff;">A</d-avatar>
+      <d-avatar style="background: var(--d-accent-500); color: #fff;">B</d-avatar>
+      <d-avatar style="background: var(--d-success); color: #fff;">C</d-avatar>
+      <d-avatar>+3</d-avatar>
+    </d-avatar-group>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- ALERTS -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Alerts</h2>
+    <p>Left accent bar — primary on default, semantic color on variants.</p>
+
+    <div class="component-stack" style="max-width: 100%;">
+      <d-alert>
+        <d-alert-title>Heads up</d-alert-title>
+        <d-alert-text>This is the default alert with the primary accent bar.</d-alert-text>
+      </d-alert>
+
+      <d-alert variant="success">
+        <d-alert-title>Success</d-alert-title>
+        <d-alert-text>Your changes have been saved successfully.</d-alert-text>
+      </d-alert>
+
+      <d-alert variant="error">
+        <d-alert-title>Error</d-alert-title>
+        <d-alert-text>Something went wrong. Please try again.</d-alert-text>
+      </d-alert>
+
+      <d-alert variant="warning">
+        <d-alert-title>Warning</d-alert-title>
+        <d-alert-text>Your session will expire in 5 minutes.</d-alert-text>
+      </d-alert>
+
+      <d-alert variant="info">
+        <d-alert-title>Info</d-alert-title>
+        <d-alert-text>A new version is available. Refresh to update.</d-alert-text>
+      </d-alert>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- TOAST -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Toast / Notification</h2>
+    <p>Slide-in toasts. Position in any corner.</p>
+
+    <d-button variant="primary" d-on-click="showToast">Show toast</d-button>
+
+    <d-toast-container d-attr-class="toastContainerClass">
+      <d-toast d-each="toastItems" d-attr-class="variantClass">
+        <d-toast-icon aria-hidden="true">{icon}</d-toast-icon>
+        <d-toast-body>
+          <d-toast-title>{title}</d-toast-title>
+          <d-toast-text d-when="text">{text}</d-toast-text>
+        </d-toast-body>
+        <d-toast-close d-on-click="dismissToast" d-attr-data-id="id">&times;</d-toast-close>
+      </d-toast>
+    </d-toast-container>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- TOOLTIP -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Tooltip</h2>
+    <p>Pure CSS via <code>data-tooltip</code> attribute.</p>
+
+    <div class="component-row">
+      <d-tooltip-trigger data-tooltip="Default (top)">Hover me</d-tooltip-trigger>
+      <d-tooltip-trigger place="bottom" data-tooltip="Bottom tooltip">Bottom</d-tooltip-trigger>
+      <d-tooltip-trigger place="left" data-tooltip="Left tooltip">Left</d-tooltip-trigger>
+      <d-tooltip-trigger place="right" data-tooltip="Right tooltip">Right</d-tooltip-trigger>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- POPOVER -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Popover</h2>
+    <p>Native Popover API. Click to toggle.</p>
+
+    <d-popover-trigger popovertarget="demoPopover">Open popover</d-popover-trigger>
+    <d-popover id="demoPopover" popover>
+      <d-popover-title>Popover title</d-popover-title>
+      <d-popover-text>This is a popover using the native Popover API. Click outside to dismiss.</d-popover-text>
+    </d-popover>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- DROPDOWN / MENU -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Dropdown Menu</h2>
+    <p>Click to toggle. Items, separators, labels, danger.</p>
+
+    <d-dropdown d-attr-class="dropdownClass">
+      <d-button d-on-click="dropdownToggle">Options</d-button>
+      <d-menu>
+        <d-menu-label>Account</d-menu-label>
+        <d-menu-item d-on-click="dropdownSelect">Profile</d-menu-item>
+        <d-menu-item d-on-click="dropdownSelect">Settings</d-menu-item>
+        <d-menu-separator></d-menu-separator>
+        <d-menu-label>Actions</d-menu-label>
+        <d-menu-item d-on-click="dropdownSelect">Duplicate</d-menu-item>
+        <d-menu-item disabled>Archive</d-menu-item>
+        <d-menu-separator></d-menu-separator>
+        <d-menu-item variant="danger" d-on-click="dropdownSelect">Delete</d-menu-item>
+      </d-menu>
+    </d-dropdown>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- COMBOBOX -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Combobox</h2>
+    <p>Searchable select with filtered options.</p>
+
+    <div style="max-width: 18rem;">
+      <d-field>
+        <d-field-label>Framework</d-field-label>
+        <d-combobox d-attr-class="comboClass">
+          <d-combobox-input placeholder="Search..." autocomplete="off"
+                            d-on-input="comboInput" d-on-focus="comboShow" d-on-keydown="comboKeydown" d-attr-value="comboLabel"></d-combobox-input>
+          <d-combobox-trigger d-on-click="comboTrigger">&#9662;</d-combobox-trigger>
+          <d-combobox-list>
+            <d-combobox-option d-each="comboItems" d-attr-class="optionClass" d-attr-data-value="value" d-on-click="comboSelect">{label}</d-combobox-option>
+          </d-combobox-list>
+        </d-combobox>
+      </d-field>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- TABS -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Tabs</h2>
+    <p>Underline and pill variants.</p>
+
+    <div class="label">Underline</div>
+    <d-tabs style="margin-bottom: var(--d-space-6);">
+      <d-tab-list role="tablist" d-on-click="tabs1Click">
+        <d-tab d-attr-class="t1aClass" role="tab" data-tab="tab1a">Overview</d-tab>
+        <d-tab d-attr-class="t1bClass" role="tab" data-tab="tab1b">Features</d-tab>
+        <d-tab d-attr-class="t1cClass" role="tab" data-tab="tab1c">Pricing</d-tab>
+      </d-tab-list>
+      <d-tab-panel d-when="t1aVisible">Overview content — the main description of the product.</d-tab-panel>
+      <d-tab-panel d-when="t1bVisible">Features content — a list of what's included.</d-tab-panel>
+      <d-tab-panel d-when="t1cVisible">Pricing content — plans and billing information.</d-tab-panel>
+    </d-tabs>
+
+    <div class="label">Pill variant</div>
+    <d-tabs>
+      <d-tab-list variant="pill" role="tablist" d-on-click="tabs2Click">
+        <d-tab d-attr-class="t2aClass" role="tab" data-tab="tab2a">All</d-tab>
+        <d-tab d-attr-class="t2bClass" role="tab" data-tab="tab2b">Active</d-tab>
+        <d-tab d-attr-class="t2cClass" role="tab" data-tab="tab2c">Archived</d-tab>
+      </d-tab-list>
+      <d-tab-panel d-when="t2aVisible">Showing all items.</d-tab-panel>
+      <d-tab-panel d-when="t2bVisible">Showing active items only.</d-tab-panel>
+      <d-tab-panel d-when="t2cVisible">Showing archived items only.</d-tab-panel>
+    </d-tabs>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- ACCORDION -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Accordion</h2>
+    <p>Native <code>&lt;details&gt;</code>. Chevron rotates on open.</p>
+
+    <d-accordion style="max-width: 36rem;">
+      <d-accordion-item open>
+        <summary>What is Dalila UI?</summary>
+        <d-accordion-body>
+          Dalila UI is a CSS-only design system built with warm neutrals, accent colors, and smooth transitions. It provides a collection of accessible, composable components.
+        </d-accordion-body>
+      </d-accordion-item>
+      <d-accordion-item>
+        <summary>Is it accessible?</summary>
+        <d-accordion-body>
+          Yes! All components are built with semantic HTML and follow WAI-ARIA patterns. Keyboard navigation and screen reader support are prioritized.
+        </d-accordion-body>
+      </d-accordion-item>
+      <d-accordion-item>
+        <summary>Can I customize the theme?</summary>
+        <d-accordion-body>
+          Absolutely. Override the CSS custom properties in <code>tokens.css</code> to match your brand. Dark and light themes are built in.
+        </d-accordion-body>
+      </d-accordion-item>
+    </d-accordion>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- COLLAPSIBLE -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Collapsible</h2>
+    <p>Single expandable section using <code>&lt;details&gt;</code>.</p>
+
+    <d-collapsible style="max-width: 36rem;">
+      <summary>Show advanced options</summary>
+      <d-collapsible-body>
+        <p>Here are the advanced configuration options that are hidden by default to keep the interface clean. You can adjust timeouts, retry counts, and logging levels.</p>
+      </d-collapsible-body>
+    </d-collapsible>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- DIALOG -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Dialog</h2>
+    <p>Native <code>&lt;dialog&gt;</code>. Scale+fade entrance, slide on mobile.</p>
+
+    <d-button variant="primary" d-on-click="dialogShow">Open dialog</d-button>
+
+    <d-dialog>
+      <d-dialog-header>
+        <d-dialog-title>Confirm action</d-dialog-title>
+        <d-dialog-close d-on-click="dialogClose">&times;</d-dialog-close>
+      </d-dialog-header>
+      <d-dialog-body>
+        <p>Are you sure you want to proceed? This action demonstrates the Dalila dialog component with warm overlay and smooth animation.</p>
+      </d-dialog-body>
+      <d-dialog-footer>
+        <d-button variant="ghost" d-on-click="dialogClose">Cancel</d-button>
+        <d-button variant="primary" d-on-click="dialogClose">Confirm</d-button>
+      </d-dialog-footer>
+    </d-dialog>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- DRAWER / SHEET -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Drawer / Sheet</h2>
+    <p>Side panel and bottom sheet using <code>&lt;dialog&gt;</code>.</p>
+
+    <div class="component-row">
+      <d-button variant="primary" d-on-click="drawerShow">Open drawer (right)</d-button>
+      <d-button d-on-click="sheetShow">Open sheet (bottom)</d-button>
+    </div>
+
+    <d-drawer>
+      <d-drawer-header>
+        <d-drawer-title>Drawer</d-drawer-title>
+        <d-dialog-close d-on-click="drawerClose">&times;</d-dialog-close>
+      </d-drawer-header>
+      <d-drawer-body>
+        <p class="d-text d-text-muted">This is a drawer that slides in from the right. It uses the native &lt;dialog&gt; element for accessibility.</p>
+        <br />
+        <d-field>
+          <d-field-label>Name</d-field-label>
+          <d-input type="text" placeholder="Type here..."></d-input>
+        </d-field>
+      </d-drawer-body>
+      <d-drawer-footer>
+        <d-button variant="ghost" d-on-click="drawerClose">Cancel</d-button>
+        <d-button variant="primary" d-on-click="drawerClose">Save</d-button>
+      </d-drawer-footer>
+    </d-drawer>
+
+    <d-sheet>
+      <d-drawer-header>
+        <d-drawer-title>Bottom Sheet</d-drawer-title>
+        <d-dialog-close d-on-click="sheetClose">&times;</d-dialog-close>
+      </d-drawer-header>
+      <d-drawer-body>
+        <p class="d-text d-text-muted">This sheet slides up from the bottom. Great for mobile actions and quick forms.</p>
+      </d-drawer-body>
+      <d-drawer-footer>
+        <d-button variant="primary" d-on-click="sheetClose" style="width: 100%;">Done</d-button>
+      </d-drawer-footer>
+    </d-sheet>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- TABLE -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Table</h2>
+    <p>Bordered wrapper. Hover rows. Sticky header via scroll.</p>
+
+    <d-table-wrapper>
+      <table class="d-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Everton Silva</td>
+            <td>Admin</td>
+            <td><d-badge variant="success" dot>Active</d-badge></td>
+            <td style="text-align: right;"><d-button variant="ghost" size="sm">Edit</d-button></td>
+          </tr>
+          <tr>
+            <td>Maria Santos</td>
+            <td>Editor</td>
+            <td><d-badge variant="success" dot>Active</d-badge></td>
+            <td style="text-align: right;"><d-button variant="ghost" size="sm">Edit</d-button></td>
+          </tr>
+          <tr>
+            <td>João Costa</td>
+            <td>Viewer</td>
+            <td><d-badge variant="warning" dot>Away</d-badge></td>
+            <td style="text-align: right;"><d-button variant="ghost" size="sm">Edit</d-button></td>
+          </tr>
+          <tr>
+            <td>Ana Lima</td>
+            <td>Editor</td>
+            <td><d-badge variant="error" dot>Offline</d-badge></td>
+            <td style="text-align: right;"><d-button variant="ghost" size="sm">Edit</d-button></td>
+          </tr>
+        </tbody>
+      </table>
+    </d-table-wrapper>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- PAGINATION -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Pagination</h2>
+    <p>Accent active page. Ellipsis for gaps.</p>
+
+    <d-pagination>
+      <d-page aria-disabled="true">&larr;</d-page>
+      <d-page class="active">1</d-page>
+      <d-page>2</d-page>
+      <d-page>3</d-page>
+      <d-page-ellipsis>...</d-page-ellipsis>
+      <d-page>12</d-page>
+      <d-page>&rarr;</d-page>
+    </d-pagination>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- BREADCRUMB -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Breadcrumb</h2>
+    <p>Slash-separated navigation trail.</p>
+
+    <nav>
+      <d-breadcrumb>
+        <d-breadcrumb-item><d-link href="#">Home</d-link></d-breadcrumb-item>
+        <d-breadcrumb-item><d-link href="#">Components</d-link></d-breadcrumb-item>
+        <d-breadcrumb-item><d-link href="#">Forms</d-link></d-breadcrumb-item>
+        <d-breadcrumb-item>Input</d-breadcrumb-item>
+      </d-breadcrumb>
+    </nav>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- SEPARATOR -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Separator</h2>
+    <p>Horizontal divider. Optional centered label.</p>
+
+    <div style="max-width: 24rem;">
+      <d-text size="sm">Content above</d-text>
+      <d-separator></d-separator>
+      <d-text size="sm">Content below</d-text>
+
+      <d-separator-label>or continue with</d-separator-label>
+
+      <d-text size="sm">Alternative content</d-text>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- SKELETON -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Skeleton</h2>
+    <p>Warm shimmer loading placeholders.</p>
+
+    <div class="component-grid">
+      <d-card>
+        <d-card-body style="padding: var(--d-space-6);">
+          <div style="display: flex; gap: var(--d-space-3); align-items: flex-start;">
+            <d-skeleton kind="circle"></d-skeleton>
+            <div style="flex: 1;">
+              <d-skeleton kind="text" style="width: 50%;"></d-skeleton>
+              <d-skeleton kind="text"></d-skeleton>
+              <d-skeleton kind="text"></d-skeleton>
+            </div>
+          </div>
+        </d-card-body>
+      </d-card>
+
+      <d-card>
+        <d-skeleton kind="rect" style="border-radius: var(--d-radius-lg) var(--d-radius-lg) 0 0;"></d-skeleton>
+        <d-card-body style="padding: var(--d-space-6);">
+          <d-skeleton kind="text" style="width: 70%;"></d-skeleton>
+          <d-skeleton kind="text"></d-skeleton>
+          <d-skeleton kind="text"></d-skeleton>
+        </d-card-body>
+      </d-card>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- SPINNER -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Spinner / Loading</h2>
+    <p>Rotating accent ring. Three sizes.</p>
+
+    <div class="label">Sizes</div>
+    <div class="component-row" style="margin-bottom: var(--d-space-4);">
+      <d-spinner size="sm"></d-spinner>
+      <d-spinner></d-spinner>
+      <d-spinner size="lg"></d-spinner>
+    </div>
+
+    <div class="label">Loading state</div>
+    <d-loading>
+      <d-spinner></d-spinner>
+      Loading data...
+    </d-loading>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- EMPTY STATE -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Empty State</h2>
+    <p>Placeholder for zero-data screens.</p>
+
+    <d-card>
+      <d-empty>
+        <d-empty-icon>&#128230;</d-empty-icon>
+        <d-empty-title>No projects yet</d-empty-title>
+        <d-empty-text>Get started by creating your first project. It only takes a few seconds.</d-empty-text>
+        <d-button variant="primary">Create project</d-button>
+      </d-empty>
+    </d-card>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- CALENDAR -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Calendar</h2>
+    <p>Date grid with today highlight and selection.</p>
+
+    <d-calendar>
+      <d-calendar-header>
+        <d-calendar-nav d-on-click="calPrev">&larr;</d-calendar-nav>
+        <d-calendar-title>{calTitle}</d-calendar-title>
+        <d-calendar-nav d-on-click="calNext">&rarr;</d-calendar-nav>
+      </d-calendar-header>
+      <d-calendar-grid>
+        <d-calendar-dow>Su</d-calendar-dow>
+        <d-calendar-dow>Mo</d-calendar-dow>
+        <d-calendar-dow>Tu</d-calendar-dow>
+        <d-calendar-dow>We</d-calendar-dow>
+        <d-calendar-dow>Th</d-calendar-dow>
+        <d-calendar-dow>Fr</d-calendar-dow>
+        <d-calendar-dow>Sa</d-calendar-dow>
+        <d-calendar-day d-each="calDays" d-attr-class="dayClass" d-attr-data-date="dateStr" d-attr-disabled="isDisabled" d-on-click="calDayClick">{date}</d-calendar-day>
+      </d-calendar-grid>
+    </d-calendar>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- DROPZONE -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Dropzone / File Upload</h2>
+    <p>Dashed border. Accent highlight on drag.</p>
+
+    <d-dropzone d-attr-class="dzClass" style="max-width: 28rem;"
+         d-on-click="dzClick" d-on-dragover="dzDragover" d-on-dragleave="dzDragleave" d-on-drop="dzDrop">
+      <d-dropzone-icon>&#128206;</d-dropzone-icon>
+      <d-dropzone-text><strong>Click to upload</strong> or drag and drop</d-dropzone-text>
+      <d-dropzone-hint>PNG, JPG or PDF up to 10MB</d-dropzone-hint>
+      <input type="file" />
+    </d-dropzone>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- LAYOUT PRIMITIVES -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Layout Primitives</h2>
+    <p><code>.d-stack</code>, <code>.d-flex</code>, <code>.d-grid</code>, <code>.d-container</code>.</p>
+
+    <div class="label">Stack (vertical)</div>
+    <d-stack gap="2" style="margin-bottom: var(--d-space-6);">
+      <d-card variant="flat"><d-card-body>Item 1</d-card-body></d-card>
+      <d-card variant="flat"><d-card-body>Item 2</d-card-body></d-card>
+      <d-card variant="flat"><d-card-body>Item 3</d-card-body></d-card>
+    </d-stack>
+
+    <div class="label">Flex (horizontal)</div>
+    <d-flex wrap style="margin-bottom: var(--d-space-6);">
+      <d-card variant="flat" style="flex: 1; min-width: 8rem;"><d-card-body>A</d-card-body></d-card>
+      <d-card variant="flat" style="flex: 1; min-width: 8rem;"><d-card-body>B</d-card-body></d-card>
+      <d-card variant="flat" style="flex: 1; min-width: 8rem;"><d-card-body>C</d-card-body></d-card>
+    </d-flex>
+
+    <div class="label">Grid (auto-fill)</div>
+    <d-grid cols="3">
+      <d-card variant="flat"><d-card-body>Col 1</d-card-body></d-card>
+      <d-card variant="flat"><d-card-body>Col 2</d-card-body></d-card>
+      <d-card variant="flat"><d-card-body>Col 3</d-card-body></d-card>
+    </d-grid>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- COLOR PALETTE -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Palette</h2>
+    <p>Warm stone neutrals. Blue primary. Orange accent.</p>
+
+    <div class="label">Stone (neutral)</div>
+    <div style="display: flex; border-radius: var(--d-radius-md); overflow: hidden; margin-bottom: var(--d-space-4); height: 2.5rem;">
+      <div style="flex:1; background: var(--d-stone-50);" title="stone-50"></div>
+      <div style="flex:1; background: var(--d-stone-100);" title="stone-100"></div>
+      <div style="flex:1; background: var(--d-stone-200);" title="stone-200"></div>
+      <div style="flex:1; background: var(--d-stone-300);" title="stone-300"></div>
+      <div style="flex:1; background: var(--d-stone-400);" title="stone-400"></div>
+      <div style="flex:1; background: var(--d-stone-500);" title="stone-500"></div>
+      <div style="flex:1; background: var(--d-stone-600);" title="stone-600"></div>
+      <div style="flex:1; background: var(--d-stone-700);" title="stone-700"></div>
+      <div style="flex:1; background: var(--d-stone-800);" title="stone-800"></div>
+      <div style="flex:1; background: var(--d-stone-900);" title="stone-900"></div>
+      <div style="flex:1; background: var(--d-stone-950);" title="stone-950"></div>
+    </div>
+
+    <div class="label">Primary (blue)</div>
+    <div style="display: flex; border-radius: var(--d-radius-md); overflow: hidden; margin-bottom: var(--d-space-4); height: 2.5rem;">
+      <div style="flex:1; background: var(--d-primary-50);" title="primary-50"></div>
+      <div style="flex:1; background: var(--d-primary-100);" title="primary-100"></div>
+      <div style="flex:1; background: var(--d-primary-200);" title="primary-200"></div>
+      <div style="flex:1; background: var(--d-primary-300);" title="primary-300"></div>
+      <div style="flex:1; background: var(--d-primary-400);" title="primary-400"></div>
+      <div style="flex:1; background: var(--d-primary-500);" title="primary-500"></div>
+      <div style="flex:1; background: var(--d-primary-600);" title="primary-600"></div>
+      <div style="flex:1; background: var(--d-primary-700);" title="primary-700"></div>
+      <div style="flex:1; background: var(--d-primary-800);" title="primary-800"></div>
+      <div style="flex:1; background: var(--d-primary-900);" title="primary-900"></div>
+    </div>
+
+    <div class="label">Accent (orange)</div>
+    <div style="display: flex; border-radius: var(--d-radius-md); overflow: hidden; margin-bottom: var(--d-space-4); height: 2.5rem;">
+      <div style="flex:1; background: var(--d-accent-50);" title="accent-50"></div>
+      <div style="flex:1; background: var(--d-accent-100);" title="accent-100"></div>
+      <div style="flex:1; background: var(--d-accent-200);" title="accent-200"></div>
+      <div style="flex:1; background: var(--d-accent-300);" title="accent-300"></div>
+      <div style="flex:1; background: var(--d-accent-400);" title="accent-400"></div>
+      <div style="flex:1; background: var(--d-accent-500);" title="accent-500"></div>
+      <div style="flex:1; background: var(--d-accent-600);" title="accent-600"></div>
+      <div style="flex:1; background: var(--d-accent-700);" title="accent-700"></div>
+    </div>
+  </section>
+
+  <script type="module" src="./script.ts"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+/* Dalila UI — Empty State */
+
+.d-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--d-space-12) var(--d-space-6);
+  font-family: var(--d-font-sans);
+}
+
+.d-empty-icon {
+  font-size: 3rem;
+  color: var(--d-text-muted);
+  margin-bottom: var(--d-space-4);
+  opacity: 0.5;
+}
+
+.d-empty-title {
+  font-size: var(--d-text-lg);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-primary);
+  margin: 0 0 var(--d-space-2);
+}
+
+.d-empty-text {
+  font-size: var(--d-text-sm);
+  color: var(--d-text-muted);
+  max-width: 24rem;
+  margin: 0 0 var(--d-space-6);
+  line-height: var(--d-leading);
+}

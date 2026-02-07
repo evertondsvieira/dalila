@@ -1,0 +1,161 @@
+/* Dalila UI — Design Tokens (Playground-aligned) */
+
+:root,
+[data-theme="light"] {
+  --d-bg: #ffffff;
+  --d-bg-card: #f8f8f8;
+  --d-bg-elevated: #f0f0f0;
+  --d-fg: #0a0a0a;
+  --d-fg-muted: #6b7280;
+  --d-accent: #2563eb;
+  --d-accent-hover: #1d4ed8;
+  --d-border: #e5e5e5;
+
+  --d-primary-50: #eff6ff;
+  --d-primary-100: #dbeafe;
+  --d-primary-200: #bfdbfe;
+  --d-primary-300: #93c5fd;
+  --d-primary-400: #60a5fa;
+  --d-primary-500: #3b82f6;
+  --d-primary-600: #2563eb;
+  --d-primary-700: #1d4ed8;
+  --d-primary-800: #1e40af;
+  --d-primary-900: #1e3a8a;
+
+  --d-accent-50: #fff7ed;
+  --d-accent-100: #ffedd5;
+  --d-accent-200: #fed7aa;
+  --d-accent-300: #fdba74;
+  --d-accent-400: #fb923c;
+  --d-accent-500: #f97316;
+  --d-accent-600: #ea580c;
+  --d-accent-700: #c2410c;
+
+  --d-slate-50: #fafafa;
+  --d-slate-100: #f4f4f5;
+  --d-slate-200: #e4e4e7;
+  --d-slate-300: #d4d4d8;
+  --d-slate-400: #a1a1aa;
+  --d-slate-500: #71717a;
+  --d-slate-600: #52525b;
+  --d-slate-700: #3f3f46;
+  --d-slate-800: #27272a;
+  --d-slate-900: #18181b;
+  --d-slate-950: #09090b;
+
+  /* Backward-compatible aliases expected by old examples */
+  --d-stone-50: var(--d-slate-50);
+  --d-stone-100: var(--d-slate-100);
+  --d-stone-200: var(--d-slate-200);
+  --d-stone-300: var(--d-slate-300);
+  --d-stone-400: var(--d-slate-400);
+  --d-stone-500: var(--d-slate-500);
+  --d-stone-600: var(--d-slate-600);
+  --d-stone-700: var(--d-slate-700);
+  --d-stone-800: var(--d-slate-800);
+  --d-stone-900: var(--d-slate-900);
+  --d-stone-950: var(--d-slate-950);
+
+  --d-success: #16a34a;
+  --d-success-light: rgba(22, 163, 74, 0.12);
+  --d-error: #dc2626;
+  --d-error-light: rgba(220, 38, 38, 0.12);
+  --d-warning: #d97706;
+  --d-warning-light: rgba(217, 119, 6, 0.12);
+  --d-info: #0284c7;
+  --d-info-light: rgba(2, 132, 199, 0.12);
+
+  --d-ring: rgba(37, 99, 235, 0.22);
+
+  --d-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --d-font-mono: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+
+  --d-text-xs: 0.75rem;
+  --d-text-sm: 0.8125rem;
+  --d-text-base: 0.875rem;
+  --d-text-lg: 1rem;
+  --d-text-xl: 1.25rem;
+  --d-text-2xl: 1.5rem;
+  --d-text-3xl: 2rem;
+
+  --d-font-normal: 400;
+  --d-font-medium: 500;
+  --d-font-semibold: 600;
+  --d-font-bold: 700;
+
+  --d-leading: 1.6;
+
+  --d-space-1: 0.25rem;
+  --d-space-2: 0.5rem;
+  --d-space-3: 0.75rem;
+  --d-space-4: 1rem;
+  --d-space-5: 1.25rem;
+  --d-space-6: 1.5rem;
+  --d-space-8: 2rem;
+  --d-space-10: 2.5rem;
+  --d-space-12: 3rem;
+
+  --d-radius-sm: 6px;
+  --d-radius-md: 8px;
+  --d-radius-lg: 12px;
+  --d-radius-xl: 14px;
+  --d-radius-full: 9999px;
+
+  --d-shadow-xs: none;
+  --d-shadow-sm: none;
+  --d-shadow-md: 0 10px 26px rgba(0, 0, 0, 0.08);
+  --d-shadow-lg: 0 18px 42px rgba(0, 0, 0, 0.12);
+  --d-shadow-glow: 0 0 0 1px var(--d-accent);
+
+  --d-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --d-ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --d-duration-fast: 120ms;
+  --d-duration: 180ms;
+  --d-duration-slow: 280ms;
+
+  --d-surface-page: var(--d-bg);
+  --d-surface-card: var(--d-bg-card);
+  --d-surface-raised: var(--d-bg-elevated);
+  --d-surface-overlay: rgba(0, 0, 0, 0.4);
+
+  --d-text-primary: var(--d-fg);
+  --d-text-secondary: var(--d-fg-muted);
+  --d-text-muted: var(--d-fg-muted);
+  --d-text-inverse: #ffffff;
+
+  --d-border-color: var(--d-border);
+
+  --d-gradient-brand: linear-gradient(135deg, var(--d-primary-500), #8b5cf6);
+
+  --d-z-dropdown: 50;
+  --d-z-sticky: 100;
+  --d-z-overlay: 200;
+  --d-z-modal: 300;
+  --d-z-toast: 400;
+  --d-z-tooltip: 500;
+}
+
+[data-theme="dark"] {
+  --d-bg: #0a0a0a;
+  --d-bg-card: #141414;
+  --d-bg-elevated: #1a1a1a;
+  --d-fg: #fafafa;
+  --d-fg-muted: #737373;
+  --d-accent: #3b82f6;
+  --d-accent-hover: #2563eb;
+  --d-border: #262626;
+
+  --d-success: #22c55e;
+  --d-success-light: rgba(34, 197, 94, 0.14);
+  --d-error: #ef4444;
+  --d-error-light: rgba(239, 68, 68, 0.14);
+  --d-warning: #f59e0b;
+  --d-warning-light: rgba(245, 158, 11, 0.14);
+  --d-info: #38bdf8;
+  --d-info-light: rgba(56, 189, 248, 0.14);
+
+  --d-ring: rgba(59, 130, 246, 0.35);
+  --d-shadow-md: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --d-shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.45);
+  --d-surface-overlay: rgba(0, 0, 0, 0.65);
+}

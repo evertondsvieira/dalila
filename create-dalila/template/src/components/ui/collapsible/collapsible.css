@@ -1,0 +1,61 @@
+/* Dalila UI — Collapsible */
+
+.d-collapsible {
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+  overflow: hidden;
+}
+
+.d-collapsible > summary,
+.d-collapsible-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--d-space-3) var(--d-space-4);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-medium);
+  color: var(--d-text-primary);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: background var(--d-duration-fast) ease;
+}
+
+.d-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.d-collapsible > summary:hover,
+.d-collapsible-trigger:hover {
+  background: var(--d-surface-raised);
+}
+
+.d-collapsible > summary::after,
+.d-collapsible-trigger::after {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid var(--d-text-muted);
+  border-bottom: 2px solid var(--d-text-muted);
+  transform: rotate(45deg);
+  transition: transform var(--d-duration) var(--d-ease);
+  flex-shrink: 0;
+}
+
+.d-collapsible[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.d-collapsible-body {
+  padding: 0 var(--d-space-4) var(--d-space-4);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  color: var(--d-text-secondary);
+  line-height: var(--d-leading);
+}
+
+.d-collapsible[open] > .d-collapsible-body,
+.d-collapsible.open .d-collapsible-body {
+  padding-top: var(--d-space-2);
+}

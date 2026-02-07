@@ -1,0 +1,90 @@
+/* Dalila UI — Accordion */
+
+.d-accordion {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+  overflow: hidden;
+}
+
+.d-accordion-item {
+  border-bottom: 1px solid var(--d-border-color);
+}
+
+.d-accordion-item:last-child {
+  border-bottom: none;
+}
+
+/* Works with <details> or JS-controlled .open class */
+.d-accordion-item > summary,
+.d-accordion-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--d-space-4);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  font-weight: var(--d-font-medium);
+  color: var(--d-text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  list-style: none;
+  transition: background var(--d-duration-fast) ease;
+}
+
+.d-accordion-item > summary::-webkit-details-marker {
+  display: none;
+}
+
+.d-accordion-item > summary:hover,
+.d-accordion-trigger:hover {
+  background: var(--d-surface-raised);
+}
+
+.d-accordion-item > summary::after,
+.d-accordion-trigger::after {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: 2px solid var(--d-text-muted);
+  border-bottom: 2px solid var(--d-text-muted);
+  transform: rotate(45deg);
+  transition: transform var(--d-duration) var(--d-ease);
+  flex-shrink: 0;
+}
+
+.d-accordion-item[open] > summary::after,
+.d-accordion-item.open .d-accordion-trigger::after {
+  transform: rotate(-135deg);
+}
+
+.d-accordion-body {
+  display: block;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  padding: 0 var(--d-space-4);
+  transform: translateY(-0.2rem);
+  transition:
+    max-height var(--d-duration-slow) var(--d-ease),
+    opacity var(--d-duration-fast) ease,
+    transform var(--d-duration-fast) ease,
+    padding var(--d-duration-slow) var(--d-ease);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  color: var(--d-text-secondary);
+  line-height: var(--d-leading);
+}
+
+.d-accordion-item[open] > .d-accordion-body,
+.d-accordion-item.open .d-accordion-body {
+  max-height: 40rem;
+  opacity: 1;
+  transform: translateY(0);
+  padding: var(--d-space-2) var(--d-space-4) var(--d-space-4);
+  border-top: 1px solid var(--d-border-color);
+}

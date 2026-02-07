@@ -1,0 +1,56 @@
+/* Dalila UI — Radio */
+
+.d-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--d-space-2);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  color: var(--d-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.d-radio input {
+  position: relative;
+  appearance: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+  background: var(--d-surface-page);
+  border: 2px solid var(--d-border-color);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all var(--d-duration-fast) ease;
+}
+
+.d-radio input:checked {
+  border-color: var(--d-accent);
+  border-width: 5px;
+}
+
+.d-radio input:focus-visible {
+  outline: none;
+  box-shadow: var(--d-shadow-glow);
+}
+
+.d-radio input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.d-radio:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.d-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-space-2);
+}
+
+.d-radio-group-row {
+  flex-direction: row;
+  gap: var(--d-space-4);
+}

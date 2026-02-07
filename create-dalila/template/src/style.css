@@ -1,3 +1,16 @@
+/**
+ * Dalila UI Components
+ *
+ * To use Dalila UI components, import the necessary styles:
+ *
+ * @import './components/ui/button/button.css';
+ * @import './components/ui/card/card.css';
+ * @import './components/ui/dialog/dialog.css';
+ *
+ * Or import all styles at once:
+ * @import './components/ui/dalila/dalila.css';
+ */
+
 * {
   box-sizing: border-box;
   margin: 0;

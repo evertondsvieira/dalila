@@ -1,0 +1,62 @@
+/* Dalila UI — Chip / Tag */
+
+.d-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--d-space-1);
+  padding: 0.25rem 0.625rem;
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-xs);
+  font-weight: var(--d-font-medium);
+  color: var(--d-text-primary);
+  background: var(--d-surface-raised);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-full);
+  white-space: nowrap;
+}
+
+.d-chip-primary {
+  color: var(--d-accent);
+  background: rgba(37, 99, 235, 0.1);
+  border-color: transparent;
+}
+
+.d-chip-success {
+  color: var(--d-success);
+  background: var(--d-success-light);
+  border-color: transparent;
+}
+
+.d-chip-error {
+  color: var(--d-error);
+  background: var(--d-error-light);
+  border-color: transparent;
+}
+
+.d-chip-warning {
+  color: var(--d-warning);
+  background: var(--d-warning-light);
+  border-color: transparent;
+}
+
+.d-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: opacity var(--d-duration-fast) ease;
+}
+
+.d-chip-remove:hover {
+  opacity: 1;
+}

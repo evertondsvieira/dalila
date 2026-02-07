@@ -1,0 +1,100 @@
+/* Dalila UI — Toast */
+
+@keyframes d-toast-in {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.d-toast-container {
+  position: fixed;
+  bottom: var(--d-space-6);
+  right: var(--d-space-6);
+  z-index: var(--d-z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-space-3);
+  max-width: 24rem;
+  pointer-events: none;
+}
+
+.d-toast-container-tl { top: var(--d-space-6); left: var(--d-space-6); bottom: auto; right: auto; }
+.d-toast-container-tr { top: var(--d-space-6); right: var(--d-space-6); bottom: auto; }
+.d-toast-container-bl { bottom: var(--d-space-6); left: var(--d-space-6); right: auto; }
+
+.d-toast {
+  --_tone: var(--d-text-muted);
+  --_tone-bg: rgba(115, 115, 115, 0.12);
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--d-space-3);
+  padding: var(--d-space-4) var(--d-space-4) var(--d-space-4) var(--d-space-5);
+  background: var(--d-surface-card);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  font-family: var(--d-font-sans);
+  animation: d-toast-in var(--d-duration-slow) var(--d-ease) forwards;
+}
+
+.d-toast-icon {
+  flex-shrink: 0;
+  display: inline-block;
+  color: var(--_tone);
+  font-size: 1rem;
+  line-height: 1;
+  margin-top: 0.125rem;
+}
+
+.d-toast-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.d-toast-title {
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-primary);
+}
+
+.d-toast-text {
+  font-size: var(--d-text-sm);
+  color: var(--d-text-secondary);
+  margin: var(--d-space-1) 0 0;
+}
+
+.d-toast-close {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: var(--d-space-1);
+  background: none;
+  border: none;
+  color: var(--d-text-muted);
+  cursor: pointer;
+  border-radius: var(--d-radius-sm);
+  transition: color var(--d-duration-fast) ease;
+}
+
+.d-toast-close:hover {
+  color: var(--d-text-primary);
+}
+
+.d-toast-success {
+  --_tone: var(--d-success);
+  --_tone-bg: var(--d-success-light);
+}
+
+.d-toast-error {
+  --_tone: var(--d-error);
+  --_tone-bg: var(--d-error-light);
+}
+
+.d-toast-warning {
+  --_tone: var(--d-warning);
+  --_tone-bg: var(--d-warning-light);
+}
+
+.d-toast-info {
+  --_tone: var(--d-info);
+  --_tone-bg: var(--d-info-light);
+}

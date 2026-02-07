@@ -1,0 +1,106 @@
+/* Dalila UI — Input */
+
+.d-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-space-1);
+}
+
+.d-field-label {
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-medium);
+  color: var(--d-text-primary);
+}
+
+.d-field-hint {
+  font-size: var(--d-text-xs);
+  color: var(--d-text-muted);
+}
+
+.d-field-error {
+  font-size: var(--d-text-xs);
+  color: var(--d-error);
+  font-weight: var(--d-font-medium);
+}
+
+.d-input,
+.d-textarea,
+.d-select {
+  width: 100%;
+  padding: var(--d-space-2) var(--d-space-3);
+  min-height: 2.25rem;
+
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  color: var(--d-text-primary);
+  line-height: var(--d-leading);
+
+  background: var(--d-surface-page);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-md);
+
+  transition: border-color var(--d-duration-fast) ease, box-shadow var(--d-duration-fast) ease;
+}
+
+.d-input::placeholder,
+.d-textarea::placeholder {
+  color: var(--d-text-muted);
+}
+
+.d-input:focus,
+.d-textarea:focus,
+.d-select:focus {
+  outline: none;
+  border-color: var(--d-accent);
+  box-shadow: none;
+}
+
+.d-input[aria-invalid="true"],
+.d-textarea[aria-invalid="true"],
+.d-select[aria-invalid="true"],
+.d-input-error,
+.d-textarea-error,
+.d-select-error {
+  border-color: var(--d-error);
+}
+
+.d-input[aria-invalid="true"]:focus,
+.d-textarea[aria-invalid="true"]:focus,
+.d-select[aria-invalid="true"]:focus,
+.d-input-error:focus,
+.d-textarea-error:focus,
+.d-select-error:focus {
+  box-shadow: none;
+}
+
+.d-input:disabled,
+.d-textarea:disabled,
+.d-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--d-surface-raised);
+}
+
+.d-textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.d-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath stroke='%23737373' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--d-space-3) center;
+  padding-right: var(--d-space-8);
+}
+
+[data-theme="light"] .d-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+}
+
+.d-input-sm {
+  padding: var(--d-space-1) var(--d-space-2);
+  min-height: 1.75rem;
+  font-size: var(--d-text-sm);
+}
