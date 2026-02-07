@@ -294,6 +294,18 @@ function injectBindings(html, requestPath) {
         "dalila/context/raw": "${dalilaPath}/context/raw.js",
         "dalila/runtime": "${dalilaPath}/runtime/index.js",
         "dalila/router": "${dalilaPath}/router/index.js",
+        "dalila/form": "${dalilaPath}/form/index.js",
+        "dalila/components/ui": "${dalilaPath}/components/ui/index.js",
+        "dalila/components/ui/dialog": "${dalilaPath}/components/ui/dialog/index.js",
+        "dalila/components/ui/drawer": "${dalilaPath}/components/ui/drawer/index.js",
+        "dalila/components/ui/dropdown": "${dalilaPath}/components/ui/dropdown/index.js",
+        "dalila/components/ui/popover": "${dalilaPath}/components/ui/popover/index.js",
+        "dalila/components/ui/combobox": "${dalilaPath}/components/ui/combobox/index.js",
+        "dalila/components/ui/accordion": "${dalilaPath}/components/ui/accordion/index.js",
+        "dalila/components/ui/tabs": "${dalilaPath}/components/ui/tabs/index.js",
+        "dalila/components/ui/calendar": "${dalilaPath}/components/ui/calendar/index.js",
+        "dalila/components/ui/toast": "${dalilaPath}/components/ui/toast/index.js",
+        "dalila/components/ui/dropzone": "${dalilaPath}/components/ui/dropzone/index.js",
         "@/": "/src/"
       }
     }
