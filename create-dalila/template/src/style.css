@@ -13,6 +13,8 @@
  *    import { createDialog, createToast } from 'dalila/components/ui';
  */
 
+@import './components/ui/dalila/dalila.css';
+
 * {
   box-sizing: border-box;
   margin: 0;
