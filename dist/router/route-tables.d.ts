@@ -50,6 +50,7 @@ export interface RouteTable {
     layout?: (ctx: RouteCtx, child: Node | DocumentFragment | Node[], data: any) => Node | DocumentFragment | Node[];
     loader?: (ctx: RouteCtx) => Promise<any>;
     preload?: (ctx: RouteCtx) => Promise<any>;
+    onMount?: (root: HTMLElement) => void;
     pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
     error?: (ctx: RouteCtx, error: unknown, data?: any) => Node | DocumentFragment | Node[];
     notFound?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];

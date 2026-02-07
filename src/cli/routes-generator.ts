@@ -595,6 +595,9 @@ function pageProps(pageHtml?: RouteFile, pageTs?: RouteFile): string[] {
       if (hasNamedExport(pageTs, 'validation')) {
         props.push(`validation: ${moduleExport(pageTs, 'validation', { allowValue: true })}`);
       }
+      if (hasNamedExport(pageTs, 'view')) {
+        props.push(`onMount: ${moduleExport(pageTs, 'view')}`);
+      }
     } else {
       props.push(`view: (ctx) => fromHtml(${viewConst}, { data: ${routeDataExpr()}, scope: ctx.scope })`);
     }

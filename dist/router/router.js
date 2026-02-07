@@ -989,11 +989,13 @@ export function createRouter(config) {
     function mountViewStack(matchStack, ctx, dataStack) {
         try {
             let content = null;
+            let leafRoute = null;
             for (let i = matchStack.length - 1; i >= 0; i--) {
                 const match = matchStack[i];
                 const data = dataStack[i];
                 const route = match.route;
                 if (i === matchStack.length - 1) {
+                    leafRoute = route;
                     if (!route.view) {
                         console.warn(`[Dalila] Leaf route ${match.path} has no view function`);
                         return;
@@ -1025,6 +1027,17 @@ export function createRouter(config) {
             if (content) {
                 const nodes = Array.isArray(content) ? content : [content];
                 mountToOutlet(...nodes);
+                // Call onMount lifecycle hook if present
+                if (leafRoute?.onMount) {
+                    queueMicrotask(() => {
+                        try {
+                            leafRoute.onMount(outletElement);
+                        }
+                        catch (error) {
+                            console.error('[Dalila] Error in onMount lifecycle hook:', error);
+                        }
+                    });
+                }
             }
         }
         catch (error) {

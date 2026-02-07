@@ -69,6 +69,9 @@ export interface RouteTable {
   loader?: (ctx: RouteCtx) => Promise<any>;
   preload?: (ctx: RouteCtx) => Promise<any>;
 
+  // Post-mount lifecycle hook (called after view is mounted to DOM)
+  onMount?: (root: HTMLElement) => void;
+
   // State views
   pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
   error?: (ctx: RouteCtx, error: unknown, data?: any) => Node | DocumentFragment | Node[];

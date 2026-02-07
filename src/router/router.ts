@@ -1284,6 +1284,7 @@ export function createRouter(config: RouterConfig): Router {
   function mountViewStack(matchStack: RouteTableMatch[], ctx: RouteCtx, dataStack: any[]): void {
     try {
       let content: Node | DocumentFragment | Node[] | null = null;
+      let leafRoute: RouteTable | null = null;
 
       for (let i = matchStack.length - 1; i >= 0; i--) {
         const match = matchStack[i];
@@ -1291,6 +1292,7 @@ export function createRouter(config: RouterConfig): Router {
         const route = match.route;
 
         if (i === matchStack.length - 1) {
+          leafRoute = route;
           if (!route.view) {
             console.warn(`[Dalila] Leaf route ${match.path} has no view function`);
             return;
@@ -1322,6 +1324,17 @@ export function createRouter(config: RouterConfig): Router {
       if (content) {
         const nodes = Array.isArray(content) ? content : [content];
         mountToOutlet(...nodes);
+
+        // Call onMount lifecycle hook if present
+        if (leafRoute?.onMount) {
+          queueMicrotask(() => {
+            try {
+              leafRoute!.onMount!(outletElement as HTMLElement);
+            } catch (error) {
+              console.error('[Dalila] Error in onMount lifecycle hook:', error);
+            }
+          });
+        }
       }
     } catch (error) {
       console.error('[Dalila] Error mounting view stack:', error);
