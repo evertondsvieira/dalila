@@ -595,8 +595,17 @@ function pageProps(pageHtml?: RouteFile, pageTs?: RouteFile): string[] {
       if (hasNamedExport(pageTs, 'validation')) {
         props.push(`validation: ${moduleExport(pageTs, 'validation', { allowValue: true })}`);
       }
-      if (hasNamedExport(pageTs, 'view')) {
-        props.push(`onMount: ${moduleExport(pageTs, 'view')}`);
+      if (hasNamedExport(pageTs, 'onMount')) {
+        if (pageTs.lazy) {
+          const lazyLoader = `${pageTs.importName}_lazy`;
+          props.push(`onMount: (root: HTMLElement) => ${lazyLoader}().then(mod => {
+      if (typeof (mod as any).onMount === 'function') {
+        (mod as any).onMount(root);
+      }
+    })`);
+        } else {
+          props.push(`onMount: ${moduleExport(pageTs, 'onMount')}`);
+        }
       }
     } else {
       props.push(`view: (ctx) => fromHtml(${viewConst}, { data: ${routeDataExpr()}, scope: ctx.scope })`);
