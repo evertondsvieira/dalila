@@ -404,6 +404,78 @@ Components are found by `d-ui` attribute, ID, or fallback `data-d-tag`.
 
 ---
 
+## Lifecycle Hook: `onMount`
+
+When using Dalila Router with UI components, export an `onMount` function from your route to initialize components after the view is mounted to the DOM.
+
+**Why `onMount`?**
+
+The router needs to render the HTML first before UI components can attach to DOM elements. The `onMount` hook is called automatically after the view is mounted, giving you a safe place to call `mountUI()`.
+
+**Example:**
+
+```ts
+// src/app/page.ts
+import { signal } from 'dalila';
+import { createDialog, mountUI } from 'dalila/components/ui';
+
+// Create components at module scope (shared across lifecycle)
+const confirmDialog = createDialog({
+  closeOnBackdrop: true,
+  closeOnEscape: true
+});
+
+export function loader() {
+  const count = signal(0);
+
+  return {
+    count,
+    increment: () => count.update(n => n + 1),
+    openDialog: () => confirmDialog.show(),
+    closeDialog: () => confirmDialog.close(),
+  };
+}
+
+// Called after the view is mounted to the DOM
+export function onMount(root: HTMLElement) {
+  mountUI(root, {
+    dialogs: { confirmDialog }
+  });
+}
+```
+
+```html
+<!-- src/app/page.html -->
+<div>
+  <p>Count: {count}</p>
+  <button d-on-click="increment">+</button>
+  <button d-on-click="openDialog">Open Dialog</button>
+</div>
+
+<d-dialog d-ui="confirmDialog">
+  <d-dialog-header>
+    <d-dialog-title>Confirm Action</d-dialog-title>
+    <d-dialog-close d-on-click="closeDialog">&times;</d-dialog-close>
+  </d-dialog-header>
+  <d-dialog-body>
+    <p>Current count: {count}</p>
+  </d-dialog-body>
+  <d-dialog-footer>
+    <d-button variant="ghost" d-on-click="closeDialog">Cancel</d-button>
+    <d-button variant="primary" d-on-click="closeDialog">OK</d-button>
+  </d-dialog-footer>
+</d-dialog>
+```
+
+**Key points:**
+
+- `onMount(root)` receives the root element where your view was mounted
+- Create components outside `loader()` so they persist across calls
+- The `d-ui` attribute connects HTML elements to component instances
+- Works with both eager and lazy-loaded routes
+
+---
+
 ## Prop Validation
 
 All `create*` functions validate options at creation time:

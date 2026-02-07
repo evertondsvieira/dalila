@@ -65,6 +65,10 @@ bind(document.getElementById('app')!, ctx);
 
 - [Router](./docs/router.md) — Client-side routing with nested layouts, preloading, and file-based route generation
 
+### UI Components
+
+- [UI Components](./docs/ui.md) — Interactive components (Dialog, Drawer, Toast, Tabs, Calendar, etc.) with native HTML and full ARIA support
+
 ### Rendering
 
 - [when](./docs/core/when.md) — Conditional visibility
@@ -234,6 +238,47 @@ async function handleSubmit(data, { signal }) {
   <button type="submit">Save</button>
   <span d-form-error="userForm"></span>
 </form>
+```
+
+### UI Components with Router
+
+```ts
+// page.ts
+import { signal } from 'dalila';
+import { createDialog, mountUI } from 'dalila/components/ui';
+
+const dialog = createDialog();
+
+export function loader() {
+  const count = signal(0);
+
+  return {
+    count,
+    increment: () => count.update(n => n + 1),
+    openDialog: () => dialog.show(),
+  };
+}
+
+// Called after view is mounted
+export function onMount(root: HTMLElement) {
+  mountUI(root, {
+    dialogs: { dialog }
+  });
+}
+```
+
+```html
+<!-- page.html -->
+<d-button d-on-click="openDialog">Open Dialog</d-button>
+
+<d-dialog d-ui="dialog">
+  <d-dialog-header>
+    <d-dialog-title>Count: {count}</d-dialog-title>
+  </d-dialog-header>
+  <d-dialog-body>
+    <d-button d-on-click="increment">Increment</d-button>
+  </d-dialog-body>
+</d-dialog>
 ```
 
 ## Development
