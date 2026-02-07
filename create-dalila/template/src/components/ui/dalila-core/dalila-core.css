@@ -6,9 +6,9 @@
  *   <link rel="stylesheet" href="dalila-core.css" />
  */
 
-@import "./tokens.css";
-@import "./typography.css";
-@import "./layout.css";
-@import "./button.css";
-@import "./input.css";
-@import "./form.css";
+@import "../tokens/tokens.css";
+@import "../typography/typography.css";
+@import "../layout/layout.css";
+@import "../button/button.css";
+@import "../input/input.css";
+@import "../form/form.css";
