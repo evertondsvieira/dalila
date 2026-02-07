@@ -1,14 +1,16 @@
 /**
  * Dalila UI Components
  *
- * To use Dalila UI components, import the necessary styles:
+ * 1. Import styles locally:
+ *    @import './components/ui/button/button.css';
+ *    @import './components/ui/card/card.css';
+ *    @import './components/ui/dialog/dialog.css';
  *
- * @import './components/ui/button/button.css';
- * @import './components/ui/card/card.css';
- * @import './components/ui/dialog/dialog.css';
+ *    Or import all at once:
+ *    @import './components/ui/dalila/dalila.css';
  *
- * Or import all styles at once:
- * @import './components/ui/dalila/dalila.css';
+ * 2. Import JavaScript functionality from the npm package:
+ *    import { createDialog, createToast } from 'dalila/components/ui';
  */
 
 * {
