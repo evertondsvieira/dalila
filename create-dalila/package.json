@@ -1,6 +1,6 @@
 {
   "name": "create-dalila",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Create Dalila apps with one command",
   "bin": {
     "create-dalila": "index.js"
