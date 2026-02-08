@@ -81,6 +81,10 @@ bind(document.getElementById('app')!, ctx);
 - [Query](./docs/core/query.md) — Cached queries
 - [Mutations](./docs/core/mutation.md) — Write operations
 
+### HTTP
+
+- [HTTP Client](./docs/http.md) — Native fetch-based client with XSRF protection and interceptors
+
 ### Forms
 
 - [Forms](./docs/forms.md) — DOM-first form management with validation, field arrays, and accessibility
@@ -97,6 +101,7 @@ bind(document.getElementById('app')!, ctx);
 dalila           → signal, computed, effect, batch, ...
 dalila/runtime   → bind() for HTML templates
 dalila/context   → createContext, provide, inject
+dalila/http      → createHttpClient with XSRF protection
 ```
 
 ### Signals
@@ -164,6 +169,28 @@ const theme = persist(signal('dark'), { name: 'app-theme' });
 
 theme.set('light'); // Saved automatically
 // On reload: theme starts as 'light'
+```
+
+### HTTP Client
+
+```ts
+import { createHttpClient } from 'dalila/http';
+
+const http = createHttpClient({
+  baseURL: 'https://api.example.com',
+  xsrf: true, // XSRF protection
+  onError: (error) => {
+    if (error.status === 401) window.location.href = '/login';
+    throw error;
+  }
+});
+
+// GET request
+const response = await http.get('/users');
+console.log(response.data);
+
+// POST with auto JSON serialization
+await http.post('/users', { name: 'John', email: 'john@example.com' });
 ```
 
 ### File-Based Routing
