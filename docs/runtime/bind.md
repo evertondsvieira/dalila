@@ -1,7 +1,7 @@
 # Runtime — bind()
 
 The `dalila/runtime` module binds declarative HTML templates to a reactive context.
-No `eval`, no inline JS — every directive resolves identifiers from the context object you pass in.
+No `eval`, no inline JS — directive attributes resolve identifiers from context, and text interpolation evaluates safe expressions in `{...}`.
 
 ## How it works
 
@@ -13,7 +13,7 @@ No `eval`, no inline JS — every directive resolves identifiers from the contex
 │                          │                                         │
 │                          ├─ 1  d-each      remove template,        │
 │                          │                 clone + bind per item   │
-│                          ├─ 2  {tokens}    reactive text nodes     │
+│                          ├─ 2  {...}       reactive text nodes     │
 │                          ├─ 3  d-attr-*    attributes / props      │
 │                          ├─ 4  d-html      innerHTML               │
 │                          ├─ 5  d-on-*      event listeners         │
@@ -47,7 +47,7 @@ interface BindOptions {
   /** Event types to listen for. Default: click, input, change, submit, keydown, keyup */
   events?: string[];
 
-  /** CSS selectors inside which {token} interpolation is skipped. Default: 'pre, code' */
+  /** CSS selectors inside which {...} interpolation is skipped. Default: 'pre, code' */
   rawTextSelectors?: string;
 }
 
@@ -95,13 +95,18 @@ dispose();
 
 ## Directives
 
-### Text interpolation `{token}`
+### Text interpolation `{...}`
 
-Replaces `{name}` placeholders with values from the context.  Multiple tokens per text node are supported.
+Replaces `{...}` placeholders with expression results from the context.  Multiple expressions per text node are supported.
 
 ```html
 <p>Hello {name}!</p>
 <p>{greeting} {name}, you have {unread} messages</p>
+<p>Next count: {count + 1}</p>
+<p>Items: {items.length}</p>
+<p>Status: {isActive ? 'Yes' : 'No'}</p>
+<p>User: {user?.name}</p>
+<p>First item: {items?.[0]?.title}</p>
 ```
 
 **How the value is rendered:**

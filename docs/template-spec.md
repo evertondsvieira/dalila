@@ -28,7 +28,7 @@ Directive attribute bindings use:
 - Operators: `a + b`
 - Inline JS
 
-Text interpolation still uses `{token}` inside text nodes.
+Text interpolation supports expressions inside `{...}` in text nodes (for example: `{count + 1}`, `{items.length}`).
 
 If the identifier doesn't exist in `ctx`, the binding is ignored (with warning in dev mode).
 
@@ -62,14 +62,19 @@ If the identifier doesn't exist in `ctx`, the binding is ignored (with warning i
 ```html
 <p>Count: {count}</p>
 <p>Hello {name}!</p>
+<p>Next: {count + 1}</p>
+<p>Total: {items.length}</p>
+<p>Status: {isActive ? 'Yes' : 'No'}</p>
+<p>User: {user?.name}</p>
+<p>First: {items?.[0]?.title}</p>
 ```
 
 ### Rules
 
 | Condition | Behavior |
 |-----------|----------|
-| `ctx[key]` is signal | TextNode reacts with `effect()`: `text = String(signal())` |
-| `ctx[key]` is not signal | Renders `String(value)` once |
+| expression reads signal/getter | TextNode reacts with `effect()` and updates automatically |
+| expression reads only static values | Renders once |
 | `ctx[key]` undefined | Warning in dev, keeps literal token |
 
 **Exception:** Interpolation does not run inside `<pre>` and `<code>` (raw text).

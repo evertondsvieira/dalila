@@ -124,6 +124,542 @@ function warn(message: string): void {
   }
 }
 
+type EvalResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: 'parse' | 'missing_identifier'; message: string; identifier?: string };
+
+type ExprToken =
+  | { type: 'identifier'; value: string }
+  | { type: 'number'; value: number }
+  | { type: 'string'; value: string }
+  | { type: 'literal'; value: unknown }
+  | { type: 'operator'; value: string }
+  | { type: 'paren'; value: '(' | ')' }
+  | { type: 'bracket'; value: '[' | ']' };
+
+type ExprNode =
+  | { type: 'literal'; value: unknown }
+  | { type: 'identifier'; name: string }
+  | { type: 'unary'; op: string; arg: ExprNode }
+  | { type: 'binary'; op: string; left: ExprNode; right: ExprNode }
+  | { type: 'conditional'; condition: ExprNode; trueBranch: ExprNode; falseBranch: ExprNode }
+  | { type: 'member'; object: ExprNode; property: ExprNode; computed: boolean; optional: boolean };
+
+const expressionCache = new Map<string, ExprNode | null>();
+
+function isIdentStart(ch: string): boolean {
+  return /[a-zA-Z_$]/.test(ch);
+}
+
+function isIdentPart(ch: string): boolean {
+  return /[a-zA-Z0-9_$]/.test(ch);
+}
+
+function tokenizeExpression(input: string): ExprToken[] {
+  const tokens: ExprToken[] = [];
+  let i = 0;
+
+  const pushOp = (op: string): void => {
+    tokens.push({ type: 'operator', value: op });
+    i += op.length;
+  };
+
+  while (i < input.length) {
+    const ch = input[i];
+
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+
+    if (isIdentStart(ch)) {
+      const start = i;
+      i++;
+      while (i < input.length && isIdentPart(input[i])) i++;
+      const ident = input.slice(start, i);
+      if (ident === 'true') tokens.push({ type: 'literal', value: true });
+      else if (ident === 'false') tokens.push({ type: 'literal', value: false });
+      else if (ident === 'null') tokens.push({ type: 'literal', value: null });
+      else if (ident === 'undefined') tokens.push({ type: 'literal', value: undefined });
+      else tokens.push({ type: 'identifier', value: ident });
+      continue;
+    }
+
+    if (/[0-9]/.test(ch)) {
+      const start = i;
+      i++;
+      while (i < input.length && /[0-9]/.test(input[i])) i++;
+      if (input[i] === '.') {
+        i++;
+        while (i < input.length && /[0-9]/.test(input[i])) i++;
+      }
+      const num = Number(input.slice(start, i));
+      tokens.push({ type: 'number', value: num });
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      i++;
+      let value = '';
+      let closed = false;
+      while (i < input.length) {
+        const c = input[i];
+        if (c === '\\') {
+          const next = input[i + 1];
+          if (next === undefined) break;
+          value += next;
+          i += 2;
+          continue;
+        }
+        if (c === quote) {
+          closed = true;
+          i++;
+          break;
+        }
+        value += c;
+        i++;
+      }
+      if (!closed) {
+        throw new Error('Unterminated string literal');
+      }
+      tokens.push({ type: 'string', value });
+      continue;
+    }
+
+    const three = input.slice(i, i + 3);
+    const two = input.slice(i, i + 2);
+
+    if (three === '===' || three === '!==') {
+      pushOp(three);
+      continue;
+    }
+    if (
+      two === '&&' || two === '||' || two === '??' || two === '?.' || two === '==' || two === '!='
+      || two === '>=' || two === '<='
+    ) {
+      pushOp(two);
+      continue;
+    }
+    if ('+-*/%!<>.?:'.includes(ch)) {
+      pushOp(ch);
+      continue;
+    }
+    if (ch === '(' || ch === ')') {
+      tokens.push({ type: 'paren', value: ch });
+      i++;
+      continue;
+    }
+    if (ch === '[' || ch === ']') {
+      tokens.push({ type: 'bracket', value: ch });
+      i++;
+      continue;
+    }
+
+    throw new Error(`Unexpected token "${ch}"`);
+  }
+
+  return tokens;
+}
+
+function parseExpression(input: string): ExprNode {
+  const tokens = tokenizeExpression(input);
+  let index = 0;
+
+  const peek = (): ExprToken | undefined => tokens[index];
+  const next = (): ExprToken | undefined => tokens[index++];
+
+  const matchOperator = (...ops: string[]): string | null => {
+    const token = peek();
+    if (token?.type === 'operator' && ops.includes(token.value)) {
+      index++;
+      return token.value;
+    }
+    return null;
+  };
+
+  const expectOperator = (value: string): void => {
+    const token = next();
+    if (!token || token.type !== 'operator' || token.value !== value) {
+      throw new Error(`Expected "${value}"`);
+    }
+  };
+
+  const expectParen = (value: ')' | '('): void => {
+    const token = next();
+    if (!token || token.type !== 'paren' || token.value !== value) {
+      throw new Error(`Expected "${value}"`);
+    }
+  };
+
+  const expectBracket = (value: ']' | '['): void => {
+    const token = next();
+    if (!token || token.type !== 'bracket' || token.value !== value) {
+      throw new Error(`Expected "${value}"`);
+    }
+  };
+
+  const parsePrimary = (): ExprNode => {
+    const token = next();
+    if (!token) throw new Error('Unexpected end of expression');
+
+    if (token.type === 'number') return { type: 'literal', value: token.value };
+    if (token.type === 'string') return { type: 'literal', value: token.value };
+    if (token.type === 'literal') return { type: 'literal', value: token.value };
+    if (token.type === 'identifier') return { type: 'identifier', name: token.value };
+    if (token.type === 'paren' && token.value === '(') {
+      const expr = parseConditional();
+      expectParen(')');
+      return expr;
+    }
+
+    throw new Error('Invalid expression');
+  };
+
+  const parseMember = (): ExprNode => {
+    let node = parsePrimary();
+
+    while (true) {
+      const token = peek();
+      if (token?.type === 'operator' && token.value === '.') {
+        next();
+        const prop = next();
+        if (!prop || prop.type !== 'identifier') {
+          throw new Error('Expected identifier after "."');
+        }
+        node = {
+          type: 'member',
+          object: node,
+          property: { type: 'literal', value: prop.value },
+          computed: false,
+          optional: false,
+        };
+        continue;
+      }
+
+      if (token?.type === 'operator' && token.value === '?.') {
+        next();
+        const nextToken = peek();
+        if (nextToken?.type === 'identifier') {
+          const prop = nextToken.value;
+          next();
+          node = {
+            type: 'member',
+            object: node,
+            property: { type: 'literal', value: prop },
+            computed: false,
+            optional: true,
+          };
+          continue;
+        }
+        if (nextToken?.type === 'bracket' && nextToken.value === '[') {
+          expectBracket('[');
+          const propertyExpr = parseConditional();
+          expectBracket(']');
+          node = {
+            type: 'member',
+            object: node,
+            property: propertyExpr,
+            computed: true,
+            optional: true,
+          };
+          continue;
+        }
+        throw new Error('Expected identifier or "[" after "?."');
+      }
+
+      if (token?.type === 'bracket' && token.value === '[') {
+        expectBracket('[');
+        const propertyExpr = parseConditional();
+        expectBracket(']');
+        node = {
+          type: 'member',
+          object: node,
+          property: propertyExpr,
+          computed: true,
+          optional: false,
+        };
+        continue;
+      }
+
+      break;
+    }
+
+    return node;
+  };
+
+  const parseUnary = (): ExprNode => {
+    const op = matchOperator('!', '+', '-');
+    if (op) {
+      return { type: 'unary', op, arg: parseUnary() };
+    }
+    return parseMember();
+  };
+
+  const parseMultiplicative = (): ExprNode => {
+    let node = parseUnary();
+    while (true) {
+      const op = matchOperator('*', '/', '%');
+      if (!op) break;
+      node = { type: 'binary', op, left: node, right: parseUnary() };
+    }
+    return node;
+  };
+
+  const parseAdditive = (): ExprNode => {
+    let node = parseMultiplicative();
+    while (true) {
+      const op = matchOperator('+', '-');
+      if (!op) break;
+      node = { type: 'binary', op, left: node, right: parseMultiplicative() };
+    }
+    return node;
+  };
+
+  const parseComparison = (): ExprNode => {
+    let node = parseAdditive();
+    while (true) {
+      const op = matchOperator('<', '>', '<=', '>=');
+      if (!op) break;
+      node = { type: 'binary', op, left: node, right: parseAdditive() };
+    }
+    return node;
+  };
+
+  const parseEquality = (): ExprNode => {
+    let node = parseComparison();
+    while (true) {
+      const op = matchOperator('==', '!=', '===', '!==');
+      if (!op) break;
+      node = { type: 'binary', op, left: node, right: parseComparison() };
+    }
+    return node;
+  };
+
+  const parseLogicalAnd = (): ExprNode => {
+    let node = parseEquality();
+    while (true) {
+      const op = matchOperator('&&');
+      if (!op) break;
+      node = { type: 'binary', op, left: node, right: parseEquality() };
+    }
+    return node;
+  };
+
+  const parseLogicalOr = (): ExprNode => {
+    let node = parseLogicalAnd();
+    while (true) {
+      const op = matchOperator('||');
+      if (!op) break;
+      node = { type: 'binary', op, left: node, right: parseLogicalAnd() };
+    }
+    return node;
+  };
+
+  const parseNullish = (): ExprNode => {
+    let node = parseLogicalOr();
+    while (true) {
+      const op = matchOperator('??');
+      if (!op) break;
+      node = { type: 'binary', op, left: node, right: parseLogicalOr() };
+    }
+    return node;
+  };
+
+  const parseConditional = (): ExprNode => {
+    const condition = parseNullish();
+    if (!matchOperator('?')) return condition;
+
+    const trueBranch = parseConditional();
+    expectOperator(':');
+    const falseBranch = parseConditional();
+    return { type: 'conditional', condition, trueBranch, falseBranch };
+  };
+
+  const root = parseConditional();
+  if (index < tokens.length) {
+    throw new Error('Unexpected token after end of expression');
+  }
+  return root;
+}
+
+function evalExpressionAst(node: ExprNode, ctx: BindContext): EvalResult {
+  const evalNode = (current: ExprNode): EvalResult => {
+    if (current.type === 'literal') return { ok: true, value: current.value };
+
+    if (current.type === 'identifier') {
+      if (!(current.name in ctx)) {
+        return {
+          ok: false,
+          reason: 'missing_identifier',
+          message: `Text interpolation: "${current.name}" not found in context`,
+          identifier: current.name,
+        };
+      }
+      return { ok: true, value: resolve(ctx[current.name]) };
+    }
+
+    if (current.type === 'member') {
+      const objectEval = evalNode(current.object);
+      if (!objectEval.ok) return objectEval;
+
+      const obj = objectEval.value;
+      if (obj == null) return { ok: true, value: undefined };
+
+      if (!current.computed) {
+        const key = (current.property as { type: 'literal'; value: unknown }).value;
+        return { ok: true, value: resolve((obj as Record<string, unknown>)[String(key)]) };
+      }
+
+      const propEval = evalNode(current.property);
+      if (!propEval.ok) return propEval;
+      return { ok: true, value: resolve((obj as Record<string, unknown>)[String(propEval.value)]) };
+    }
+
+    if (current.type === 'unary') {
+      const arg = evalNode(current.arg);
+      if (!arg.ok) return arg;
+      if (current.op === '!') return { ok: true, value: !arg.value };
+      if (current.op === '+') return { ok: true, value: +(arg.value as any) };
+      return { ok: true, value: -(arg.value as any) };
+    }
+
+    if (current.type === 'conditional') {
+      const condition = evalNode(current.condition);
+      if (!condition.ok) return condition;
+      return condition.value ? evalNode(current.trueBranch) : evalNode(current.falseBranch);
+    }
+
+    const left = evalNode(current.left);
+    if (!left.ok) return left;
+
+    if (current.op === '&&') {
+      return left.value ? evalNode(current.right) : left;
+    }
+    if (current.op === '||') {
+      return left.value ? left : evalNode(current.right);
+    }
+    if (current.op === '??') {
+      return left.value == null ? evalNode(current.right) : left;
+    }
+
+    const right = evalNode(current.right);
+    if (!right.ok) return right;
+
+    switch (current.op) {
+      case '+': return { ok: true, value: (left.value as any) + (right.value as any) };
+      case '-': return { ok: true, value: (left.value as any) - (right.value as any) };
+      case '*': return { ok: true, value: (left.value as any) * (right.value as any) };
+      case '/': return { ok: true, value: (left.value as any) / (right.value as any) };
+      case '%': return { ok: true, value: (left.value as any) % (right.value as any) };
+      case '<': return { ok: true, value: (left.value as any) < (right.value as any) };
+      case '>': return { ok: true, value: (left.value as any) > (right.value as any) };
+      case '<=': return { ok: true, value: (left.value as any) <= (right.value as any) };
+      case '>=': return { ok: true, value: (left.value as any) >= (right.value as any) };
+      case '==': return { ok: true, value: (left.value as any) == (right.value as any) };
+      case '!=': return { ok: true, value: (left.value as any) != (right.value as any) };
+      case '===': return { ok: true, value: (left.value as any) === (right.value as any) };
+      case '!==': return { ok: true, value: (left.value as any) !== (right.value as any) };
+      default:
+        return { ok: false, reason: 'parse', message: `Unsupported operator "${current.op}"` };
+    }
+  };
+
+  return evalNode(node);
+}
+
+function parseInterpolationExpression(expression: string): { ok: true; ast: ExprNode } | { ok: false; message: string } {
+  let ast = expressionCache.get(expression);
+  if (ast === undefined) {
+    try {
+      ast = parseExpression(expression);
+      expressionCache.set(expression, ast);
+    } catch (err) {
+      expressionCache.set(expression, null);
+      return {
+        ok: false,
+        message: `Text interpolation parse error in "{${expression}}": ${(err as Error).message}`,
+      };
+    }
+  }
+
+  if (ast === null) {
+    return {
+      ok: false,
+      message: `Text interpolation parse error in "{${expression}}"`,
+    };
+  }
+
+  return { ok: true, ast };
+}
+
+function evaluateExpressionRaw(node: ExprNode, ctx: BindContext): EvalResult {
+  if (node.type === 'literal') return { ok: true, value: node.value };
+
+  if (node.type === 'identifier') {
+    if (!(node.name in ctx)) {
+      return {
+        ok: false,
+        reason: 'missing_identifier',
+        message: `Text interpolation: "${node.name}" not found in context`,
+        identifier: node.name,
+      };
+    }
+    return { ok: true, value: ctx[node.name] };
+  }
+
+  if (node.type === 'member') {
+    const objectEval = evaluateExpressionRaw(node.object, ctx);
+    if (!objectEval.ok) return objectEval;
+
+    const obj = objectEval.value;
+    if (obj == null) return { ok: true, value: undefined };
+
+    if (!node.computed) {
+      const key = (node.property as { type: 'literal'; value: unknown }).value;
+      return { ok: true, value: (obj as Record<string, unknown>)[String(key)] };
+    }
+
+    const propEval = evalExpressionAst(node.property, ctx);
+    if (!propEval.ok) return propEval;
+    return { ok: true, value: (obj as Record<string, unknown>)[String(propEval.value)] };
+  }
+
+  // For non-member expressions, the regular evaluator is fine.
+  return evalExpressionAst(node, ctx);
+}
+
+function expressionDependsOnReactiveSource(node: ExprNode, ctx: BindContext): boolean {
+  if (node.type === 'identifier') {
+    const value = ctx[node.name];
+    return isSignal(value) || (typeof value === 'function' && (value as Function).length === 0);
+  }
+  if (node.type === 'literal') return false;
+  if (node.type === 'unary') return expressionDependsOnReactiveSource(node.arg, ctx);
+  if (node.type === 'binary') {
+    return expressionDependsOnReactiveSource(node.left, ctx) || expressionDependsOnReactiveSource(node.right, ctx);
+  }
+  if (node.type === 'conditional') {
+    return expressionDependsOnReactiveSource(node.condition, ctx)
+      || expressionDependsOnReactiveSource(node.trueBranch, ctx)
+      || expressionDependsOnReactiveSource(node.falseBranch, ctx);
+  }
+  if (node.type === 'member') {
+    if (
+      expressionDependsOnReactiveSource(node.object, ctx)
+      || (node.computed ? expressionDependsOnReactiveSource(node.property, ctx) : false)
+    ) {
+      return true;
+    }
+
+    const memberValue = evaluateExpressionRaw(node, ctx);
+    if (!memberValue.ok) return false;
+    const value = memberValue.value;
+    return isSignal(value) || (typeof value === 'function' && (value as Function).length === 0);
+  }
+  return false;
+}
+
 // ============================================================================
 // Default Options
 // ============================================================================
@@ -144,7 +680,7 @@ function bindTextNode(
   cleanups: DisposeFunction[]
 ): void {
   const text = node.data;
-  const regex = /\{\s*([a-zA-Z_$][\w$]*)\s*\}/g;
+  const regex = /\{([^{}]+)\}/g;
 
   // Check if there are any tokens
   if (!regex.test(text)) return;
@@ -163,27 +699,56 @@ function bindTextNode(
       frag.appendChild(document.createTextNode(before));
     }
 
-    const key = match[1];
-    const value = ctx[key];
+    const rawToken = match[0];
+    const expression = match[1].trim();
+    const textNode = document.createTextNode('');
+    let warnedParse = false;
+    let warnedMissingIdentifier = false;
+    const parsed = parseInterpolationExpression(expression);
+    const applyResult = (result: EvalResult): void => {
+      if (!result.ok) {
+        if (result.reason === 'parse') {
+          if (!warnedParse) {
+            warn(result.message);
+            warnedParse = true;
+          }
+        } else if (!warnedMissingIdentifier) {
+          warn(result.message);
+          warnedMissingIdentifier = true;
+        }
 
-    if (value === undefined) {
-      warn(`Text interpolation: "${key}" not found in context`);
-      frag.appendChild(document.createTextNode(match[0]));
-    } else if (isSignal(value) || (typeof value === 'function' && (value as Function).length === 0)) {
-      // Signal or zero-arity getter — reactive text node.
-      // resolve() inside the effect calls the value and tracks dependencies.
-      const textNode = document.createTextNode('');
-      effect(() => {
-        const v = resolve(value);
-        textNode.data = v == null ? '' : String(v);
-      });
+        // Backward compatibility for "{identifier}" missing from context:
+        // preserve the literal token exactly as before.
+        const simpleIdent = expression.match(/^[a-zA-Z_$][\w$]*$/);
+        if (result.reason === 'missing_identifier' && simpleIdent && result.identifier === simpleIdent[0]) {
+          textNode.data = rawToken;
+        } else {
+          textNode.data = '';
+        }
+        return;
+      }
+
+      textNode.data = result.value == null ? '' : String(result.value);
+    };
+
+    if (!parsed.ok) {
+      applyResult({ ok: false, reason: 'parse', message: parsed.message });
       frag.appendChild(textNode);
-    } else {
-      // Static value — or a function with params, in which case resolve()
-      // warns and returns undefined, normalised to empty string below.
-      const resolved = resolve(value);
-      frag.appendChild(document.createTextNode(resolved == null ? '' : String(resolved)));
+      cursor = match.index + match[0].length;
+      continue;
     }
+
+    // First render is synchronous to avoid empty text until microtask flush.
+    applyResult(evalExpressionAst(parsed.ast, ctx));
+
+    // Only schedule reactive updates when expression depends on reactive sources.
+    if (expressionDependsOnReactiveSource(parsed.ast, ctx)) {
+      effect(() => {
+        applyResult(evalExpressionAst(parsed.ast, ctx));
+      });
+    }
+
+    frag.appendChild(textNode);
 
     cursor = match.index + match[0].length;
   }

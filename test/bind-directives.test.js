@@ -553,6 +553,138 @@ test('text – signal returning undefined renders empty string', async () => {
   });
 });
 
+test('text interpolation – supports arithmetic expressions like {count + 1}', async () => {
+  await withDom(async (doc) => {
+    const count = signal(1);
+    const root = el(doc, '<span>{count + 1}</span>');
+    bind(root, { count });
+    await tick(10);
+    assert.equal(root.textContent, '2');
+
+    count.set(4);
+    await tick(10);
+    assert.equal(root.textContent, '5');
+  });
+});
+
+test('text interpolation – static expressions render synchronously on bind()', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<span>{1 + 2}</span>');
+    bind(root, {});
+    assert.equal(root.textContent, '3');
+  });
+});
+
+test('text interpolation – signal expressions seed initial value synchronously', async () => {
+  await withDom(async (doc) => {
+    const count = signal(5);
+    const root = el(doc, '<span>{count + 1}</span>');
+    bind(root, { count });
+    assert.equal(root.textContent, '6');
+  });
+});
+
+test('text interpolation – supports property access like {items.length}', async () => {
+  await withDom(async (doc) => {
+    const items = signal(['a']);
+    const root = el(doc, '<span>{items.length}</span>');
+    bind(root, { items });
+    await tick(10);
+    assert.equal(root.textContent, '1');
+
+    items.set(['a', 'b', 'c']);
+    await tick(10);
+    assert.equal(root.textContent, '3');
+  });
+});
+
+test('text interpolation – supports conditional ternary expression', async () => {
+  await withDom(async (doc) => {
+    const isActive = signal(false);
+    const root = el(doc, `<span>{isActive ? 'Yes' : 'No'}</span>`);
+    bind(root, { isActive });
+    await tick(10);
+    assert.equal(root.textContent, 'No');
+
+    isActive.set(true);
+    await tick(10);
+    assert.equal(root.textContent, 'Yes');
+  });
+});
+
+test('text interpolation – ternary is right-associative', async () => {
+  await withDom(async (doc) => {
+    const a = signal(false);
+    const b = signal(true);
+    const root = el(doc, `<span>{a ? 'A' : b ? 'B' : 'C'}</span>`);
+    bind(root, { a, b });
+    await tick(10);
+    assert.equal(root.textContent, 'B');
+
+    b.set(false);
+    await tick(10);
+    assert.equal(root.textContent, 'C');
+  });
+});
+
+test('text interpolation – supports optional chaining with property access', async () => {
+  await withDom(async (doc) => {
+    const user = signal(undefined);
+    const root = el(doc, '<span>{user?.name}</span>');
+    bind(root, { user });
+    await tick(10);
+    assert.equal(root.textContent, '');
+
+    user.set({ name: 'Dalila' });
+    await tick(10);
+    assert.equal(root.textContent, 'Dalila');
+  });
+});
+
+test('text interpolation – supports optional chaining with bracket access', async () => {
+  await withDom(async (doc) => {
+    const items = signal(undefined);
+    const root = el(doc, '<span>{items?.[0]?.title}</span>');
+    bind(root, { items });
+    await tick(10);
+    assert.equal(root.textContent, '');
+
+    items.set([{ title: 'First' }]);
+    await tick(10);
+    assert.equal(root.textContent, 'First');
+
+    items.set([]);
+    await tick(10);
+    assert.equal(root.textContent, '');
+  });
+});
+
+test('text interpolation – member access tracks nested signal properties', async () => {
+  await withDom(async (doc) => {
+    const name = signal('Ana');
+    const root = el(doc, '<span>{user.name}</span>');
+    bind(root, { user: { name } });
+    assert.equal(root.textContent, 'Ana');
+
+    name.set('Bia');
+    await tick(10);
+    assert.equal(root.textContent, 'Bia');
+  });
+});
+
+test('text interpolation – member access tracks nested zero-arity getter properties', async () => {
+  await withDom(async (doc) => {
+    const base = signal('A');
+    const root = el(doc, '<span>{user.name}</span>');
+    bind(root, { user: { name: () => `${base()}!` } });
+    assert.equal(root.textContent, 'A!');
+
+    base.set('B');
+    await tick(10);
+    assert.equal(root.textContent, 'B!');
+  });
+});
+
 test('d-html – signal returning null renders empty innerHTML', async () => {
   await withDom(async (doc) => {
     const content = signal(null);
