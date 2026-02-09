@@ -278,40 +278,184 @@ function bindEach(root, ctx, cleanups) {
         const comment = document.createComment('d-each');
         el.parentNode?.replaceChild(comment, el);
         el.removeAttribute('d-each');
+        const keyBinding = normalizeBinding(el.getAttribute('d-key'));
+        el.removeAttribute('d-key');
         const template = el;
-        let currentClones = [];
-        let currentDisposes = [];
+        const clonesByKey = new Map();
+        const disposesByKey = new Map();
+        const metadataByKey = new Map();
+        const itemsByKey = new Map();
+        const objectKeyIds = new WeakMap();
+        const symbolKeyIds = new Map();
+        let nextObjectKeyId = 0;
+        let nextSymbolKeyId = 0;
+        const missingKeyWarned = new Set();
+        const getObjectKeyId = (value) => {
+            const existing = objectKeyIds.get(value);
+            if (existing !== undefined)
+                return existing;
+            const next = ++nextObjectKeyId;
+            objectKeyIds.set(value, next);
+            return next;
+        };
+        const keyValueToString = (value, index) => {
+            if (value === null || value === undefined)
+                return `idx:${index}`;
+            const type = typeof value;
+            if (type === 'string' || type === 'number' || type === 'boolean' || type === 'bigint') {
+                return `${type}:${String(value)}`;
+            }
+            if (type === 'symbol') {
+                const sym = value;
+                let id = symbolKeyIds.get(sym);
+                if (id === undefined) {
+                    id = ++nextSymbolKeyId;
+                    symbolKeyIds.set(sym, id);
+                }
+                return `sym:${id}`;
+            }
+            if (type === 'object' || type === 'function') {
+                return `obj:${getObjectKeyId(value)}`;
+            }
+            return `idx:${index}`;
+        };
+        const readKeyValue = (item, index) => {
+            if (keyBinding) {
+                if (keyBinding === '$index')
+                    return index;
+                if (keyBinding === 'item')
+                    return item;
+                if (typeof item === 'object' && item !== null && keyBinding in item) {
+                    return item[keyBinding];
+                }
+                const warnId = `${keyBinding}:${index}`;
+                if (!missingKeyWarned.has(warnId)) {
+                    warn(`d-each: key "${keyBinding}" not found on item at index ${index}. Falling back to index key.`);
+                    missingKeyWarned.add(warnId);
+                }
+                return index;
+            }
+            if (typeof item === 'object' && item !== null) {
+                const obj = item;
+                if ('id' in obj)
+                    return obj.id;
+                if ('key' in obj)
+                    return obj.key;
+            }
+            return index;
+        };
+        function createClone(key, item, index, count) {
+            const clone = template.cloneNode(true);
+            // Inherit parent ctx via prototype so values and handlers defined
+            // outside the loop remain accessible inside each iteration.
+            const itemCtx = Object.create(ctx);
+            if (typeof item === 'object' && item !== null) {
+                Object.assign(itemCtx, item);
+            }
+            const metadata = {
+                $index: signal(index),
+                $count: signal(count),
+                $first: signal(index === 0),
+                $last: signal(index === count - 1),
+                $odd: signal(index % 2 !== 0),
+                $even: signal(index % 2 === 0),
+            };
+            metadataByKey.set(key, metadata);
+            itemsByKey.set(key, item);
+            // Expose item + positional / collection helpers.
+            itemCtx.item = item;
+            itemCtx.key = key;
+            itemCtx.$index = metadata.$index;
+            itemCtx.$count = metadata.$count;
+            itemCtx.$first = metadata.$first;
+            itemCtx.$last = metadata.$last;
+            itemCtx.$odd = metadata.$odd;
+            itemCtx.$even = metadata.$even;
+            // Mark BEFORE bind() so the parent's subsequent global passes
+            // (text, attrs, events …) skip this subtree entirely.
+            clone.setAttribute('data-dalila-internal-bound', '');
+            const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
+            disposesByKey.set(key, dispose);
+            clonesByKey.set(key, clone);
+            return clone;
+        }
+        function updateCloneMetadata(key, index, count) {
+            const metadata = metadataByKey.get(key);
+            if (metadata) {
+                metadata.$index.set(index);
+                metadata.$count.set(count);
+                metadata.$first.set(index === 0);
+                metadata.$last.set(index === count - 1);
+                metadata.$odd.set(index % 2 !== 0);
+                metadata.$even.set(index % 2 === 0);
+            }
+        }
         function renderList(items) {
-            for (const clone of currentClones)
-                clone.remove();
-            for (const dispose of currentDisposes)
-                dispose();
-            currentClones = [];
-            currentDisposes = [];
+            const orderedClones = [];
+            const orderedKeys = [];
+            const nextKeys = new Set();
+            const changedKeys = new Set();
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
-                const clone = template.cloneNode(true);
-                // Inherit parent ctx via prototype so values and handlers defined
-                // outside the loop remain accessible inside each iteration.
-                const itemCtx = Object.create(ctx);
-                if (typeof item === 'object' && item !== null) {
-                    Object.assign(itemCtx, item);
+                let key = keyValueToString(readKeyValue(item, i), i);
+                if (nextKeys.has(key)) {
+                    warn(`d-each: duplicate key "${key}" at index ${i}. Falling back to per-index key.`);
+                    key = `${key}:dup:${i}`;
                 }
-                // Always expose raw item + positional / collection helpers
-                itemCtx.item = item;
-                itemCtx.$index = i;
-                itemCtx.$count = items.length;
-                itemCtx.$first = i === 0;
-                itemCtx.$last = i === items.length - 1;
-                itemCtx.$odd = i % 2 !== 0;
-                itemCtx.$even = i % 2 === 0;
-                // Mark BEFORE bind() so the parent's subsequent global passes
-                // (text, attrs, events …) skip this subtree entirely.
-                clone.setAttribute('data-dalila-internal-bound', '');
-                const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
-                currentDisposes.push(dispose);
-                comment.parentNode?.insertBefore(clone, comment);
-                currentClones.push(clone);
+                nextKeys.add(key);
+                let clone = clonesByKey.get(key);
+                if (clone) {
+                    updateCloneMetadata(key, i, items.length);
+                    if (itemsByKey.get(key) !== item) {
+                        changedKeys.add(key);
+                    }
+                }
+                else {
+                    clone = createClone(key, item, i, items.length);
+                }
+                orderedClones.push(clone);
+                orderedKeys.push(key);
+            }
+            for (let i = 0; i < orderedClones.length; i++) {
+                const clone = orderedClones[i];
+                const item = items[i];
+                const key = orderedKeys[i];
+                if (!changedKeys.has(key))
+                    continue;
+                clone.remove();
+                const dispose = disposesByKey.get(key);
+                if (dispose) {
+                    dispose();
+                    disposesByKey.delete(key);
+                }
+                clonesByKey.delete(key);
+                metadataByKey.delete(key);
+                itemsByKey.delete(key);
+                orderedClones[i] = createClone(key, item, i, items.length);
+            }
+            for (const [key, clone] of clonesByKey) {
+                if (nextKeys.has(key))
+                    continue;
+                clone.remove();
+                clonesByKey.delete(key);
+                metadataByKey.delete(key);
+                itemsByKey.delete(key);
+                const dispose = disposesByKey.get(key);
+                if (dispose) {
+                    dispose();
+                    disposesByKey.delete(key);
+                }
+            }
+            const parent = comment.parentNode;
+            if (!parent)
+                return;
+            let referenceNode = comment;
+            for (let i = orderedClones.length - 1; i >= 0; i--) {
+                const clone = orderedClones[i];
+                if (clone.nextSibling !== referenceNode) {
+                    parent.insertBefore(clone, referenceNode);
+                }
+                referenceNode = clone;
             }
         }
         if (isSignal(binding)) {
@@ -328,12 +472,14 @@ function bindEach(root, ctx, cleanups) {
             warn(`d-each: "${bindingName}" is not an array or signal`);
         }
         cleanups.push(() => {
-            for (const clone of currentClones)
+            for (const clone of clonesByKey.values())
                 clone.remove();
-            for (const dispose of currentDisposes)
+            for (const dispose of disposesByKey.values())
                 dispose();
-            currentClones = [];
-            currentDisposes = [];
+            clonesByKey.clear();
+            disposesByKey.clear();
+            metadataByKey.clear();
+            itemsByKey.clear();
         });
     }
 }

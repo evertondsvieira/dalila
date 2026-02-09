@@ -11,9 +11,10 @@
  *   7  match with dynamic cases        (cases re-queried inside the effect)
  *   8  ctx parent inheritance          (handlers from outer scope reachable in each)
  *   9  Positional helpers              ($index $count $first $last $odd $even)
- *  10  null / undefined normalisation  (text, d-html, match all render '' not "undefined")
- *  11  d-attr boolean / removal        (false/null → remove, true → empty attr)
- *  12  d-html XSS warning              (dev-mode warn on <script> / onerror / javascript:)
+ *  10  d-each keyed diff               (reuse/reorder nodes by key)
+ *  11  null / undefined normalisation  (text, d-html, match all render '' not "undefined")
+ *  12  d-attr boolean / removal        (false/null → remove, true → empty attr)
+ *  13  d-html XSS warning              (dev-mode warn on <script> / onerror / javascript:)
  */
 
 import test   from 'node:test';
@@ -455,7 +456,82 @@ test('d-each – {item} renders primitive items directly', async () => {
   });
 });
 
-// ─── 10  null / undefined normalisation ─────────────────────────────────────
+test('d-each – d-key preserves DOM nodes on reorder and updates values', async () => {
+  await withDom(async (doc) => {
+    const a = { id: 'a', name: 'Alpha' };
+    const b = { id: 'b', name: 'Beta' };
+    const c = { id: 'c', name: 'Gamma' };
+    const items = signal([
+      a,
+      b,
+      c,
+    ]);
+
+    const root = el(doc, `
+      <ul>
+        <li d-each="items" d-key="id">{name}</li>
+      </ul>
+    `);
+    bind(root, { items });
+    await tick(10);
+
+    const before = Array.from(root.querySelectorAll('li'));
+    assert.deepEqual(before.map((n) => n.textContent), ['Alpha', 'Beta', 'Gamma']);
+
+    // Reorder using the same item references: nodes should be moved/reused.
+    items.set([c, a, b]);
+    await tick(10);
+
+    const afterReorder = Array.from(root.querySelectorAll('li'));
+    assert.equal(afterReorder[0], before[2], 'key "c" node should be moved, not recreated');
+    assert.equal(afterReorder[1], before[0], 'key "a" node should be moved, not recreated');
+    assert.equal(afterReorder[2], before[1], 'key "b" node should be moved, not recreated');
+
+    // When a keyed item value changes, only that keyed clone is recreated.
+    items.set([
+      c,
+      { id: 'a', name: 'Alpha updated' },
+      b,
+    ]);
+    await tick(10);
+
+    const afterUpdate = Array.from(root.querySelectorAll('li'));
+    assert.equal(afterUpdate[0], afterReorder[0], 'unchanged key should keep node');
+    assert.notEqual(afterUpdate[1], afterReorder[1], 'changed keyed item should recreate only that node');
+    assert.equal(afterUpdate[2], afterReorder[2], 'unchanged key should keep node');
+    assert.deepEqual(afterUpdate.map((n) => n.textContent), ['Gamma', 'Alpha updated', 'Beta']);
+  });
+});
+
+test('d-each – falls back to item.id key when d-key is omitted', async () => {
+  await withDom(async (doc) => {
+    const one = { id: 1, name: 'One' };
+    const two = { id: 2, name: 'Two' };
+    const items = signal([
+      one,
+      two,
+    ]);
+
+    const root = el(doc, `
+      <ul>
+        <li d-each="items">{name}</li>
+      </ul>
+    `);
+    bind(root, { items });
+    await tick(10);
+
+    const before = Array.from(root.querySelectorAll('li'));
+
+    items.set([two, one]);
+    await tick(10);
+
+    const after = Array.from(root.querySelectorAll('li'));
+    assert.equal(after[0], before[1]);
+    assert.equal(after[1], before[0]);
+  });
+});
+
+// ─── 11  null / undefined normalisation ─────────────────────────────────────
 
 test('text – signal returning null renders empty string', async () => {
   await withDom(async (doc) => {
@@ -513,7 +589,7 @@ test('d-match – null signal normalises to empty string, matches case=""', asyn
   });
 });
 
-// ─── 11  d-attr boolean / removal semantics ────────────────────────────────
+// ─── 12  d-attr boolean / removal semantics ────────────────────────────────
 
 test('d-attr – false removes the attribute entirely', async () => {
   await withDom(async (doc) => {
@@ -563,7 +639,7 @@ test('d-attr – reactive toggle: true → false → true', async () => {
   });
 });
 
-// ─── 12  d-html XSS warning (dev mode) ─────────────────────────────────────
+// ─── 13  d-html XSS warning (dev mode) ─────────────────────────────────────
 
 test('d-html – warns on <script> in dev mode, still renders', async () => {
   await withDom(async (doc) => {

@@ -376,45 +376,205 @@ function bindEach(
     const comment = document.createComment('d-each');
     el.parentNode?.replaceChild(comment, el);
     el.removeAttribute('d-each');
+    const keyBinding = normalizeBinding(el.getAttribute('d-key'));
+    el.removeAttribute('d-key');
 
     const template = el;
-    let currentClones: Element[] = [];
-    let currentDisposes: DisposeFunction[] = [];
+    const clonesByKey = new Map<string, Element>();
+    const disposesByKey = new Map<string, DisposeFunction>();
+    type MetadataSignals = {
+      $index: Signal<number>;
+      $count: Signal<number>;
+      $first: Signal<boolean>;
+      $last: Signal<boolean>;
+      $odd: Signal<boolean>;
+      $even: Signal<boolean>;
+    };
+    const metadataByKey = new Map<string, MetadataSignals>();
+    const itemsByKey = new Map<string, unknown>();
+    const objectKeyIds = new WeakMap<object, number>();
+    const symbolKeyIds = new Map<symbol, number>();
+    let nextObjectKeyId = 0;
+    let nextSymbolKeyId = 0;
+    const missingKeyWarned = new Set<string>();
+
+    const getObjectKeyId = (value: object): number => {
+      const existing = objectKeyIds.get(value);
+      if (existing !== undefined) return existing;
+      const next = ++nextObjectKeyId;
+      objectKeyIds.set(value, next);
+      return next;
+    };
+
+    const keyValueToString = (value: unknown, index: number): string => {
+      if (value === null || value === undefined) return `idx:${index}`;
+      const type = typeof value;
+      if (type === 'string' || type === 'number' || type === 'boolean' || type === 'bigint') {
+        return `${type}:${String(value)}`;
+      }
+      if (type === 'symbol') {
+        const sym = value as symbol;
+        let id = symbolKeyIds.get(sym);
+        if (id === undefined) {
+          id = ++nextSymbolKeyId;
+          symbolKeyIds.set(sym, id);
+        }
+        return `sym:${id}`;
+      }
+      if (type === 'object' || type === 'function') {
+        return `obj:${getObjectKeyId(value as object)}`;
+      }
+      return `idx:${index}`;
+    };
+
+    const readKeyValue = (item: unknown, index: number): unknown => {
+      if (keyBinding) {
+        if (keyBinding === '$index') return index;
+        if (keyBinding === 'item') return item;
+        if (typeof item === 'object' && item !== null && keyBinding in (item as Record<string, unknown>)) {
+          return (item as Record<string, unknown>)[keyBinding];
+        }
+        const warnId = `${keyBinding}:${index}`;
+        if (!missingKeyWarned.has(warnId)) {
+          warn(`d-each: key "${keyBinding}" not found on item at index ${index}. Falling back to index key.`);
+          missingKeyWarned.add(warnId);
+        }
+        return index;
+      }
+
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        if ('id' in obj) return obj.id;
+        if ('key' in obj) return obj.key;
+      }
+      return index;
+    };
+
+    function createClone(key: string, item: unknown, index: number, count: number): Element {
+      const clone = template.cloneNode(true) as Element;
+
+      // Inherit parent ctx via prototype so values and handlers defined
+      // outside the loop remain accessible inside each iteration.
+      const itemCtx = Object.create(ctx) as BindContext;
+      if (typeof item === 'object' && item !== null) {
+        Object.assign(itemCtx, item as Record<string, unknown>);
+      }
+
+      const metadata: MetadataSignals = {
+        $index: signal(index),
+        $count: signal(count),
+        $first: signal(index === 0),
+        $last: signal(index === count - 1),
+        $odd: signal(index % 2 !== 0),
+        $even: signal(index % 2 === 0),
+      };
+      metadataByKey.set(key, metadata);
+      itemsByKey.set(key, item);
+
+      // Expose item + positional / collection helpers.
+      itemCtx.item = item;
+      itemCtx.key = key;
+      itemCtx.$index = metadata.$index;
+      itemCtx.$count = metadata.$count;
+      itemCtx.$first = metadata.$first;
+      itemCtx.$last = metadata.$last;
+      itemCtx.$odd = metadata.$odd;
+      itemCtx.$even = metadata.$even;
+
+      // Mark BEFORE bind() so the parent's subsequent global passes
+      // (text, attrs, events …) skip this subtree entirely.
+      clone.setAttribute('data-dalila-internal-bound', '');
+
+      const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
+      disposesByKey.set(key, dispose);
+      clonesByKey.set(key, clone);
+
+      return clone;
+    }
+
+    function updateCloneMetadata(key: string, index: number, count: number): void {
+      const metadata = metadataByKey.get(key);
+      if (metadata) {
+        metadata.$index.set(index);
+        metadata.$count.set(count);
+        metadata.$first.set(index === 0);
+        metadata.$last.set(index === count - 1);
+        metadata.$odd.set(index % 2 !== 0);
+        metadata.$even.set(index % 2 === 0);
+      }
+    }
 
     function renderList(items: unknown[]) {
-      for (const clone of currentClones) clone.remove();
-      for (const dispose of currentDisposes) dispose();
-      currentClones = [];
-      currentDisposes = [];
+      const orderedClones: Element[] = [];
+      const orderedKeys: string[] = [];
+      const nextKeys = new Set<string>();
+      const changedKeys = new Set<string>();
 
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        const clone = template.cloneNode(true) as Element;
-
-        // Inherit parent ctx via prototype so values and handlers defined
-        // outside the loop remain accessible inside each iteration.
-        const itemCtx = Object.create(ctx) as BindContext;
-        if (typeof item === 'object' && item !== null) {
-          Object.assign(itemCtx, item as Record<string, unknown>);
+        let key = keyValueToString(readKeyValue(item, i), i);
+        if (nextKeys.has(key)) {
+          warn(`d-each: duplicate key "${key}" at index ${i}. Falling back to per-index key.`);
+          key = `${key}:dup:${i}`;
         }
-        // Always expose raw item + positional / collection helpers
-        itemCtx.item = item;
-        itemCtx.$index = i;
-        itemCtx.$count = items.length;
-        itemCtx.$first = i === 0;
-        itemCtx.$last = i === items.length - 1;
-        itemCtx.$odd = i % 2 !== 0;
-        itemCtx.$even = i % 2 === 0;
+        nextKeys.add(key);
 
-        // Mark BEFORE bind() so the parent's subsequent global passes
-        // (text, attrs, events …) skip this subtree entirely.
-        clone.setAttribute('data-dalila-internal-bound', '');
+        let clone = clonesByKey.get(key);
+        if (clone) {
+          updateCloneMetadata(key, i, items.length);
+          if (itemsByKey.get(key) !== item) {
+            changedKeys.add(key);
+          }
+        } else {
+          clone = createClone(key, item, i, items.length);
+        }
 
-        const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
-        currentDisposes.push(dispose);
+        orderedClones.push(clone);
+        orderedKeys.push(key);
+      }
 
-        comment.parentNode?.insertBefore(clone, comment);
-        currentClones.push(clone);
+      for (let i = 0; i < orderedClones.length; i++) {
+        const clone = orderedClones[i];
+        const item = items[i];
+        const key = orderedKeys[i];
+        if (!changedKeys.has(key)) continue;
+
+        clone.remove();
+        const dispose = disposesByKey.get(key);
+        if (dispose) {
+          dispose();
+          disposesByKey.delete(key);
+        }
+        clonesByKey.delete(key);
+        metadataByKey.delete(key);
+        itemsByKey.delete(key);
+
+        orderedClones[i] = createClone(key, item, i, items.length);
+      }
+
+      for (const [key, clone] of clonesByKey) {
+        if (nextKeys.has(key)) continue;
+        clone.remove();
+        clonesByKey.delete(key);
+        metadataByKey.delete(key);
+        itemsByKey.delete(key);
+        const dispose = disposesByKey.get(key);
+        if (dispose) {
+          dispose();
+          disposesByKey.delete(key);
+        }
+      }
+
+      const parent = comment.parentNode;
+      if (!parent) return;
+
+      let referenceNode: Node = comment;
+      for (let i = orderedClones.length - 1; i >= 0; i--) {
+        const clone = orderedClones[i];
+        if (clone.nextSibling !== referenceNode) {
+          parent.insertBefore(clone, referenceNode);
+        }
+        referenceNode = clone;
       }
     }
 
@@ -431,10 +591,12 @@ function bindEach(
     }
 
     cleanups.push(() => {
-      for (const clone of currentClones) clone.remove();
-      for (const dispose of currentDisposes) dispose();
-      currentClones = [];
-      currentDisposes = [];
+      for (const clone of clonesByKey.values()) clone.remove();
+      for (const dispose of disposesByKey.values()) dispose();
+      clonesByKey.clear();
+      disposesByKey.clear();
+      metadataByKey.clear();
+      itemsByKey.clear();
     });
   }
 }

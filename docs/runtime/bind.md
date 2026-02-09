@@ -189,8 +189,18 @@ Repeats an element for every item in an array or signal-of-array.  The element w
 ```html
 <ul>
   <li d-each="users">{name} — {email}</li>
+  <li d-each="users" d-key="id">{name} — {email}</li>
 </ul>
 ```
+
+#### Keyed diffing
+
+`d-each` reuses and reorders existing clones by key instead of rebuilding the
+entire list on each update.
+
+- Prefer `d-key="id"` (or another stable unique field) for large/dynamic lists.
+- If `d-key` is omitted and the item is an object, `item.id` / `item.key` is used.
+- If no stable key exists, index fallback is used.
 
 #### Context inside each clone
 

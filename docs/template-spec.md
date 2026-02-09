@@ -148,6 +148,7 @@ visibility toggling via `display: none`.
 
 ```html
 <li d-each="users">{name}</li>
+<li d-each="users" d-key="id">{name}</li>
 ```
 
 ### Rules
@@ -164,8 +165,11 @@ Behavior:
 - For each item, the template is cloned and bound.
 - If the item is an object, its properties become the binding context.
 - If the item is not an object, it is exposed as `{item}`.
+- Updates use keyed diffing: existing DOM nodes are moved/reused when keys match.
+- `d-key` is optional and accepts an item property name (e.g. `id`).
+- Without `d-key`, object items fall back to `item.id`/`item.key`; otherwise index is used.
 
-**Note:** Updates re-render the entire list (no keyed diff).
+**Note:** For dynamic/reordered lists, set `d-key` to a stable unique field.
 
 ## 9. `d-html` Directive
 
