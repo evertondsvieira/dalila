@@ -16,6 +16,16 @@ export interface BindOptions {
      */
     rawTextSelectors?: string;
     /**
+     * Optional runtime cache policy for text interpolation template plans.
+     * Defaults are tuned for general SPA usage.
+     */
+    templatePlanCache?: {
+        /** Maximum number of cached template plans (0 disables cache). */
+        maxEntries?: number;
+        /** Time-to-live (ms) per plan, refreshed on hit (0 disables cache). */
+        ttlMs?: number;
+    };
+    /**
      * Internal flag — set by fromHtml for router/template rendering.
      * Skips HMR context registration but KEEPS d-ready/d-loading lifecycle.
      * @internal

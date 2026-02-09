@@ -26,6 +26,17 @@ export interface BindOptions {
   rawTextSelectors?: string;
 
   /**
+   * Optional runtime cache policy for text interpolation template plans.
+   * Defaults are tuned for general SPA usage.
+   */
+  templatePlanCache?: {
+    /** Maximum number of cached template plans (0 disables cache). */
+    maxEntries?: number;
+    /** Time-to-live (ms) per plan, refreshed on hit (0 disables cache). */
+    ttlMs?: number;
+  };
+
+  /**
    * Internal flag — set by fromHtml for router/template rendering.
    * Skips HMR context registration but KEEPS d-ready/d-loading lifecycle.
    * @internal
@@ -146,6 +157,204 @@ type ExprNode =
   | { type: 'member'; object: ExprNode; property: ExprNode; computed: boolean; optional: boolean };
 
 const expressionCache = new Map<string, ExprNode | null>();
+type TemplatePlanCacheEntry = {
+  plan: InterpolationTemplatePlan;
+  lastUsedAt: number;
+  expiresAt: number;
+};
+
+type TemplatePlanCacheConfig = {
+  maxEntries: number;
+  ttlMs: number;
+};
+
+const templateInterpolationPlanCache = new Map<string, TemplatePlanCacheEntry>();
+const TEMPLATE_PLAN_CACHE_MAX_ENTRIES = 250;
+const TEMPLATE_PLAN_CACHE_TTL_MS = 10 * 60 * 1000;
+const TEMPLATE_PLAN_CACHE_CONFIG_KEY = '__dalila_bind_template_cache';
+
+type CompiledExpression =
+  | { kind: 'fast_path'; ast: ExprNode }
+  | { kind: 'parser'; expression: string };
+
+type TextInterpolationSegment =
+  | { type: 'text'; value: string }
+  | { type: 'expr'; rawToken: string; expression: string; compiled: CompiledExpression };
+
+type TextInterpolationPlan = {
+  path: number[];
+  segments: TextInterpolationSegment[];
+};
+
+type InterpolationTemplatePlan = {
+  bindings: TextInterpolationPlan[];
+  totalExpressions: number;
+  fastPathExpressions: number;
+};
+
+type BindBenchSession = {
+  enabled: boolean;
+  scanMs: number;
+  parseMs: number;
+  totalExpressions: number;
+  fastPathExpressions: number;
+  planCacheHit: boolean;
+};
+
+const BENCH_FLAG = '__dalila_bind_bench';
+const BENCH_STATS_KEY = '__dalila_bind_bench_stats';
+
+function nowMs(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+function coerceCacheSetting(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.floor(value));
+}
+
+function resolveTemplatePlanCacheConfig(options: BindOptions): TemplatePlanCacheConfig {
+  const globalRaw = (globalThis as Record<string, unknown>)[TEMPLATE_PLAN_CACHE_CONFIG_KEY] as
+    | { maxEntries?: unknown; ttlMs?: unknown }
+    | undefined;
+  const fromOptions = options.templatePlanCache;
+
+  const maxEntries = coerceCacheSetting(
+    fromOptions?.maxEntries ?? globalRaw?.maxEntries,
+    TEMPLATE_PLAN_CACHE_MAX_ENTRIES
+  );
+  const ttlMs = coerceCacheSetting(
+    fromOptions?.ttlMs ?? globalRaw?.ttlMs,
+    TEMPLATE_PLAN_CACHE_TTL_MS
+  );
+
+  return { maxEntries, ttlMs };
+}
+
+function createBindBenchSession(): BindBenchSession {
+  const enabled = isInDevMode() && (globalThis as Record<string, unknown>)[BENCH_FLAG] === true;
+  return {
+    enabled,
+    scanMs: 0,
+    parseMs: 0,
+    totalExpressions: 0,
+    fastPathExpressions: 0,
+    planCacheHit: false,
+  };
+}
+
+function flushBindBenchSession(session: BindBenchSession): void {
+  if (!session.enabled) return;
+
+  const stats = {
+    scanMs: Number(session.scanMs.toFixed(3)),
+    parseMs: Number(session.parseMs.toFixed(3)),
+    totalExpressions: session.totalExpressions,
+    fastPathExpressions: session.fastPathExpressions,
+    fastPathHitPercent: session.totalExpressions === 0
+      ? 0
+      : Number(((session.fastPathExpressions / session.totalExpressions) * 100).toFixed(2)),
+    planCacheHit: session.planCacheHit,
+  };
+
+  const globalObj = globalThis as Record<string, unknown>;
+  const bucket = (globalObj[BENCH_STATS_KEY] as { runs?: unknown[]; last?: unknown } | undefined) ?? {};
+  const runs = Array.isArray(bucket.runs) ? bucket.runs : [];
+  runs.push(stats);
+  if (runs.length > 200) runs.shift();
+  bucket.runs = runs;
+  bucket.last = stats;
+  globalObj[BENCH_STATS_KEY] = bucket;
+}
+
+function compileFastPathExpression(expression: string): ExprNode | null {
+  let i = 0;
+  const literalKeywords: Record<string, unknown> = {
+    true: true,
+    false: false,
+    null: null,
+    undefined: undefined,
+  };
+
+  const skipSpaces = (): void => {
+    while (i < expression.length && /\s/.test(expression[i])) i++;
+  };
+
+  const readIdentifier = (): string | null => {
+    if (i >= expression.length || !isIdentStart(expression[i])) return null;
+    const start = i;
+    i++;
+    while (i < expression.length && isIdentPart(expression[i])) i++;
+    return expression.slice(start, i);
+  };
+
+  const readNumericIndex = (): number | null => {
+    if (i >= expression.length || !/[0-9]/.test(expression[i])) return null;
+    const start = i;
+    i++;
+    while (i < expression.length && /[0-9]/.test(expression[i])) i++;
+    return Number(expression.slice(start, i));
+  };
+
+  skipSpaces();
+  const root = readIdentifier();
+  if (!root) return null;
+
+  if (Object.prototype.hasOwnProperty.call(literalKeywords, root)) {
+    skipSpaces();
+    if (i === expression.length) {
+      return { type: 'literal', value: literalKeywords[root] };
+    }
+    // Keep parser behavior for keyword literals followed by extra syntax.
+    return null;
+  }
+
+  let node: ExprNode = { type: 'identifier', name: root };
+  skipSpaces();
+
+  while (i < expression.length) {
+    if (expression[i] === '.') {
+      i++;
+      skipSpaces();
+      const prop = readIdentifier();
+      if (!prop) return null;
+      node = {
+        type: 'member',
+        object: node,
+        property: { type: 'literal', value: prop },
+        computed: false,
+        optional: false,
+      };
+      skipSpaces();
+      continue;
+    }
+
+    if (expression[i] === '[') {
+      i++;
+      skipSpaces();
+      const index = readNumericIndex();
+      if (index === null) return null;
+      skipSpaces();
+      if (expression[i] !== ']') return null;
+      i++;
+      node = {
+        type: 'member',
+        object: node,
+        property: { type: 'literal', value: index },
+        computed: true,
+        optional: false,
+      };
+      skipSpaces();
+      continue;
+    }
+
+    return null;
+  }
+
+  return node;
+}
 
 function isIdentStart(ch: string): boolean {
   return /[a-zA-Z_$]/.test(ch);
@@ -568,14 +777,33 @@ function evalExpressionAst(node: ExprNode, ctx: BindContext): EvalResult {
   return evalNode(node);
 }
 
-function parseInterpolationExpression(expression: string): { ok: true; ast: ExprNode } | { ok: false; message: string } {
+function compileInterpolationExpression(expression: string): CompiledExpression {
+  const fastPathAst = compileFastPathExpression(expression);
+  if (fastPathAst) {
+    return { kind: 'fast_path', ast: fastPathAst };
+  }
+
+  return { kind: 'parser', expression };
+}
+
+function parseInterpolationExpression(
+  expression: string,
+  benchSession?: BindBenchSession
+): { ok: true; ast: ExprNode } | { ok: false; message: string } {
   let ast = expressionCache.get(expression);
   if (ast === undefined) {
+    const parseStart = benchSession?.enabled ? nowMs() : 0;
     try {
       ast = parseExpression(expression);
       expressionCache.set(expression, ast);
+      if (benchSession?.enabled) {
+        benchSession.parseMs += nowMs() - parseStart;
+      }
     } catch (err) {
       expressionCache.set(expression, null);
+      if (benchSession?.enabled) {
+        benchSession.parseMs += nowMs() - parseStart;
+      }
       return {
         ok: false,
         message: `Text interpolation parse error in "{${expression}}": ${(err as Error).message}`,
@@ -672,39 +900,239 @@ const DEFAULT_RAW_TEXT_SELECTORS = 'pre, code';
 // ============================================================================
 
 /**
- * Process a text node and replace {tokens} with reactive bindings
+ * Build interpolation segments for one text node.
  */
-function bindTextNode(
-  node: Text,
-  ctx: BindContext,
-  cleanups: DisposeFunction[]
-): void {
-  const text = node.data;
+function buildTextInterpolationSegments(text: string): TextInterpolationSegment[] {
   const regex = /\{([^{}]+)\}/g;
-
-  // Check if there are any tokens
-  if (!regex.test(text)) return;
-
-  // Reset regex
-  regex.lastIndex = 0;
-
-  const frag = document.createDocumentFragment();
+  const segments: TextInterpolationSegment[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
 
   while ((match = regex.exec(text)) !== null) {
-    // Add text before the token
     const before = text.slice(cursor, match.index);
     if (before) {
-      frag.appendChild(document.createTextNode(before));
+      segments.push({ type: 'text', value: before });
     }
 
     const rawToken = match[0];
     const expression = match[1].trim();
+    segments.push({
+      type: 'expr',
+      rawToken,
+      expression,
+      compiled: compileInterpolationExpression(expression),
+    });
+
+    cursor = match.index + match[0].length;
+  }
+
+  const after = text.slice(cursor);
+  if (after) {
+    segments.push({ type: 'text', value: after });
+  }
+
+  return segments;
+}
+
+function getNodePath(root: Element, node: Node): number[] | null {
+  const path: number[] = [];
+  let current: Node | null = node;
+
+  while (current && current !== root) {
+    const parentNode: Node | null = current.parentNode as Node | null;
+    if (!parentNode) return null;
+    path.push(Array.prototype.indexOf.call(parentNode.childNodes, current));
+    current = parentNode;
+  }
+
+  if (current !== root) return null;
+  path.reverse();
+  return path;
+}
+
+function getNodeAtPath(root: Element, path: number[]): Node | null {
+  let current: Node = root;
+  for (const index of path) {
+    const child = current.childNodes[index];
+    if (!child) return null;
+    current = child;
+  }
+  return current;
+}
+
+function fnv1aStep(hash: number, value: number): number {
+  let h = hash ^ value;
+  h = Math.imul(h, 0x01000193);
+  return h >>> 0;
+}
+
+function fnv1aString(hash: number, value: string): number {
+  let h = hash;
+  for (let i = 0; i < value.length; i++) {
+    h = fnv1aStep(h, value.charCodeAt(i));
+  }
+  return h;
+}
+
+function hashNodeStructure(hash: number, node: Node): number {
+  let h = fnv1aStep(hash, node.nodeType);
+
+  if (node.nodeType === 1) {
+    const el = node as Element;
+    h = fnv1aString(h, el.tagName);
+    h = fnv1aStep(h, el.attributes.length);
+    const attrs = Array.from(el.attributes)
+      .map((attr) => `${attr.name}=${attr.value}`)
+      .sort();
+    for (const attr of attrs) {
+      h = fnv1aString(h, attr);
+    }
+  } else if (node.nodeType === 3) {
+    h = fnv1aString(h, (node as Text).data);
+  } else if (node.nodeType === 8) {
+    h = fnv1aString(h, (node as Comment).data);
+  }
+
+  h = fnv1aStep(h, node.childNodes.length);
+  for (let i = 0; i < node.childNodes.length; i++) {
+    h = hashNodeStructure(h, node.childNodes[i]);
+  }
+  return h;
+}
+
+function createInterpolationTemplateSignature(root: Element, rawTextSelectors: string): string {
+  let hash = 0x811c9dc5;
+  hash = fnv1aString(hash, rawTextSelectors);
+  hash = fnv1aString(hash, root.tagName);
+  hash = hashNodeStructure(hash, root);
+  return `${root.tagName}:${hash.toString(16)}`;
+}
+
+function createInterpolationTemplatePlan(
+  root: Element,
+  rawTextSelectors: string
+): InterpolationTemplatePlan {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const bindings: TextInterpolationPlan[] = [];
+  let totalExpressions = 0;
+  let fastPathExpressions = 0;
+  const textBoundary = root.closest('[data-dalila-internal-bound]');
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const parent = node.parentElement;
+    if (parent && parent.closest(rawTextSelectors)) continue;
+    if (parent) {
+      const bound = parent.closest('[data-dalila-internal-bound]');
+      if (bound !== textBoundary) continue;
+    }
+    if (!node.data.includes('{')) continue;
+
+    const segments = buildTextInterpolationSegments(node.data);
+    const hasExpression = segments.some((segment) => segment.type === 'expr');
+    if (!hasExpression) continue;
+    const path = getNodePath(root, node);
+    if (!path) continue;
+
+    for (const segment of segments) {
+      if (segment.type !== 'expr') continue;
+      totalExpressions++;
+      if (segment.compiled.kind === 'fast_path') fastPathExpressions++;
+    }
+
+    bindings.push({ path, segments });
+  }
+
+  return {
+    bindings,
+    totalExpressions,
+    fastPathExpressions,
+  };
+}
+
+function resolveCompiledExpression(
+  compiled: CompiledExpression,
+  benchSession: BindBenchSession | undefined
+): { ok: true; ast: ExprNode } | { ok: false; message: string } {
+  if (compiled.kind === 'fast_path') {
+    return { ok: true, ast: compiled.ast };
+  }
+  return parseInterpolationExpression(compiled.expression, benchSession);
+}
+
+function pruneTemplatePlanCache(now: number, config: TemplatePlanCacheConfig): void {
+  // 1) Remove expired plans first.
+  for (const [key, entry] of templateInterpolationPlanCache) {
+    if (entry.expiresAt <= now) {
+      templateInterpolationPlanCache.delete(key);
+    }
+  }
+
+  // 2) Enforce LRU cap.
+  while (templateInterpolationPlanCache.size > config.maxEntries) {
+    const oldestKey = templateInterpolationPlanCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    templateInterpolationPlanCache.delete(oldestKey);
+  }
+}
+
+function getCachedTemplatePlan(
+  signature: string,
+  now: number,
+  config: TemplatePlanCacheConfig
+): InterpolationTemplatePlan | null {
+  if (config.maxEntries === 0 || config.ttlMs === 0) return null;
+  const entry = templateInterpolationPlanCache.get(signature);
+  if (!entry) return null;
+
+  if (entry.expiresAt <= now) {
+    templateInterpolationPlanCache.delete(signature);
+    return null;
+  }
+
+  // Refresh recency and TTL window.
+  templateInterpolationPlanCache.delete(signature);
+  templateInterpolationPlanCache.set(signature, {
+    plan: entry.plan,
+    lastUsedAt: now,
+    expiresAt: now + config.ttlMs,
+  });
+
+  return entry.plan;
+}
+
+function setCachedTemplatePlan(
+  signature: string,
+  plan: InterpolationTemplatePlan,
+  now: number,
+  config: TemplatePlanCacheConfig
+): void {
+  if (config.maxEntries === 0 || config.ttlMs === 0) return;
+  templateInterpolationPlanCache.set(signature, {
+    plan,
+    lastUsedAt: now,
+    expiresAt: now + config.ttlMs,
+  });
+  pruneTemplatePlanCache(now, config);
+}
+
+function bindTextNodeFromPlan(
+  node: Text,
+  plan: TextInterpolationPlan,
+  ctx: BindContext,
+  benchSession: BindBenchSession | undefined
+): void {
+  const frag = document.createDocumentFragment();
+
+  for (const segment of plan.segments) {
+    if (segment.type === 'text') {
+      frag.appendChild(document.createTextNode(segment.value));
+      continue;
+    }
+
     const textNode = document.createTextNode('');
     let warnedParse = false;
     let warnedMissingIdentifier = false;
-    const parsed = parseInterpolationExpression(expression);
     const applyResult = (result: EvalResult): void => {
       if (!result.ok) {
         if (result.reason === 'parse') {
@@ -719,9 +1147,9 @@ function bindTextNode(
 
         // Backward compatibility for "{identifier}" missing from context:
         // preserve the literal token exactly as before.
-        const simpleIdent = expression.match(/^[a-zA-Z_$][\w$]*$/);
+        const simpleIdent = segment.expression.match(/^[a-zA-Z_$][\w$]*$/);
         if (result.reason === 'missing_identifier' && simpleIdent && result.identifier === simpleIdent[0]) {
-          textNode.data = rawToken;
+          textNode.data = segment.rawToken;
         } else {
           textNode.data = '';
         }
@@ -731,10 +1159,10 @@ function bindTextNode(
       textNode.data = result.value == null ? '' : String(result.value);
     };
 
+    const parsed = resolveCompiledExpression(segment.compiled, benchSession);
     if (!parsed.ok) {
       applyResult({ ok: false, reason: 'parse', message: parsed.message });
       frag.appendChild(textNode);
-      cursor = match.index + match[0].length;
       continue;
     }
 
@@ -749,19 +1177,49 @@ function bindTextNode(
     }
 
     frag.appendChild(textNode);
-
-    cursor = match.index + match[0].length;
   }
 
-  // Add remaining text
-  const after = text.slice(cursor);
-  if (after) {
-    frag.appendChild(document.createTextNode(after));
-  }
-
-  // Replace original node
   if (node.parentNode) {
     node.parentNode.replaceChild(frag, node);
+  }
+}
+
+function bindTextInterpolation(
+  root: Element,
+  ctx: BindContext,
+  rawTextSelectors: string,
+  cacheConfig: TemplatePlanCacheConfig,
+  benchSession?: BindBenchSession
+): void {
+  const signature = createInterpolationTemplateSignature(root, rawTextSelectors);
+  const now = nowMs();
+  let plan = getCachedTemplatePlan(signature, now, cacheConfig);
+
+  const scanStart = benchSession?.enabled ? nowMs() : 0;
+  if (!plan) {
+    plan = createInterpolationTemplatePlan(root, rawTextSelectors);
+    setCachedTemplatePlan(signature, plan, now, cacheConfig);
+  } else if (benchSession) {
+    benchSession.planCacheHit = true;
+  }
+  if (benchSession?.enabled) {
+    benchSession.scanMs += nowMs() - scanStart;
+    benchSession.totalExpressions = plan.totalExpressions;
+    benchSession.fastPathExpressions = plan.fastPathExpressions;
+  }
+
+  if (plan.bindings.length === 0) return;
+
+  const nodesToBind: Array<{ node: Text; binding: TextInterpolationPlan }> = [];
+  for (const binding of plan.bindings) {
+    const target = getNodeAtPath(root, binding.path);
+    if (target && target.nodeType === 3) {
+      nodesToBind.push({ node: target as Text, binding });
+    }
+  }
+
+  for (const item of nodesToBind) {
+    bindTextNodeFromPlan(item.node, item.binding, ctx, benchSession);
   }
 }
 
@@ -2028,6 +2486,8 @@ export function bind(
 ): DisposeFunction {
   const events = options.events ?? DEFAULT_EVENTS;
   const rawTextSelectors = options.rawTextSelectors ?? DEFAULT_RAW_TEXT_SELECTORS;
+  const templatePlanCacheConfig = resolveTemplatePlanCacheConfig(options);
+  const benchSession = createBindBenchSession();
 
   const htmlRoot = root as HTMLElement;
 
@@ -2052,34 +2512,8 @@ export function bind(
     // 3. d-each — must run early: removes templates before TreeWalker visits them
     bindEach(root, ctx, cleanups);
 
-    // 4. Text interpolation
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const textNodes: Text[] = [];
-    // Same boundary logic as qsaIncludingRoot: only visit text nodes that
-    // belong to this bind scope, not to nested already-bound subtrees.
-    const textBoundary = root.closest('[data-dalila-internal-bound]');
-
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
-      const parent = node.parentElement;
-      // Skip nodes inside raw text containers
-      if (parent && parent.closest(rawTextSelectors)) {
-        continue;
-      }
-      // Skip nodes inside already-bound subtrees (d-each clones)
-      if (parent) {
-        const bound = parent.closest('[data-dalila-internal-bound]');
-        if (bound !== textBoundary) continue;
-      }
-      if (node.data.includes('{')) {
-        textNodes.push(node);
-      }
-    }
-
-    // Process text nodes (collect first, then process to avoid walker issues)
-    for (const node of textNodes) {
-      bindTextNode(node, ctx, cleanups);
-    }
+    // 4. Text interpolation (template plan cache + lazy parser fallback)
+    bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
 
     // 5. d-attr bindings
     bindAttrs(root, ctx, cleanups);
@@ -2115,6 +2549,8 @@ export function bind(
       htmlRoot.setAttribute('d-ready', '');
     });
   }
+
+  flushBindBenchSession(benchSession);
 
   // Return dispose function
   return () => {

@@ -637,6 +637,29 @@ test('text interpolation – supports property access like {items.length}', asyn
   });
 });
 
+test('text interpolation – supports index literal member path like {items[0].title}', async () => {
+  await withDom(async (doc) => {
+    const items = signal([{ title: 'First' }]);
+    const root = el(doc, '<span>{items[0].title}</span>');
+    bind(root, { items });
+    await tick(10);
+    assert.equal(root.textContent, 'First');
+
+    items.set([{ title: 'Second' }]);
+    await tick(10);
+    assert.equal(root.textContent, 'Second');
+  });
+});
+
+test('text interpolation – keyword literals keep parser semantics in fast-path', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<span>{true}|{false}|{null}|{undefined}</span>');
+    bind(root, {});
+    await tick(10);
+    assert.equal(root.textContent, 'true|false||');
+  });
+});
+
 test('text interpolation – supports conditional ternary expression', async () => {
   await withDom(async (doc) => {
     const isActive = signal(false);
@@ -663,6 +686,125 @@ test('text interpolation – ternary is right-associative', async () => {
     b.set(false);
     await tick(10);
     assert.equal(root.textContent, 'C');
+  });
+});
+
+test('text interpolation – bench stats track fast-path hit and plan-cache reuse', async () => {
+  await withDom(async (doc) => {
+    globalThis.__dalila_bind_bench = true;
+    delete globalThis.__dalila_bind_bench_stats;
+
+    try {
+      const mount = () => el(doc, `
+        <div>
+          <span>{count}</span>
+          <span>{user.name}</span>
+          <span>{count + 1}</span>
+        </div>
+      `);
+
+      const count = signal(1);
+      const user = signal({ name: 'Ana' });
+
+      bind(mount(), { count, user });
+      await tick(10);
+      const first = globalThis.__dalila_bind_bench_stats?.last;
+      assert.equal(first.totalExpressions, 3);
+      assert.equal(first.fastPathExpressions, 2);
+      assert.equal(first.planCacheHit, false);
+
+      bind(mount(), { count, user });
+      await tick(10);
+      const second = globalThis.__dalila_bind_bench_stats?.last;
+      assert.equal(second.totalExpressions, 3);
+      assert.equal(second.fastPathExpressions, 2);
+      assert.equal(second.planCacheHit, true);
+    } finally {
+      delete globalThis.__dalila_bind_bench;
+      delete globalThis.__dalila_bind_bench_stats;
+    }
+  });
+});
+
+test('text interpolation – template plan cache can be disabled per bind options', async () => {
+  await withDom(async (doc) => {
+    globalThis.__dalila_bind_bench = true;
+    delete globalThis.__dalila_bind_bench_stats;
+
+    try {
+      const mount = () => el(doc, '<div><span>{count}</span><span>{user.name}</span></div>');
+      const count = signal(1);
+      const user = signal({ name: 'Ana' });
+      const options = { templatePlanCache: { maxEntries: 0, ttlMs: 60_000 } };
+
+      bind(mount(), { count, user }, options);
+      await tick(10);
+      const first = globalThis.__dalila_bind_bench_stats?.last;
+      assert.equal(first.planCacheHit, false);
+
+      bind(mount(), { count, user }, options);
+      await tick(10);
+      const second = globalThis.__dalila_bind_bench_stats?.last;
+      assert.equal(second.planCacheHit, false);
+    } finally {
+      delete globalThis.__dalila_bind_bench;
+      delete globalThis.__dalila_bind_bench_stats;
+    }
+  });
+});
+
+test('text interpolation – template plan cache can be disabled globally', async () => {
+  await withDom(async (doc) => {
+    globalThis.__dalila_bind_bench = true;
+    globalThis.__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 60_000 };
+    delete globalThis.__dalila_bind_bench_stats;
+
+    try {
+      const mount = () => el(doc, '<div><span>{count}</span><span>{user.name}</span></div>');
+      const count = signal(1);
+      const user = signal({ name: 'Ana' });
+
+      bind(mount(), { count, user });
+      await tick(10);
+      const first = globalThis.__dalila_bind_bench_stats?.last;
+      assert.equal(first.planCacheHit, false);
+
+      bind(mount(), { count, user });
+      await tick(10);
+      const second = globalThis.__dalila_bind_bench_stats?.last;
+      assert.equal(second.planCacheHit, false);
+    } finally {
+      delete globalThis.__dalila_bind_bench;
+      delete globalThis.__dalila_bind_bench_stats;
+      delete globalThis.__dalila_bind_template_cache;
+    }
+  });
+});
+
+test('text interpolation – bind options cache config overrides global cache config', async () => {
+  await withDom(async (doc) => {
+    globalThis.__dalila_bind_bench = true;
+    globalThis.__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 60_000 };
+    delete globalThis.__dalila_bind_bench_stats;
+
+    try {
+      const mount = () => el(doc, '<div><span>{optOverrideCount}</span><span>{optOverrideUser.name}</span></div>');
+      const optOverrideCount = signal(1);
+      const optOverrideUser = signal({ name: 'Bia' });
+      const options = { templatePlanCache: { maxEntries: 32, ttlMs: 60_000 } };
+
+      bind(mount(), { optOverrideCount, optOverrideUser }, options);
+      await tick(10);
+      bind(mount(), { optOverrideCount, optOverrideUser }, options);
+      await tick(10);
+
+      const second = globalThis.__dalila_bind_bench_stats?.last;
+      assert.equal(second.planCacheHit, true);
+    } finally {
+      delete globalThis.__dalila_bind_bench;
+      delete globalThis.__dalila_bind_bench_stats;
+      delete globalThis.__dalila_bind_template_cache;
+    }
   });
 });
 
