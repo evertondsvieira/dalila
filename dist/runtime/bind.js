@@ -780,10 +780,10 @@ function bindEach(root, ctx, cleanups) {
         const bindingName = normalizeBinding(el.getAttribute('d-each'));
         if (!bindingName)
             continue;
-        const binding = ctx[bindingName];
+        let binding = ctx[bindingName];
         if (binding === undefined) {
             warn(`d-each: "${bindingName}" not found in context`);
-            continue;
+            binding = [];
         }
         const comment = document.createComment('d-each');
         el.parentNode?.replaceChild(comment, el);

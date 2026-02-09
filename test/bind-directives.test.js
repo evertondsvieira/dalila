@@ -169,6 +169,45 @@ test('nested d-each – inner loop renders inside outer loop clone', async () =>
   });
 });
 
+test('nested d-each – missing inner array renders nothing (no ctx leak)', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, `
+      <div>
+        <div d-each="files">
+          <span class="path">{path}</span>
+          <ul d-each="checks">
+            <li class="check">{result}</li>
+          </ul>
+        </div>
+      </div>
+    `);
+
+    bind(root, {
+      files: [
+        { path: 'runtime/bind.ts', checks: [{ result: 'LGTM' }] },
+        { path: 'runtime/each.ts', checks: undefined },
+        { path: 'tests/bind.test.ts', checks: null },
+        { path: 'README.md', checks: [{ result: 'TODO' }] },
+      ],
+    });
+
+    await tick(10);
+
+    const paths = Array.from(root.querySelectorAll('.path')).map(n => n.textContent);
+    const checks = Array.from(root.querySelectorAll('.check')).map(n => n.textContent);
+
+    assert.deepEqual(paths, [
+      'runtime/bind.ts',
+      'runtime/each.ts',
+      'tests/bind.test.ts',
+      'README.md',
+    ]);
+
+    // only the 2 real inner items should exist
+    assert.deepEqual(checks, ['LGTM', 'TODO']);
+  });
+});
+
 // ─── 3  Double-bind prevention ──────────────────────────────────────────────
 
 test('no double-bind – click handler fires exactly once per click', async () => {
