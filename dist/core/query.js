@@ -1,7 +1,7 @@
 import { computed, effect } from "./signal.js";
 import { getCurrentScope, createScope, withScope } from "./scope.js";
 import { key as keyBuilder, encodeKey } from "./key.js";
-import { createCachedResource, invalidateResourceCache, invalidateResourceTag, invalidateResourceTags, } from "./resource.js";
+import { createResource, invalidateResourceCache, invalidateResourceTag, invalidateResourceTags, } from "./resource.js";
 import { createMutation } from "./mutation.js";
 import { isInDevMode } from "./dev.js";
 /**
@@ -111,17 +111,19 @@ export function createQueryClient() {
                     cfg.onSuccess?.(data);
                     scheduleStaleRevalidate(r, ck);
                 },
-                persist: behavior.persist,
-                warnPersistWithoutTtl: behavior.warnPersistWithoutTtl,
-                fetchScope: ks ?? undefined,
+                cache: {
+                    key: ck,
+                    tags: cfg.tags,
+                    persist: behavior.persist,
+                },
             };
             if (cfg.initialValue !== undefined)
                 opts.initialValue = cfg.initialValue;
             // Keyed cache entry (scope-safe unless persist is enabled).
-            const make = () => createCachedResource(ck, async (sig) => {
+            const make = () => createResource(async (sig) => {
                 await Promise.resolve(); // break reactive tracking
                 return cfg.fetch(sig, k);
-            }, { ...opts, tags: cfg.tags });
+            }, opts);
             r = ks ? withScope(ks, make) : make();
             return r;
         });
@@ -158,7 +160,7 @@ export function createQueryClient() {
         return makeQuery(cfg, { persist: false });
     }
     function queryGlobal(cfg) {
-        return makeQuery(cfg, { persist: true, warnPersistWithoutTtl: false });
+        return makeQuery(cfg, { persist: true });
     }
     function mutation(cfg) {
         return createMutation(cfg);

@@ -1,5 +1,5 @@
 export * from "./ui-types.js";
-export { createDialog, _attachDialogBehavior } from "./dialog/index.js";
+export { createDialog } from "./dialog/index.js";
 export { createDrawer } from "./drawer/index.js";
 export { createToast, toastIcon } from "./toast/index.js";
 export { createTabs, tabBindings } from "./tabs/index.js";
