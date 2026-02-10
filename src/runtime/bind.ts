@@ -8,7 +8,7 @@
  */
 
 import { effect, createScope, withScope, isInDevMode, signal, Signal } from '../core/index.js';
-import { WRAPPED_HANDLER } from '../form/index.js';
+import { WRAPPED_HANDLER } from '../form/form.js';
 
 // ============================================================================
 // Types
