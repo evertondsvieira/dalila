@@ -308,20 +308,20 @@ effect(() => {
 userId.set("2");
 ```
 
-### useFetch vs createResource vs Query Client
+### useFetch vs Resource APIs vs Query Client
 
-| Feature | useFetch | createResource | Query Client |
-|---------|----------|----------------|--------------|
+| Feature | useFetch | createResource/resourceFromUrl | Query Client |
+|---------|----------|--------------------------------|--------------|
 | Caching | No | Optional | Yes |
-| Deduplication | No | No | Yes |
-| Invalidation | No | Yes | Yes |
+| Manual refresh | No | Yes | Yes |
+| Invalidation | No | No | Yes |
 | Stale time | No | No | Yes |
 | Complexity | Low | Medium | High |
 
 **Guidelines:**
-- `useFetch`: One-off fetches, prototyping
-- `createResource`: Async data with AbortSignal
-- `Query Client`: Production apps with caching needs
+- `useFetch`: one-off fetches and prototypes
+- `createResource` / `resourceFromUrl`: app flows with manual refresh and optional cache
+- `createQueryClient`: production flows with cache invalidation and query orchestration
 
 ## Best Practices
 

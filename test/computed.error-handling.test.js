@@ -5,7 +5,7 @@ import { createScope, withScope } from "../dist/core/scope.js";
 import { signal, effect, computed, setEffectErrorHandler } from "../dist/core/signal.js";
 import { key, setKeyDevMode } from "../dist/core/key.js";
 import { createQueryClient } from "../dist/core/query.js";
-import { clearResourceCache, configureResourceCache, createCachedResource } from "../dist/core/resource.js";
+import { clearResourceCache, configureResourceCache, createResource } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -264,7 +264,7 @@ test("LRU cache evicts oldest entries when limit exceeded", async () => {
   // Create 5 resources - should evict the first 2
   for (let i = 1; i <= 5; i++) {
     withScope(scope, () => {
-      createCachedResource(`test:${i}`, async () => ({ id: i }));
+      createResource(async () => ({ id: i }), { cache: { key: `test:${i}` } });
     });
     await sleep(5); // Ensure different timestamps
   }

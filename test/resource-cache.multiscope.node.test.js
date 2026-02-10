@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createScope, withScope } from "../dist/core/scope.js";
-import { createCachedResource, clearResourceCache } from "../dist/core/resource.js";
+import { createResource, clearResourceCache } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
@@ -19,17 +19,17 @@ test("cached resource must survive if creator scope is disposed but another scop
 
   // IMPORTANT: não usar await dentro de withScope (scope não atravessa await)
   withScope(scope1, () => {
-    createCachedResource("user:shared", async () => {
+    createResource(async () => {
       runs++;
       return { runs };
-    });
+    }, { cache: { key: "user:shared" } });
   });
 
   withScope(scope2, () => {
-    r2 = createCachedResource("user:shared", async () => {
+    r2 = createResource(async () => {
       runs++;
       return { runs };
-    });
+    }, { cache: { key: "user:shared" } });
   });
 
   await flush();

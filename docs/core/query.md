@@ -88,7 +88,7 @@ q.invalidateTag("user");
 | Use | Best choice |
 |-----|-------------|
 | Simple async state | `createResource` |
-| Shared cached data | `createCachedResource` |
+| Shared cached data | `createResource` with `cache` option |
 | Full query client (keys, invalidation, mutations) | `createQueryClient` |
 
 ## Best Practices

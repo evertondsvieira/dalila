@@ -2,12 +2,11 @@ import { computed, effect } from "./signal.js";
 import { getCurrentScope, createScope, withScope, type Scope } from "./scope.js";
 import { key as keyBuilder, encodeKey, type QueryKey } from "./key.js";
 import {
-  createCachedResource,
+  createResource,
   invalidateResourceCache,
   invalidateResourceTag,
   invalidateResourceTags,
   type ResourceState,
-  type ResourceOptions,
 } from "./resource.js";
 import { createMutation, type MutationConfig, type MutationState } from "./mutation.js";
 import { isInDevMode } from "./dev.js";
@@ -88,7 +87,7 @@ export interface QueryClient {
 export function createQueryClient(): QueryClient {
   function makeQuery<TKey extends QueryKey, TResult>(
     cfg: QueryConfig<TKey, TResult>,
-    behavior: { persist: boolean; warnPersistWithoutTtl?: boolean }
+    behavior: { persist: boolean }
   ): QueryState<TResult> {
     const scope = getCurrentScope();
     const parentScope = scope;
@@ -182,34 +181,36 @@ export function createQueryClient(): QueryClient {
 
       const ks = ensureKeyScope(ck);
 
-      const opts: ResourceOptions<TResult> & {
-        tags?: readonly string[];
-        persist?: boolean;
-        warnPersistWithoutTtl?: boolean;
-        fetchScope?: Scope | null;
+      const opts: {
+        initialValue?: TResult;
+        onError?: (error: Error) => void;
+        onSuccess?: (data: TResult) => void;
+        cache: {
+          key: string;
+          tags?: readonly string[];
+          persist?: boolean;
+        };
       } = {
         onError: cfg.onError,
         onSuccess: (data) => {
           cfg.onSuccess?.(data);
           scheduleStaleRevalidate(r, ck);
         },
-        persist: behavior.persist,
-        warnPersistWithoutTtl: behavior.warnPersistWithoutTtl,
-        fetchScope: ks ?? undefined,
+        cache: {
+          key: ck,
+          tags: cfg.tags,
+          persist: behavior.persist,
+        },
       };
 
       if (cfg.initialValue !== undefined) opts.initialValue = cfg.initialValue;
 
       // Keyed cache entry (scope-safe unless persist is enabled).
       const make = () =>
-        createCachedResource<TResult>(
-          ck,
-          async (sig) => {
-            await Promise.resolve(); // break reactive tracking
-            return cfg.fetch(sig, k);
-          },
-          { ...opts, tags: cfg.tags } as any
-        );
+        createResource<TResult>(async (sig) => {
+          await Promise.resolve(); // break reactive tracking
+          return cfg.fetch(sig, k);
+        }, opts);
       r = ks ? withScope(ks, make) : make();
 
       return r;
@@ -251,7 +252,7 @@ export function createQueryClient(): QueryClient {
   }
 
   function queryGlobal<TKey extends QueryKey, TResult>(cfg: QueryConfig<TKey, TResult>): QueryState<TResult> {
-    return makeQuery(cfg, { persist: true, warnPersistWithoutTtl: false });
+    return makeQuery(cfg, { persist: true });
   }
 
   function mutation<TInput, TResult>(cfg: MutationConfig<TInput, TResult>): MutationState<TInput, TResult> {

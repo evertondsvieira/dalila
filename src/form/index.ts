@@ -1,2 +1,2 @@
 export * from "./form-types.js";
-export { createForm, parseFormData, WRAPPED_HANDLER } from "./form.js";
+export { createForm, parseFormData } from "./form.js";

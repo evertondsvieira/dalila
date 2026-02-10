@@ -1,32 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { createCachedResource, clearResourceCache } from "../dist/core/resource.js";
+import { createResource, clearResourceCache } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test("non-scoped createCachedResource does not share cache by default", async () => {
+test("non-scoped createResource cache does not share by default", async () => {
   clearResourceCache();
 
   let runs = 0;
 
-  const a = createCachedResource(
-    "user:1",
+  const a = createResource(
     async () => {
       runs++;
       return { ok: true, runs };
     },
-    { warnIfNoScope: false } // avoid console noise in tests
+    { cache: { key: "user:1" } }
   );
 
-  const b = createCachedResource(
-    "user:1",
+  const b = createResource(
     async () => {
       runs++;
       return { ok: true, runs };
     },
-    { warnIfNoScope: false }
+    { cache: { key: "user:1" } }
   );
 
   await flush();
@@ -37,27 +35,25 @@ test("non-scoped createCachedResource does not share cache by default", async ()
   assert.deepEqual(b.data(), { ok: true, runs: 2 });
 });
 
-test("persisted createCachedResource shares cache outside a scope", async () => {
+test("persisted createResource cache shares outside a scope", async () => {
   clearResourceCache();
 
   let runs = 0;
 
-  const a = createCachedResource(
-    "user:1",
+  const a = createResource(
     async () => {
       runs++;
       return { ok: true, runs };
     },
-    { persist: true, warnIfNoScope: false }
+    { cache: { key: "user:1", persist: true } }
   );
 
-  const b = createCachedResource(
-    "user:1",
+  const b = createResource(
     async () => {
       runs++;
       return { ok: true, runs };
     },
-    { persist: true, warnIfNoScope: false }
+    { cache: { key: "user:1", persist: true } }
   );
 
   await flush();

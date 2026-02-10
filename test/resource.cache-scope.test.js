@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createScope, withScope, getCurrentScope } from "../dist/core/scope.js";
-import { createCachedResource, clearResourceCache } from "../dist/core/resource.js";
+import { createResource, clearResourceCache } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -15,13 +15,12 @@ test("cached resource evicts when no scopes reference it", async () => {
   // 1) Create inside a scope -> should fetch once
   const scope1 = createScope();
   withScope(scope1, () => {
-    createCachedResource(
-      "user:1",
+    createResource(
       async () => {
         started++;
         return "A";
       },
-      {}
+      { cache: { key: "user:1" } }
     );
   });
   await flush();
@@ -33,13 +32,12 @@ test("cached resource evicts when no scopes reference it", async () => {
   // 2) Create again (new scope) -> should fetch again if it was evicted
   const scope2 = createScope();
   withScope(scope2, () => {
-    createCachedResource(
-      "user:1",
+    createResource(
       async () => {
         started++;
         return "B";
       },
-      {}
+      { cache: { key: "user:1" } }
     );
   });
   await flush();
@@ -55,13 +53,12 @@ test("cached resource refetches when ttl expires inside the same scope", async (
   let runs = 0;
 
   withScope(scope, () => {
-    createCachedResource(
-      "user:ttl",
+    createResource(
       async () => {
         runs++;
         return { ok: true, runs };
       },
-      { ttlMs: 0 }
+      { cache: { key: "user:ttl", ttlMs: 0 } }
     );
   });
 
@@ -70,13 +67,12 @@ test("cached resource refetches when ttl expires inside the same scope", async (
   assert.equal(runs, 1);
 
   withScope(scope, () => {
-    createCachedResource(
-      "user:ttl",
+    createResource(
       async () => {
         runs++;
         return { ok: true, runs };
       },
-      { ttlMs: 0 }
+      { cache: { key: "user:ttl", ttlMs: 0 } }
     );
   });
 
@@ -96,12 +92,11 @@ test("cached resource creation does not mutate the current scope", async () => {
   withScope(scope, () => {
     const before = getCurrentScope();
 
-    createCachedResource(
-      "user:scope-guard",
+    createResource(
       async () => {
         return "ok";
       },
-      {}
+      { cache: { key: "user:scope-guard" } }
     );
 
     const after = getCurrentScope();

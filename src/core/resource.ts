@@ -1,4 +1,4 @@
-import { signal, effectAsync, type Signal } from "./signal.js";
+import { signal, effect, effectAsync, type Signal } from "./signal.js";
 import { isInDevMode } from "./dev.js";
 import { getCurrentScope, createScope, isScopeDisposed, withScope, type Scope } from "./scope.js";
 
@@ -16,6 +16,20 @@ export interface ResourceOptions<T> {
 
   onError?: (error: Error) => void;
   onSuccess?: (data: T) => void;
+}
+
+export interface ResourceCachePolicy {
+  key: string | (() => string);
+  ttlMs?: number;
+  tags?: readonly string[];
+  persist?: boolean;
+}
+
+export interface CreateResourceOptions<T> extends ResourceOptions<T> {
+  deps?: () => unknown;
+  cache?: string | ResourceCachePolicy;
+  refreshInterval?: number;
+  fetchOptions?: RequestInit;
 }
 
 export interface ResourceRefreshOptions {
@@ -74,7 +88,7 @@ function createDeferred(): Deferred {
  *   - dispose the driver
  *   - resolve all pending waiters (avoid hanging Promises)
  */
-export function createResource<T>(
+function createResourceBase<T>(
   fetchFn: (signal: AbortSignal) => Promise<T>,
   options: ResourceOptions<T> = {}
 ): ResourceState<T> {
@@ -219,6 +233,181 @@ export function createResource<T>(
   return { data, loading, error, refresh };
 }
 
+function normalizeResourceCachePolicy(cache: CreateResourceOptions<unknown>["cache"]): ResourceCachePolicy | null {
+  if (!cache) return null;
+  if (typeof cache === "string") return { key: cache };
+  return cache;
+}
+
+function attachResourceRefreshInterval<T>(resource: ResourceState<T>, refreshInterval: number): void {
+  const scope = getCurrentScope();
+  if (!scope) {
+    if (isInDevMode()) {
+      console.warn(
+        `[Dalila] createResource(..., { refreshInterval }) called outside a scope. ` +
+          `Auto-refresh will not work. Use within a scope or manage cleanup manually.`
+      );
+    }
+    return;
+  }
+
+  const intervalId = setInterval(() => {
+    resource.refresh().catch(() => {});
+  }, refreshInterval);
+
+  scope.onCleanup(() => {
+    clearInterval(intervalId);
+  });
+}
+
+function enqueueForcedRefresh(resource: ResourceState<unknown>): void {
+  queueMicrotask(() => {
+    resource.refresh({ force: true }).catch(() => {});
+  });
+}
+
+function createDynamicCachedResource<T>(
+  fetchFn: (signal: AbortSignal) => Promise<T>,
+  cachePolicy: ResourceCachePolicy,
+  options: CreateResourceOptions<T>
+): ResourceState<T> {
+  const ownerScope = getCurrentScope();
+  const rawKey = cachePolicy.key;
+  const keyGetter: () => string = typeof rawKey === "function"
+    ? rawKey
+    : () => rawKey;
+  const deps = options.deps;
+
+  const cachedOptions: CachedResourceOptions<T> = {
+    initialValue: options.initialValue,
+    onError: options.onError,
+    onSuccess: options.onSuccess,
+    ttlMs: cachePolicy.ttlMs,
+    tags: cachePolicy.tags,
+    persist: cachePolicy.persist,
+  };
+
+  let activeKey: string | null = null;
+  let activeKeyScope: Scope | null = null;
+  let activeResource: ResourceState<T> | null = null;
+  const activeResourceSignal = signal<ResourceState<T> | null>(null);
+  let first = true;
+
+  const activateKey = (key: string): ResourceState<T> => {
+    if (activeResource && activeKey === key) {
+      return activeResource;
+    }
+
+    if (ownerScope) {
+      activeKeyScope?.dispose();
+      const keyScope = createScope(ownerScope);
+      activeKeyScope = keyScope;
+      activeResource = withScope(keyScope, () => createCachedResource<T>(key, fetchFn, cachedOptions));
+    } else {
+      // Outside a scope, createCachedResource already applies safe-by-default semantics.
+      activeResource = createCachedResource<T>(key, fetchFn, cachedOptions);
+    }
+
+    activeKey = key;
+    activeResourceSignal.set(activeResource);
+    return activeResource;
+  };
+
+  effect(() => {
+    if (deps) deps();
+    const key = keyGetter();
+    const previousKey = activeKey;
+    const resource = activateKey(key);
+
+    // If deps changed but key stayed the same, revalidate current entry.
+    if (!first && deps && previousKey === key) {
+      enqueueForcedRefresh(resource);
+    }
+    if (first) {
+      first = false;
+    }
+  });
+
+  if (ownerScope) {
+    ownerScope.onCleanup(() => {
+      activeKeyScope?.dispose();
+      activeKeyScope = null;
+    });
+  }
+
+  return {
+    data: () => activeResourceSignal()?.data() ?? null,
+    loading: () => activeResourceSignal()?.loading() ?? false,
+    error: () => activeResourceSignal()?.error() ?? null,
+    refresh: (opts?: ResourceRefreshOptions) => activeResourceSignal()?.refresh(opts) ?? Promise.resolve(),
+  };
+}
+
+export function createResource<T>(
+  fetchFn: (signal: AbortSignal) => Promise<T>,
+  options: CreateResourceOptions<T> = {}
+): ResourceState<T> {
+  const { deps, refreshInterval } = options;
+  const cachePolicy = normalizeResourceCachePolicy(options.cache);
+  const fetchFnForCached = deps
+    ? async (signal: AbortSignal) => {
+      // Keep deps ownership explicit (via options.deps) when cache is enabled.
+      // This avoids duplicate revalidations from sync reads inside fetchFn.
+      await Promise.resolve();
+      return fetchFn(signal);
+    }
+    : fetchFn;
+
+  const baseOptions: ResourceOptions<T> = {
+    initialValue: options.initialValue,
+    onError: options.onError,
+    onSuccess: options.onSuccess,
+  };
+
+  let resource: ResourceState<T>;
+
+  if (cachePolicy) {
+    const key = cachePolicy.key;
+
+    if (typeof key === "function") {
+      resource = createDynamicCachedResource(fetchFnForCached, cachePolicy, options);
+    } else {
+      resource = createCachedResource<T>(key, fetchFnForCached, {
+        ...baseOptions,
+        ttlMs: cachePolicy.ttlMs,
+        tags: cachePolicy.tags,
+        persist: cachePolicy.persist,
+      });
+
+      if (deps) {
+        let first = true;
+        effect(() => {
+          deps();
+          if (first) {
+            first = false;
+            return;
+          }
+          enqueueForcedRefresh(resource);
+        });
+      }
+    }
+  } else if (deps) {
+    resource = createDependentResource<T, unknown>(
+      (signal) => fetchFn(signal),
+      deps,
+      baseOptions
+    );
+  } else {
+    resource = createResourceBase(fetchFn, baseOptions);
+  }
+
+  if (refreshInterval != null && refreshInterval > 0) {
+    attachResourceRefreshInterval(resource, refreshInterval);
+  }
+
+  return resource;
+}
+
 /**
  * Fetch helper built on top of createResource().
  *
@@ -227,15 +416,23 @@ export function createResource<T>(
  * - Uses fetch() with AbortSignal.
  * - Non-2xx responses throw (surfaced via resource.error()).
  */
-export function createFetchResource<T>(
+function createFetchResource<T>(
   url: string | (() => string),
-  options: ResourceOptions<T> & { fetchOptions?: RequestInit } = {}
+  options: CreateResourceOptions<T> = {}
 ): ResourceState<T> {
+  return resourceFromUrl<T>(url, options);
+}
+
+export function resourceFromUrl<T>(
+  url: string | (() => string),
+  options: CreateResourceOptions<T> = {}
+): ResourceState<T> {
+  const { fetchOptions, ...resourceOptions } = options;
   return createResource<T>(async (signal) => {
     const fetchUrl = typeof url === "function" ? url() : url;
 
     const response = await fetch(fetchUrl, {
-      ...options.fetchOptions,
+      ...fetchOptions,
       signal,
     });
 
@@ -244,7 +441,7 @@ export function createFetchResource<T>(
     }
 
     return (await response.json()) as T;
-  }, options);
+  }, resourceOptions);
 }
 
 export type DepSource<D> =
@@ -273,7 +470,7 @@ export type DepSource<D> =
  *   we must not resolve refresh waiters prematurely.
  *   Guard: early-return resolves only if `!loading()`.
  */
-export function createDependentResource<T, D>(
+function createDependentResource<T, D>(
   fetchFn: (signal: AbortSignal, deps: D) => Promise<T>,
   deps: DepSource<D>,
   options: ResourceOptions<T> = {}
@@ -651,7 +848,7 @@ function evictIfNeeded(): void {
  * - Each entry has a dedicated cacheScope, disposed when the entry is removed.
  * - Scopes referencing an entry increment refCount; on scope cleanup they release it.
  */
-export function createCachedResource<T>(
+function createCachedResource<T>(
   key: string,
   fetchFn: (signal: AbortSignal) => Promise<T>,
   options: CachedResourceOptions<T> = {}
@@ -686,7 +883,7 @@ export function createCachedResource<T>(
         );
       }
     }
-    return createResource(wrappedFetch, options);
+    return createResourceBase(wrappedFetch, options);
   }
 
   const now = Date.now();
@@ -734,7 +931,7 @@ export function createCachedResource<T>(
    * Create the resource inside cacheScope so its subscriptions, effects, and abort handling
    * belong to the cache entry itself.
    */
-  const resource = withScope(cacheScope, () => createResource(wrappedFetch, options));
+  const resource = withScope(cacheScope, () => createResourceBase(wrappedFetch, options));
 
   const entry: CacheEntry = {
     resource,
@@ -764,7 +961,7 @@ export function createCachedResource<T>(
 /**
  * Convenience wrapper: builds the cache key from an id.
  */
-export function createCachedResourceById<T, I>(
+function createCachedResourceById<T, I>(
   id: I,
   keyFn: (id: I) => string,
   fetchFn: (signal: AbortSignal, id: I) => Promise<T>,
@@ -957,13 +1154,13 @@ function removeCacheKey(key: string): void {
  * - Requires a scope so the interval can be cleaned up automatically.
  * - Outside a scope, it warns and returns a normal resource (no interval).
  */
-export function createAutoRefreshResource<T>(
+function createAutoRefreshResource<T>(
   fetchFn: (signal: AbortSignal) => Promise<T>,
   refreshInterval: number,
   options: ResourceOptions<T> = {}
 ): ResourceState<T> {
   const scope = getCurrentScope();
-  const resource = createResource(fetchFn, options);
+  const resource = createResourceBase(fetchFn, options);
 
   if (!scope) {
     if (isInDevMode()) {
@@ -1004,7 +1201,7 @@ export function createAutoRefreshResource<T>(
  * clearCache();
  * ```
  */
-export interface IsolatedCache {
+interface IsolatedCache {
   /**
    * Create a cached resource using this isolated cache.
    */
@@ -1050,7 +1247,38 @@ export interface IsolatedCache {
   configure: (config: Partial<{ maxEntries: number; warnOnEviction: boolean }>) => void;
 }
 
-export function createIsolatedCache(): IsolatedCache {
+export interface ResourceCache {
+  create: <T>(
+    key: string,
+    fetchFn: (signal: AbortSignal) => Promise<T>,
+    options?: CachedResourceOptions<T>
+  ) => ResourceState<T>;
+  clear: (key?: string) => void;
+  invalidate: (key: string, opts?: { revalidate?: boolean; force?: boolean }) => void;
+  invalidateTag: (tag: string, opts?: { revalidate?: boolean; force?: boolean }) => void;
+  invalidateTags: (tags: readonly string[], opts?: { revalidate?: boolean; force?: boolean }) => void;
+  keys: () => string[];
+  configure: (config: Partial<{ maxEntries: number; warnOnEviction: boolean }>) => void;
+}
+
+export function createResourceCache(
+  config: Partial<{ maxEntries: number; warnOnEviction: boolean }> = {}
+): ResourceCache {
+  const isolated = createIsolatedCache();
+  isolated.configure(config);
+
+  return {
+    create: isolated.createCachedResource,
+    clear: isolated.clearCache,
+    invalidate: isolated.invalidateKey,
+    invalidateTag: isolated.invalidateTag,
+    invalidateTags: isolated.invalidateTags,
+    keys: () => Array.from(isolated.getCache().keys()),
+    configure: isolated.configure,
+  };
+}
+
+function createIsolatedCache(): IsolatedCache {
   // Isolated state
   const isolatedCache = new Map<string, CacheEntry>();
   const isolatedTagIndex = new Map<string, Set<string>>();
@@ -1190,7 +1418,7 @@ export function createIsolatedCache(): IsolatedCache {
             `No caching will happen. Use persist: true for global cache.`
         );
       }
-      return createResource(wrappedFetch, options);
+      return createResourceBase(wrappedFetch, options);
     }
 
     const now = Date.now();
@@ -1222,7 +1450,7 @@ export function createIsolatedCache(): IsolatedCache {
     }
 
     const cacheScope = createScope(null);
-    const resource = withScope(cacheScope, () => createResource(wrappedFetch, options));
+    const resource = withScope(cacheScope, () => createResourceBase(wrappedFetch, options));
 
     const entry: CacheEntry = {
       resource,

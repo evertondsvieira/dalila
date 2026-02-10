@@ -1,6 +1,6 @@
 import { signal } from "../../../core/signal.js";
 import { getCurrentScope } from "../../../core/scope.js";
-import { _attachDialogBehavior } from "../dialog/index.js";
+import { attachDialogBehavior } from "../dialog/internal.js";
 import type { Drawer, DrawerOptions, DrawerSide } from "../ui-types.js";
 import { validateDrawerOptions } from "../validate.js";
 
@@ -29,7 +29,7 @@ export function createDrawer(options: DrawerOptions = {}): Drawer {
     const scope = getCurrentScope();
 
     // Shared dialog behavior (open sync, backdrop, escape, ARIA)
-    _attachDialogBehavior(el, open, close, { closeOnBackdrop, closeOnEscape });
+    attachDialogBehavior(el, open, close, { closeOnBackdrop, closeOnEscape });
 
     // Apply initial side class
     const initial = SIDE_CLASSES[side()];
