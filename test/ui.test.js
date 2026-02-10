@@ -40,7 +40,7 @@ describe('createDialog', () => {
   beforeEach(setupDOM);
 
   it('should create a dialog with default options', async () => {
-    const { createDialog } = await import('../dist/ui/dialog.js');
+    const { createDialog } = await import('../dist/components/ui/dialog/index.js');
     const dialog = createDialog();
 
     assert.strictEqual(dialog.open(), false);
@@ -51,7 +51,7 @@ describe('createDialog', () => {
   });
 
   it('should toggle open state', async () => {
-    const { createDialog } = await import('../dist/ui/dialog.js');
+    const { createDialog } = await import('../dist/components/ui/dialog/index.js');
     const dialog = createDialog();
 
     dialog.show();
@@ -68,7 +68,7 @@ describe('createDialog', () => {
   });
 
   it('should sync signal to native dialog element', async () => {
-    const { createDialog } = await import('../dist/ui/dialog.js');
+    const { createDialog } = await import('../dist/components/ui/dialog/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const dialog = createDialog();
@@ -92,7 +92,7 @@ describe('createDialog', () => {
   });
 
   it('should set aria-modal on attach', async () => {
-    const { createDialog } = await import('../dist/ui/dialog.js');
+    const { createDialog } = await import('../dist/components/ui/dialog/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const dialog = createDialog();
@@ -115,21 +115,21 @@ describe('createDrawer', () => {
   beforeEach(setupDOM);
 
   it('should default to right side', async () => {
-    const { createDrawer } = await import('../dist/ui/drawer.js');
+    const { createDrawer } = await import('../dist/components/ui/drawer/index.js');
     const drawer = createDrawer();
 
     assert.strictEqual(drawer.side(), 'right');
   });
 
   it('should accept initial side option', async () => {
-    const { createDrawer } = await import('../dist/ui/drawer.js');
+    const { createDrawer } = await import('../dist/components/ui/drawer/index.js');
     const drawer = createDrawer({ side: 'left' });
 
     assert.strictEqual(drawer.side(), 'left');
   });
 
   it('should apply side class on attach', async () => {
-    const { createDrawer } = await import('../dist/ui/drawer.js');
+    const { createDrawer } = await import('../dist/components/ui/drawer/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const drawer = createDrawer({ side: 'left' });
@@ -146,7 +146,7 @@ describe('createDrawer', () => {
   });
 
   it('should apply d-sheet class for bottom side', async () => {
-    const { createDrawer } = await import('../dist/ui/drawer.js');
+    const { createDrawer } = await import('../dist/components/ui/drawer/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const drawer = createDrawer({ side: 'bottom' });
@@ -163,7 +163,7 @@ describe('createDrawer', () => {
   });
 
   it('should not add extra class for right side (default)', async () => {
-    const { createDrawer } = await import('../dist/ui/drawer.js');
+    const { createDrawer } = await import('../dist/components/ui/drawer/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const drawer = createDrawer({ side: 'right' });
@@ -181,7 +181,7 @@ describe('createDrawer', () => {
   });
 
   it('should react to side signal changes', async () => {
-    const { createDrawer } = await import('../dist/ui/drawer.js');
+    const { createDrawer } = await import('../dist/components/ui/drawer/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const drawer = createDrawer({ side: 'right' });
@@ -209,7 +209,7 @@ describe('createDrawer', () => {
   });
 
   it('should sync open state with native dialog', async () => {
-    const { createDrawer } = await import('../dist/ui/drawer.js');
+    const { createDrawer } = await import('../dist/components/ui/drawer/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const drawer = createDrawer({ side: 'left' });
@@ -240,7 +240,7 @@ describe('createPopover', () => {
   beforeEach(setupDOM);
 
   it('should create a popover with default options', async () => {
-    const { createPopover } = await import('../dist/ui/popover.js');
+    const { createPopover } = await import('../dist/components/ui/popover/index.js');
     const popover = createPopover();
 
     assert.strictEqual(popover.open(), false);
@@ -253,7 +253,7 @@ describe('createPopover', () => {
   });
 
   it('should toggle open signal', async () => {
-    const { createPopover } = await import('../dist/ui/popover.js');
+    const { createPopover } = await import('../dist/components/ui/popover/index.js');
     const popover = createPopover();
 
     popover.show();
@@ -267,14 +267,14 @@ describe('createPopover', () => {
   });
 
   it('should accept custom placement', async () => {
-    const { createPopover } = await import('../dist/ui/popover.js');
+    const { createPopover } = await import('../dist/components/ui/popover/index.js');
     const popover = createPopover({ placement: 'top-start' });
 
     assert.strictEqual(popover.placement(), 'top-start');
   });
 
   it('should set ARIA attributes on _attachTo', async () => {
-    const { createPopover } = await import('../dist/ui/popover.js');
+    const { createPopover } = await import('../dist/components/ui/popover/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const popover = createPopover();
@@ -297,7 +297,7 @@ describe('createPopover', () => {
   });
 
   it('should sync aria-expanded with open signal', async () => {
-    const { createPopover } = await import('../dist/ui/popover.js');
+    const { createPopover } = await import('../dist/components/ui/popover/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const popover = createPopover();
@@ -331,7 +331,7 @@ describe('createDropdown', () => {
   beforeEach(setupDOM);
 
   it('should toggle open state', async () => {
-    const { createDropdown } = await import('../dist/ui/dropdown.js');
+    const { createDropdown } = await import('../dist/components/ui/dropdown/index.js');
     const dd = createDropdown();
 
     assert.strictEqual(dd.open(), false);
@@ -344,7 +344,7 @@ describe('createDropdown', () => {
   });
 
   it('should close on select when closeOnSelect is true', async () => {
-    const { createDropdown } = await import('../dist/ui/dropdown.js');
+    const { createDropdown } = await import('../dist/components/ui/dropdown/index.js');
     const dd = createDropdown({ closeOnSelect: true });
 
     dd.toggle();
@@ -355,7 +355,7 @@ describe('createDropdown', () => {
   });
 
   it('should set ARIA attributes on _attachTo', async () => {
-    const { createDropdown } = await import('../dist/ui/dropdown.js');
+    const { createDropdown } = await import('../dist/components/ui/dropdown/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const dd = createDropdown();
@@ -380,7 +380,7 @@ describe('createDropdown', () => {
   });
 
   it('should sync aria-expanded on open', async () => {
-    const { createDropdown } = await import('../dist/ui/dropdown.js');
+    const { createDropdown } = await import('../dist/components/ui/dropdown/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const dd = createDropdown();
@@ -415,7 +415,7 @@ describe('createCombobox', () => {
   beforeEach(setupDOM);
 
   it('should filter options by query', async () => {
-    const { createCombobox } = await import('../dist/ui/combobox.js');
+    const { createCombobox } = await import('../dist/components/ui/combobox/index.js');
     const combo = createCombobox({
       options: [
         { value: '1', label: 'Apple' },
@@ -432,7 +432,7 @@ describe('createCombobox', () => {
   });
 
   it('should handle keyboard navigation', async () => {
-    const { createCombobox } = await import('../dist/ui/combobox.js');
+    const { createCombobox } = await import('../dist/components/ui/combobox/index.js');
     const combo = createCombobox({
       options: [
         { value: '1', label: 'Apple' },
@@ -463,7 +463,7 @@ describe('createCombobox', () => {
   });
 
   it('should close on Escape', async () => {
-    const { createCombobox } = await import('../dist/ui/combobox.js');
+    const { createCombobox } = await import('../dist/components/ui/combobox/index.js');
     const combo = createCombobox({
       options: [{ value: '1', label: 'Apple' }],
     });
@@ -477,7 +477,7 @@ describe('createCombobox', () => {
   });
 
   it('should set ARIA on _attachTo', async () => {
-    const { createCombobox } = await import('../dist/ui/combobox.js');
+    const { createCombobox } = await import('../dist/components/ui/combobox/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const combo = createCombobox({
@@ -512,7 +512,7 @@ describe('createAccordion', () => {
   beforeEach(setupDOM);
 
   it('should toggle items', async () => {
-    const { createAccordion } = await import('../dist/ui/accordion.js');
+    const { createAccordion } = await import('../dist/components/ui/accordion/index.js');
     const acc = createAccordion();
 
     acc.toggle('a');
@@ -523,7 +523,7 @@ describe('createAccordion', () => {
   });
 
   it('should enforce single-open mode', async () => {
-    const { createAccordion } = await import('../dist/ui/accordion.js');
+    const { createAccordion } = await import('../dist/components/ui/accordion/index.js');
     const acc = createAccordion({ single: true });
 
     acc.toggle('a');
@@ -535,7 +535,7 @@ describe('createAccordion', () => {
   });
 
   it('should support initial open items', async () => {
-    const { createAccordion } = await import('../dist/ui/accordion.js');
+    const { createAccordion } = await import('../dist/components/ui/accordion/index.js');
     const acc = createAccordion({ initial: ['x', 'y'] });
 
     assert.strictEqual(acc.openItems().has('x'), true);
@@ -543,7 +543,7 @@ describe('createAccordion', () => {
   });
 
   it('isOpen should return a reactive Signal', async () => {
-    const { createAccordion } = await import('../dist/ui/accordion.js');
+    const { createAccordion } = await import('../dist/components/ui/accordion/index.js');
     const acc = createAccordion();
 
     const isOpenA = acc.isOpen('a');
@@ -559,7 +559,7 @@ describe('createAccordion', () => {
   });
 
   it('isOpen should return cached signal for same itemId', async () => {
-    const { createAccordion } = await import('../dist/ui/accordion.js');
+    const { createAccordion } = await import('../dist/components/ui/accordion/index.js');
     const acc = createAccordion();
 
     const sig1 = acc.isOpen('test');
@@ -575,7 +575,7 @@ describe('createTabs', () => {
   beforeEach(setupDOM);
 
   it('should manage active tab', async () => {
-    const { createTabs } = await import('../dist/ui/tabs.js');
+    const { createTabs } = await import('../dist/components/ui/tabs/index.js');
     const tabs = createTabs({ initial: 'home' });
 
     assert.strictEqual(tabs.active(), 'home');
@@ -589,7 +589,7 @@ describe('createTabs', () => {
   });
 
   it('should set ARIA attributes on _attachTo', async () => {
-    const { createTabs } = await import('../dist/ui/tabs.js');
+    const { createTabs } = await import('../dist/components/ui/tabs/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const tabs = createTabs({ initial: 'tab1' });
@@ -642,7 +642,7 @@ describe('createCalendar', () => {
   beforeEach(setupDOM);
 
   it('should initialize with current date', async () => {
-    const { createCalendar } = await import('../dist/ui/calendar.js');
+    const { createCalendar } = await import('../dist/components/ui/calendar/index.js');
     const cal = createCalendar();
 
     const now = new Date();
@@ -651,7 +651,7 @@ describe('createCalendar', () => {
   });
 
   it('should navigate months', async () => {
-    const { createCalendar } = await import('../dist/ui/calendar.js');
+    const { createCalendar } = await import('../dist/components/ui/calendar/index.js');
     const cal = createCalendar({ initial: new Date(2024, 5, 15) }); // June 2024
 
     cal.next();
@@ -665,7 +665,7 @@ describe('createCalendar', () => {
   });
 
   it('should wrap around year boundaries', async () => {
-    const { createCalendar } = await import('../dist/ui/calendar.js');
+    const { createCalendar } = await import('../dist/components/ui/calendar/index.js');
     const cal = createCalendar({ initial: new Date(2024, 0, 15) }); // January
 
     cal.prev();
@@ -678,7 +678,7 @@ describe('createCalendar', () => {
   });
 
   it('should select a date', async () => {
-    const { createCalendar } = await import('../dist/ui/calendar.js');
+    const { createCalendar } = await import('../dist/components/ui/calendar/index.js');
     const cal = createCalendar();
 
     const date = new Date(2024, 5, 15);
@@ -687,7 +687,7 @@ describe('createCalendar', () => {
   });
 
   it('should respect min/max constraints', async () => {
-    const { createCalendar } = await import('../dist/ui/calendar.js');
+    const { createCalendar } = await import('../dist/components/ui/calendar/index.js');
     const min = new Date(2024, 5, 10);
     const max = new Date(2024, 5, 20);
     const cal = createCalendar({ min, max });
@@ -704,14 +704,14 @@ describe('createCalendar', () => {
   });
 
   it('should generate 42-day grid', async () => {
-    const { createCalendar } = await import('../dist/ui/calendar.js');
+    const { createCalendar } = await import('../dist/components/ui/calendar/index.js');
     const cal = createCalendar({ initial: new Date(2024, 5, 15) });
 
     assert.strictEqual(cal.days().length, 42);
   });
 
   it('should mark today correctly', async () => {
-    const { createCalendar } = await import('../dist/ui/calendar.js');
+    const { createCalendar } = await import('../dist/components/ui/calendar/index.js');
     const cal = createCalendar();
 
     const days = cal.days();
@@ -726,7 +726,7 @@ describe('createToast', () => {
   beforeEach(setupDOM);
 
   it('should show and dismiss toasts', async () => {
-    const { createToast } = await import('../dist/ui/toast.js');
+    const { createToast } = await import('../dist/components/ui/toast/index.js');
     const toast = createToast();
 
     assert.strictEqual(toast.items().length, 0);
@@ -740,7 +740,7 @@ describe('createToast', () => {
   });
 
   it('should respect maxToasts', async () => {
-    const { createToast } = await import('../dist/ui/toast.js');
+    const { createToast } = await import('../dist/components/ui/toast/index.js');
     const toast = createToast({ maxToasts: 2 });
 
     toast.info('1');
@@ -751,7 +751,7 @@ describe('createToast', () => {
   });
 
   it('should clear all toasts', async () => {
-    const { createToast } = await import('../dist/ui/toast.js');
+    const { createToast } = await import('../dist/components/ui/toast/index.js');
     const toast = createToast();
 
     toast.success('A');
@@ -766,7 +766,7 @@ describe('createToast', () => {
   });
 
   it('should have correct variant methods', async () => {
-    const { createToast } = await import('../dist/ui/toast.js');
+    const { createToast } = await import('../dist/components/ui/toast/index.js');
     const toast = createToast({ duration: 0 }); // No auto-dismiss
 
     toast.success('s');
@@ -792,14 +792,14 @@ describe('createDropzone', () => {
   beforeEach(setupDOM);
 
   it('should track dragging state', async () => {
-    const { createDropzone } = await import('../dist/ui/dropzone.js');
+    const { createDropzone } = await import('../dist/components/ui/dropzone/index.js');
     const dz = createDropzone();
 
     assert.strictEqual(dz.dragging(), false);
   });
 
   it('should set ARIA on _attachTo', async () => {
-    const { createDropzone } = await import('../dist/ui/dropzone.js');
+    const { createDropzone } = await import('../dist/components/ui/dropzone/index.js');
     const { createScope, withScope } = await import('../dist/core/scope.js');
 
     const dz = createDropzone();
@@ -824,7 +824,7 @@ describe('tabBindings', () => {
   beforeEach(setupDOM);
 
   it('should provide reactive bindings', async () => {
-    const { createTabs, tabBindings } = await import('../dist/ui/tabs.js');
+    const { createTabs, tabBindings } = await import('../dist/components/ui/tabs/index.js');
     const tabs = createTabs({ initial: 'a' });
 
     const bindA = tabBindings(tabs, 'a');
