@@ -1198,8 +1198,7 @@ export async function generateRoutesFile(routesDir: string, outputPath: string):
   console.log('🔍 Scanning app directory:', routesDir);
 
   if (!await pathExists(routesDir)) {
-    console.error('❌ Routes directory not found:', routesDir);
-    process.exit(1);
+    throw new Error(`Routes directory not found: ${routesDir}`);
   }
 
   const tree = await buildRouteTree(routesDir, '', '');
