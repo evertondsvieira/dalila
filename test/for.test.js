@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { signal, effect } from '../dist/core/signal.js';
 import { createScope, withScope } from '../dist/core/scope.js';
 import { setDevMode, isInDevMode } from '../dist/core/dev.js';
-import { createList, forEach } from '../dist/core/for.js';
+import { createList, forEach, computeVirtualRange } from '../dist/core/for.js';
 
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 
@@ -966,6 +966,74 @@ describe('List Rendering (for)', () => {
         container.remove();
         scope.dispose();
       }
+    });
+  });
+
+  describe('computeVirtualRange()', () => {
+    it('computes range with overscan and offsets', () => {
+      const range = computeVirtualRange({
+        itemCount: 100,
+        itemHeight: 20,
+        scrollTop: 200,
+        viewportHeight: 100,
+        overscan: 2,
+      });
+
+      assert.strictEqual(range.start, 8);
+      assert.strictEqual(range.end, 17);
+      assert.strictEqual(range.topOffset, 160);
+      assert.strictEqual(range.bottomOffset, 1660);
+      assert.strictEqual(range.totalHeight, 2000);
+    });
+
+    it('clamps invalid inputs safely', () => {
+      const range = computeVirtualRange({
+        itemCount: -10,
+        itemHeight: 0,
+        scrollTop: -30,
+        viewportHeight: Number.NaN,
+        overscan: -5,
+      });
+
+      assert.deepStrictEqual(range, {
+        start: 0,
+        end: 0,
+        topOffset: 0,
+        bottomOffset: 0,
+        totalHeight: 0,
+      });
+    });
+
+    it('keeps end >= start on small lists', () => {
+      const range = computeVirtualRange({
+        itemCount: 3,
+        itemHeight: 50,
+        scrollTop: 500,
+        viewportHeight: 120,
+        overscan: 10,
+      });
+
+      assert.strictEqual(range.start, 0);
+      assert.strictEqual(range.end, 3);
+      assert.strictEqual(range.topOffset, 0);
+      assert.strictEqual(range.bottomOffset, 0);
+      assert.strictEqual(range.totalHeight, 150);
+    });
+
+    it('preserves fractional item heights in offsets and total height', () => {
+      const range = computeVirtualRange({
+        itemCount: 10,
+        itemHeight: 33.5,
+        scrollTop: 67,
+        viewportHeight: 100.5,
+        overscan: 1,
+      });
+
+      assert.strictEqual(range.start, 1);
+      assert.strictEqual(range.end, 6);
+      assert.strictEqual(range.topOffset, 33.5);
+      assert.strictEqual(range.bottomOffset, 134);
+      assert.strictEqual(range.totalHeight, 335);
     });
   });
 });

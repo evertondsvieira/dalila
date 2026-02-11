@@ -109,3 +109,4 @@ If created without a scope, call `fragment.dispose()` when removing from DOM.
 - Keyed diffing minimizes DOM changes.
 - Item scopes are disposed on removal, preventing effect leaks.
 - Prefer one list per container instead of many small lists.
+- For very large datasets, prefer [Virtual Lists](./virtual.md).

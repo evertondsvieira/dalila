@@ -176,6 +176,36 @@ Behavior:
 
 **Note:** For dynamic/reordered lists, set `d-key` to a stable unique field.
 
+## 8.1 `d-virtual-each` Directive
+
+### Syntax
+
+```html
+<div class="viewport">
+  <div
+    d-virtual-each="rows"
+    d-virtual-item-height="48"
+    d-virtual-overscan="4"
+    d-key="id"
+  >
+    {title}
+  </div>
+</div>
+```
+
+### Rules
+
+| Rule | Description |
+|------|-------------|
+| `d-virtual-item-height` | Required. Fixed row height in pixels (number or numeric context value). |
+| `d-virtual-overscan` | Optional. Extra rows before/after viewport (default: `6`). |
+| `d-virtual-height` | Optional. Sets parent scroll container height. |
+| Windowing | Only visible rows + overscan are mounted in DOM. |
+| Context | Exposes same loop helpers as `d-each` (`item`, `$index`, `$count`, `$first`, `$last`, `$odd`, `$even`). |
+| Fallback | Invalid `d-virtual-item-height` falls back to `d-each`. |
+
+V1 is fixed-height and vertical-only.
+
 ## 9. `d-html` Directive
 
 ### Syntax
@@ -242,6 +272,8 @@ In dev mode, the runtime logs warnings:
 | `d-if="y"` but `ctx.y` undefined | `d-if: "y" not found in context` |
 | `d-each="list"` but `ctx.list` undefined | `d-each: "list" not found in context` |
 | `d-each="list"` but not array/signal | `d-each: "list" is not an array or signal` |
+| `d-virtual-each="list"` but `ctx.list` undefined | `d-virtual-each: "list" not found in context` |
+| `d-virtual-item-height` invalid | `d-virtual-each: invalid item height ... Falling back to d-each.` |
 | `d-html="x"` but `ctx.x` undefined | `d-html: "x" not found in context` |
 | `d-attr-href="x"` but `ctx.x` undefined | `d-attr-href: "x" not found in context` |
 

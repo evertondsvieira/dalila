@@ -6,7 +6,7 @@
  *
  * @module dalila/runtime
  */
-import { effect, createScope, withScope, isInDevMode, signal } from '../core/index.js';
+import { effect, createScope, withScope, isInDevMode, signal, computeVirtualRange } from '../core/index.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
 // ============================================================================
@@ -1134,6 +1134,389 @@ function bindMatch(root, ctx, cleanups) {
     }
 }
 // ============================================================================
+// d-virtual-each Directive
+// ============================================================================
+function readVirtualNumberOption(raw, ctx, label) {
+    if (!raw)
+        return null;
+    const trimmed = raw.trim();
+    if (!trimmed)
+        return null;
+    const asNumber = Number(trimmed);
+    if (Number.isFinite(asNumber))
+        return asNumber;
+    const fromCtx = ctx[trimmed];
+    if (fromCtx === undefined) {
+        warn(`${label}: "${trimmed}" not found in context`);
+        return null;
+    }
+    const resolved = resolve(fromCtx);
+    if (typeof resolved === 'number' && Number.isFinite(resolved))
+        return resolved;
+    const numericFromString = Number(resolved);
+    if (Number.isFinite(numericFromString))
+        return numericFromString;
+    warn(`${label}: "${trimmed}" must resolve to a finite number`);
+    return null;
+}
+function readVirtualHeightOption(raw, ctx) {
+    if (!raw)
+        return null;
+    const trimmed = raw.trim();
+    if (!trimmed)
+        return null;
+    const asNumber = Number(trimmed);
+    if (Number.isFinite(asNumber))
+        return `${asNumber}px`;
+    const fromCtx = ctx[trimmed];
+    if (fromCtx !== undefined) {
+        const resolved = resolve(fromCtx);
+        if (typeof resolved === 'number' && Number.isFinite(resolved))
+            return `${resolved}px`;
+        if (typeof resolved === 'string' && resolved.trim())
+            return resolved.trim();
+    }
+    return trimmed;
+}
+function createVirtualSpacer(template, kind) {
+    const spacer = template.cloneNode(false);
+    spacer.removeAttribute('id');
+    spacer.removeAttribute('class');
+    for (const attr of Array.from(spacer.attributes)) {
+        if (attr.name.startsWith('d-')) {
+            spacer.removeAttribute(attr.name);
+        }
+    }
+    spacer.textContent = '';
+    spacer.setAttribute('aria-hidden', 'true');
+    spacer.setAttribute('data-dalila-virtual-spacer', kind);
+    spacer.style.height = '0px';
+    spacer.style.margin = '0';
+    spacer.style.padding = '0';
+    spacer.style.border = '0';
+    spacer.style.pointerEvents = 'none';
+    spacer.style.visibility = 'hidden';
+    spacer.style.listStyle = 'none';
+    return spacer;
+}
+/**
+ * Bind all [d-virtual-each] directives within root.
+ *
+ * V1 constraints:
+ * - Fixed item height (required via d-virtual-item-height)
+ * - Vertical virtualization only
+ * - Parent element is the scroll container
+ */
+function bindVirtualEach(root, ctx, cleanups) {
+    const elements = qsaIncludingRoot(root, '[d-virtual-each]')
+        .filter(el => !el.parentElement?.closest('[d-virtual-each], [d-each]'));
+    for (const el of elements) {
+        const bindingName = normalizeBinding(el.getAttribute('d-virtual-each'));
+        if (!bindingName)
+            continue;
+        const itemHeightBinding = normalizeBinding(el.getAttribute('d-virtual-item-height'));
+        const itemHeightRaw = itemHeightBinding ?? el.getAttribute('d-virtual-item-height');
+        const itemHeightValue = readVirtualNumberOption(itemHeightRaw, ctx, 'd-virtual-item-height');
+        const itemHeight = itemHeightValue == null ? NaN : itemHeightValue;
+        if (!Number.isFinite(itemHeight) || itemHeight <= 0) {
+            warn(`d-virtual-each: invalid item height on "${bindingName}". Falling back to d-each.`);
+            el.setAttribute('d-each', bindingName);
+            el.removeAttribute('d-virtual-each');
+            el.removeAttribute('d-virtual-item-height');
+            el.removeAttribute('d-virtual-overscan');
+            el.removeAttribute('d-virtual-height');
+            continue;
+        }
+        const overscanBinding = normalizeBinding(el.getAttribute('d-virtual-overscan'));
+        const overscanRaw = overscanBinding ?? el.getAttribute('d-virtual-overscan');
+        const overscanValue = readVirtualNumberOption(overscanRaw, ctx, 'd-virtual-overscan');
+        const overscan = Number.isFinite(overscanValue)
+            ? Math.max(0, Math.floor(overscanValue))
+            : 6;
+        const viewportHeight = readVirtualHeightOption(normalizeBinding(el.getAttribute('d-virtual-height')) ?? el.getAttribute('d-virtual-height'), ctx);
+        let binding = ctx[bindingName];
+        if (binding === undefined) {
+            warn(`d-virtual-each: "${bindingName}" not found in context`);
+            binding = [];
+        }
+        const comment = document.createComment('d-virtual-each');
+        el.parentNode?.replaceChild(comment, el);
+        el.removeAttribute('d-virtual-each');
+        el.removeAttribute('d-virtual-item-height');
+        el.removeAttribute('d-virtual-overscan');
+        el.removeAttribute('d-virtual-height');
+        const keyBinding = normalizeBinding(el.getAttribute('d-key'));
+        el.removeAttribute('d-key');
+        const template = el;
+        const topSpacer = createVirtualSpacer(template, 'top');
+        const bottomSpacer = createVirtualSpacer(template, 'bottom');
+        comment.parentNode?.insertBefore(topSpacer, comment);
+        comment.parentNode?.insertBefore(bottomSpacer, comment);
+        const scrollContainer = comment.parentElement;
+        if (scrollContainer) {
+            if (viewportHeight)
+                scrollContainer.style.height = viewportHeight;
+            if (!scrollContainer.style.overflowY)
+                scrollContainer.style.overflowY = 'auto';
+        }
+        const clonesByKey = new Map();
+        const disposesByKey = new Map();
+        const metadataByKey = new Map();
+        const itemsByKey = new Map();
+        const objectKeyIds = new WeakMap();
+        const symbolKeyIds = new Map();
+        let nextObjectKeyId = 0;
+        let nextSymbolKeyId = 0;
+        const missingKeyWarned = new Set();
+        let warnedNonArray = false;
+        let warnedViewportFallback = false;
+        const getObjectKeyId = (value) => {
+            const existing = objectKeyIds.get(value);
+            if (existing !== undefined)
+                return existing;
+            const next = ++nextObjectKeyId;
+            objectKeyIds.set(value, next);
+            return next;
+        };
+        const keyValueToString = (value, index) => {
+            if (value === null || value === undefined)
+                return `idx:${index}`;
+            const type = typeof value;
+            if (type === 'string' || type === 'number' || type === 'boolean' || type === 'bigint') {
+                return `${type}:${String(value)}`;
+            }
+            if (type === 'symbol') {
+                const sym = value;
+                let id = symbolKeyIds.get(sym);
+                if (id === undefined) {
+                    id = ++nextSymbolKeyId;
+                    symbolKeyIds.set(sym, id);
+                }
+                return `sym:${id}`;
+            }
+            if (type === 'object' || type === 'function') {
+                return `obj:${getObjectKeyId(value)}`;
+            }
+            return `idx:${index}`;
+        };
+        const readKeyValue = (item, index) => {
+            if (keyBinding) {
+                if (keyBinding === '$index')
+                    return index;
+                if (keyBinding === 'item')
+                    return item;
+                if (typeof item === 'object' && item !== null && keyBinding in item) {
+                    return item[keyBinding];
+                }
+                const warnId = `${keyBinding}:${index}`;
+                if (!missingKeyWarned.has(warnId)) {
+                    warn(`d-virtual-each: key "${keyBinding}" not found on item at index ${index}. Falling back to index key.`);
+                    missingKeyWarned.add(warnId);
+                }
+                return index;
+            }
+            if (typeof item === 'object' && item !== null) {
+                const obj = item;
+                if ('id' in obj)
+                    return obj.id;
+                if ('key' in obj)
+                    return obj.key;
+            }
+            return index;
+        };
+        function createClone(key, item, index, count) {
+            const clone = template.cloneNode(true);
+            const itemCtx = Object.create(ctx);
+            if (typeof item === 'object' && item !== null) {
+                Object.assign(itemCtx, item);
+            }
+            const metadata = {
+                $index: signal(index),
+                $count: signal(count),
+                $first: signal(index === 0),
+                $last: signal(index === count - 1),
+                $odd: signal(index % 2 !== 0),
+                $even: signal(index % 2 === 0),
+            };
+            metadataByKey.set(key, metadata);
+            itemsByKey.set(key, item);
+            itemCtx.item = item;
+            itemCtx.key = key;
+            itemCtx.$index = metadata.$index;
+            itemCtx.$count = metadata.$count;
+            itemCtx.$first = metadata.$first;
+            itemCtx.$last = metadata.$last;
+            itemCtx.$odd = metadata.$odd;
+            itemCtx.$even = metadata.$even;
+            clone.setAttribute('data-dalila-internal-bound', '');
+            const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
+            disposesByKey.set(key, dispose);
+            clonesByKey.set(key, clone);
+            return clone;
+        }
+        function updateCloneMetadata(key, index, count) {
+            const metadata = metadataByKey.get(key);
+            if (metadata) {
+                metadata.$index.set(index);
+                metadata.$count.set(count);
+                metadata.$first.set(index === 0);
+                metadata.$last.set(index === count - 1);
+                metadata.$odd.set(index % 2 !== 0);
+                metadata.$even.set(index % 2 === 0);
+            }
+        }
+        function removeKey(key) {
+            const clone = clonesByKey.get(key);
+            clone?.remove();
+            clonesByKey.delete(key);
+            metadataByKey.delete(key);
+            itemsByKey.delete(key);
+            const dispose = disposesByKey.get(key);
+            if (dispose) {
+                dispose();
+                disposesByKey.delete(key);
+            }
+        }
+        let currentItems = [];
+        function renderVirtualList(items) {
+            const parent = comment.parentNode;
+            if (!parent)
+                return;
+            const viewportHeightValue = scrollContainer?.clientHeight ?? 0;
+            const effectiveViewportHeight = viewportHeightValue > 0 ? viewportHeightValue : itemHeight * 10;
+            const scrollTop = scrollContainer?.scrollTop ?? 0;
+            if (viewportHeightValue <= 0 && !warnedViewportFallback) {
+                warnedViewportFallback = true;
+                warn('d-virtual-each: scroll container has no measurable height. Using fallback viewport size.');
+            }
+            const range = computeVirtualRange({
+                itemCount: items.length,
+                itemHeight,
+                scrollTop,
+                viewportHeight: effectiveViewportHeight,
+                overscan,
+            });
+            topSpacer.style.height = `${range.topOffset}px`;
+            bottomSpacer.style.height = `${range.bottomOffset}px`;
+            const orderedClones = [];
+            const orderedKeys = [];
+            const nextKeys = new Set();
+            const changedKeys = new Set();
+            for (let i = range.start; i < range.end; i++) {
+                const item = items[i];
+                let key = keyValueToString(readKeyValue(item, i), i);
+                if (nextKeys.has(key)) {
+                    warn(`d-virtual-each: duplicate visible key "${key}" at index ${i}. Falling back to per-index key.`);
+                    key = `${key}:dup:${i}`;
+                }
+                nextKeys.add(key);
+                let clone = clonesByKey.get(key);
+                if (clone) {
+                    updateCloneMetadata(key, i, items.length);
+                    if (itemsByKey.get(key) !== item) {
+                        changedKeys.add(key);
+                    }
+                }
+                else {
+                    clone = createClone(key, item, i, items.length);
+                }
+                orderedClones.push(clone);
+                orderedKeys.push(key);
+            }
+            for (let i = 0; i < orderedClones.length; i++) {
+                const key = orderedKeys[i];
+                if (!changedKeys.has(key))
+                    continue;
+                removeKey(key);
+                orderedClones[i] = createClone(key, items[range.start + i], range.start + i, items.length);
+            }
+            for (const key of Array.from(clonesByKey.keys())) {
+                if (nextKeys.has(key))
+                    continue;
+                removeKey(key);
+            }
+            let referenceNode = bottomSpacer;
+            for (let i = orderedClones.length - 1; i >= 0; i--) {
+                const clone = orderedClones[i];
+                if (clone.nextSibling !== referenceNode) {
+                    parent.insertBefore(clone, referenceNode);
+                }
+                referenceNode = clone;
+            }
+        }
+        let framePending = false;
+        let pendingRaf = null;
+        let pendingTimeout = null;
+        const scheduleRender = () => {
+            if (framePending)
+                return;
+            framePending = true;
+            const flush = () => {
+                framePending = false;
+                renderVirtualList(currentItems);
+            };
+            if (typeof requestAnimationFrame === 'function') {
+                pendingRaf = requestAnimationFrame(() => {
+                    pendingRaf = null;
+                    flush();
+                });
+                return;
+            }
+            pendingTimeout = setTimeout(() => {
+                pendingTimeout = null;
+                flush();
+            }, 0);
+        };
+        const onScroll = () => scheduleRender();
+        const onResize = () => scheduleRender();
+        scrollContainer?.addEventListener('scroll', onScroll, { passive: true });
+        if (typeof window !== 'undefined') {
+            window.addEventListener('resize', onResize);
+        }
+        if (isSignal(binding)) {
+            bindEffect(scrollContainer ?? el, () => {
+                const value = binding();
+                if (Array.isArray(value)) {
+                    warnedNonArray = false;
+                    currentItems = value;
+                }
+                else {
+                    if (!warnedNonArray) {
+                        warnedNonArray = true;
+                        warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
+                    }
+                    currentItems = [];
+                }
+                renderVirtualList(currentItems);
+            });
+        }
+        else if (Array.isArray(binding)) {
+            currentItems = binding;
+            renderVirtualList(currentItems);
+        }
+        else {
+            warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
+        }
+        cleanups.push(() => {
+            scrollContainer?.removeEventListener('scroll', onScroll);
+            if (typeof window !== 'undefined') {
+                window.removeEventListener('resize', onResize);
+            }
+            if (pendingRaf != null && typeof cancelAnimationFrame === 'function') {
+                cancelAnimationFrame(pendingRaf);
+            }
+            pendingRaf = null;
+            if (pendingTimeout != null)
+                clearTimeout(pendingTimeout);
+            pendingTimeout = null;
+            for (const key of Array.from(clonesByKey.keys()))
+                removeKey(key);
+            topSpacer.remove();
+            bottomSpacer.remove();
+        });
+    }
+}
+// ============================================================================
 // d-each Directive
 // ============================================================================
 /**
@@ -1143,11 +1526,11 @@ function bindMatch(root, ctx, cleanups) {
  * item's properties as its context.
  */
 function bindEach(root, ctx, cleanups) {
-    // Only bind top-level d-each elements.  Nested d-each (inside another
-    // d-each template) must be left untouched here — they will be bound when
-    // their parent clones are passed to bind() individually.
+    // Only bind top-level d-each elements. Nested d-each inside d-each or
+    // d-virtual-each templates must be left untouched here — they are bound when
+    // parent clones are passed to bind() individually.
     const elements = qsaIncludingRoot(root, '[d-each]')
-        .filter(el => !el.parentElement?.closest('[d-each]'));
+        .filter(el => !el.parentElement?.closest('[d-each], [d-virtual-each]'));
     for (const el of elements) {
         const bindingName = normalizeBinding(el.getAttribute('d-each'));
         if (!bindingName)
@@ -2108,26 +2491,28 @@ export function bind(root, ctx, options = {}) {
         bindForm(root, ctx, cleanups);
         // 2. d-array — must run before d-each to setup field arrays
         bindArray(root, ctx, cleanups);
-        // 3. d-each — must run early: removes templates before TreeWalker visits them
+        // 3. d-virtual-each — must run early for virtual template extraction
+        bindVirtualEach(root, ctx, cleanups);
+        // 4. d-each — must run early: removes templates before TreeWalker visits them
         bindEach(root, ctx, cleanups);
-        // 4. Text interpolation (template plan cache + lazy parser fallback)
+        // 5. Text interpolation (template plan cache + lazy parser fallback)
         bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
-        // 5. d-attr bindings
+        // 6. d-attr bindings
         bindAttrs(root, ctx, cleanups);
-        // 6. d-html bindings
+        // 7. d-html bindings
         bindHtml(root, ctx, cleanups);
-        // 7. Form fields — register fields with form instances
+        // 8. Form fields — register fields with form instances
         bindField(root, ctx, cleanups);
-        // 8. Event bindings
+        // 9. Event bindings
         bindEvents(root, ctx, events, cleanups);
-        // 9. d-when directive
+        // 10. d-when directive
         bindWhen(root, ctx, cleanups);
-        // 10. d-match directive
+        // 11. d-match directive
         bindMatch(root, ctx, cleanups);
-        // 11. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
+        // 12. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
         bindError(root, ctx, cleanups);
         bindFormError(root, ctx, cleanups);
-        // 12. d-if — must run last: elements are fully bound before conditional removal
+        // 13. d-if — must run last: elements are fully bound before conditional removal
         bindIf(root, ctx, cleanups);
     });
     // Bindings complete: remove loading state and mark as ready.

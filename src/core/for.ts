@@ -23,6 +23,70 @@ interface AutoDisposeEntry {
   attached: boolean;
 }
 
+export interface VirtualRangeInput {
+  itemCount: number;
+  itemHeight: number;
+  scrollTop: number;
+  viewportHeight: number;
+  overscan?: number;
+}
+
+export interface VirtualRange {
+  start: number;
+  end: number;
+  topOffset: number;
+  bottomOffset: number;
+  totalHeight: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Compute the visible range for a fixed-height virtualized list.
+ *
+ * `start`/`end` use the [start, end) convention.
+ */
+export function computeVirtualRange(input: VirtualRangeInput): VirtualRange {
+  const itemCount = Number.isFinite(input.itemCount) ? Math.max(0, Math.floor(input.itemCount)) : 0;
+  const itemHeight = Number.isFinite(input.itemHeight) ? Math.max(1, input.itemHeight) : 1;
+  const scrollTop = Number.isFinite(input.scrollTop) ? Math.max(0, input.scrollTop) : 0;
+  const viewportHeight = Number.isFinite(input.viewportHeight)
+    ? Math.max(0, input.viewportHeight)
+    : 0;
+  const overscan = Number.isFinite(input.overscan) ? Math.max(0, Math.floor(input.overscan ?? 0)) : 0;
+
+  const totalHeight = itemCount * itemHeight;
+
+  if (itemCount === 0) {
+    return {
+      start: 0,
+      end: 0,
+      topOffset: 0,
+      bottomOffset: 0,
+      totalHeight,
+    };
+  }
+
+  const visibleStart = Math.floor(scrollTop / itemHeight);
+  const visibleEnd = Math.ceil((scrollTop + viewportHeight) / itemHeight);
+
+  const start = clamp(visibleStart - overscan, 0, itemCount);
+  const end = clamp(visibleEnd + overscan, start, itemCount);
+
+  const topOffset = start * itemHeight;
+  const bottomOffset = Math.max(0, totalHeight - (end * itemHeight));
+
+  return {
+    start,
+    end,
+    topOffset,
+    bottomOffset,
+    totalHeight,
+  };
+}
+
 const autoDisposeByDocument = new WeakMap<
   Document,
   { observer: MutationObserver; entries: Set<AutoDisposeEntry> }

@@ -11,15 +11,16 @@ No `eval`, no inline JS — directive attributes resolve identifiers from contex
 │                                                                    │
 │   HTML template ──► bind(root, ctx) ──► live reactive DOM          │
 │                          │                                         │
-│                          ├─ 1  d-each      remove template,        │
+│                          ├─ 1  d-virtual-each fixed-height window  │
+│                          ├─ 2  d-each      remove template,        │
 │                          │                 clone + bind per item   │
-│                          ├─ 2  {...}       reactive text nodes     │
-│                          ├─ 3  d-attr-*    attributes / props      │
-│                          ├─ 4  d-html      innerHTML               │
-│                          ├─ 5  d-on-*      event listeners         │
-│                          ├─ 6  d-when      display toggle          │
-│                          ├─ 7  d-match/case conditional show       │
-│                          └─ 8  d-if        add / remove from DOM   │
+│                          ├─ 3  {...}       reactive text nodes     │
+│                          ├─ 4  d-attr-*    attributes / props      │
+│                          ├─ 5  d-html      innerHTML               │
+│                          ├─ 6  d-on-*      event listeners         │
+│                          ├─ 7  d-when      display toggle          │
+│                          ├─ 8  d-match/case conditional show       │
+│                          └─ 9  d-if        add / remove from DOM   │
 │                                                                    │
 │   All reactive effects are owned by a scope.                       │
 │   dispose() stops every effect and removes every listener.         │
@@ -29,7 +30,7 @@ No `eval`, no inline JS — directive attributes resolve identifiers from contex
 **Key invariants:**
 
 1. **Root-inclusive** — directives on the element passed as `root` are processed, not only descendants.
-2. **No double-bind** — `d-each` clones are marked and fully bound before the parent's subsequent passes run; the parent skips them entirely.
+2. **No double-bind** — `d-each` and `d-virtual-each` clones are marked and fully bound before the parent's subsequent passes run; the parent skips them entirely.
 3. **Safe resolve** — only signals and zero-arity functions are ever called. Functions with parameters (event handlers) are never invoked as getters.
 
 ## API Reference
@@ -251,6 +252,43 @@ Each clone's context **inherits from the parent** via the prototype chain.  Hand
   </ul>
 </div>
 ```
+
+---
+
+### Virtual list rendering `d-virtual-each`
+
+Renders only a visible window of a large list (plus overscan) using fixed item height.
+
+```html
+<div class="viewport">
+  <div
+    d-virtual-each="items"
+    d-virtual-item-height="48"
+    d-virtual-overscan="4"
+    d-key="id"
+  >
+    {title}
+  </div>
+</div>
+```
+
+#### Required attributes
+
+- `d-virtual-each`: array or signal-of-array in context
+- `d-virtual-item-height`: fixed row height in pixels
+
+#### Optional attributes
+
+- `d-virtual-overscan`: extra rows before and after visible range (default `6`)
+- `d-virtual-height`: sets parent scroll container height (`"480px"`, `"60vh"`, or context value)
+- `d-key`: stable key field (recommended)
+
+#### Behavior
+
+- Parent element is treated as the scroll container.
+- Dalila updates the rendered window on scroll and data changes.
+- `item`, `$index`, `$count`, `$first`, `$last`, `$odd`, `$even` are available in each visible clone.
+- If `d-virtual-item-height` is invalid, runtime falls back to `d-each`.
 
 ---
 

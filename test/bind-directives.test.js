@@ -15,6 +15,7 @@
  *  11  null / undefined normalisation  (text, d-html, match all render '' not "undefined")
  *  12  d-attr boolean / removal        (false/null → remove, true → empty attr)
  *  13  d-html XSS warning              (dev-mode warn on <script> / onerror / javascript:)
+ *  14  d-virtual-each                  (windowed rendering with scroll-driven updates)
  */
 
 import test   from 'node:test';
@@ -567,6 +568,73 @@ test('d-each – falls back to item.id key when d-key is omitted', async () => {
     const after = Array.from(root.querySelectorAll('li'));
     assert.equal(after[0], before[1]);
     assert.equal(after[1], before[0]);
+  });
+});
+
+test('d-virtual-each – renders only the visible window and updates on scroll', async () => {
+  await withDom(async (doc) => {
+    const items = signal(
+      Array.from({ length: 1000 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+    );
+
+    const root = el(doc, `
+      <div id="viewport">
+        <div
+          class="row"
+          d-virtual-each="items"
+          d-key="id"
+          d-virtual-item-height="20"
+          d-virtual-overscan="0"
+        >
+          {label}
+        </div>
+      </div>
+    `);
+
+    Object.defineProperty(root, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    });
+
+    bind(root, { items });
+    await tick(20);
+
+    const firstWindow = root.querySelectorAll('.row[data-dalila-internal-bound]');
+    assert.equal(firstWindow.length, 5);
+    assert.equal(firstWindow[0].textContent.trim(), 'Item 0');
+    assert.equal(firstWindow[4].textContent.trim(), 'Item 4');
+
+    root.scrollTop = 400;
+    root.dispatchEvent(new window.Event('scroll'));
+    await tick(20);
+
+    const secondWindow = root.querySelectorAll('.row[data-dalila-internal-bound]');
+    assert.equal(secondWindow.length, 5);
+    assert.equal(secondWindow[0].textContent.trim(), 'Item 20');
+    assert.equal(secondWindow[4].textContent.trim(), 'Item 24');
+  });
+});
+
+test('d-virtual-each – falls back to d-each when item height is invalid', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, `
+      <ul>
+        <li d-virtual-each="items">{item}</li>
+      </ul>
+    `);
+
+    const warns = await captureWarns(async () => {
+      bind(root, { items: ['a', 'b', 'c'] });
+      await tick(10);
+    });
+
+    const lis = root.querySelectorAll('li');
+    assert.equal(lis.length, 3);
+    assert.deepEqual(Array.from(lis).map((n) => n.textContent), ['a', 'b', 'c']);
+    assert.ok(
+      warns.some((w) => w.includes('Falling back to d-each')),
+      'must warn about invalid virtual item height and fallback'
+    );
   });
 });
 

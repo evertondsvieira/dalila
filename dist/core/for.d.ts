@@ -1,6 +1,26 @@
 interface DisposableFragment extends DocumentFragment {
     dispose(): void;
 }
+export interface VirtualRangeInput {
+    itemCount: number;
+    itemHeight: number;
+    scrollTop: number;
+    viewportHeight: number;
+    overscan?: number;
+}
+export interface VirtualRange {
+    start: number;
+    end: number;
+    topOffset: number;
+    bottomOffset: number;
+    totalHeight: number;
+}
+/**
+ * Compute the visible range for a fixed-height virtualized list.
+ *
+ * `start`/`end` use the [start, end) convention.
+ */
+export declare function computeVirtualRange(input: VirtualRangeInput): VirtualRange;
 /**
  * Low-level keyed list rendering with fine-grained reactivity.
  *
