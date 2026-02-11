@@ -1,3 +1,5 @@
+import { disposeScope, registerScope } from "./devtools.js";
+
 /**
  * A Scope is a simple lifecycle container.
  * Anything registered via `onCleanup` will run when `dispose()` is called.
@@ -100,6 +102,7 @@ export function createScope(parentOverride?: Scope | null): Scope {
       if (errors.length > 0) {
         console.error('[Dalila] scope.dispose() had cleanup errors:', errors);
       }
+      disposeScope(scope);
       for (const listener of scopeDisposeListeners) {
         try {
           listener(scope);
@@ -110,6 +113,8 @@ export function createScope(parentOverride?: Scope | null): Scope {
     },
     parent,
   };
+
+  registerScope(scope, parent);
 
   if (parent) {
     parent.onCleanup(() => scope.dispose());

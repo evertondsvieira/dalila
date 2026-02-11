@@ -9,6 +9,7 @@
 
 import { effect, createScope, withScope, isInDevMode, signal, Signal } from '../core/index.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
+import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
 
 // ============================================================================
 // Types
@@ -138,6 +139,29 @@ function warn(message: string): void {
 type EvalResult =
   | { ok: true; value: unknown }
   | { ok: false; reason: 'parse' | 'missing_identifier'; message: string; identifier?: string };
+
+function describeBindRoot(root: Element): string {
+  const explicit =
+    root.getAttribute('data-component') ||
+    root.getAttribute('data-devtools-label') ||
+    root.getAttribute('aria-label') ||
+    root.getAttribute('id');
+  if (explicit) return String(explicit);
+
+  const className = root.getAttribute('class');
+  if (className) {
+    const first = className.split(/\s+/).find(Boolean);
+    if (first) return `${root.tagName.toLowerCase()}.${first}`;
+  }
+
+  return root.tagName.toLowerCase();
+}
+
+function bindEffect(target: Element | null | undefined, fn: () => void): void {
+  withDevtoolsDomTarget(target ?? null, () => {
+    effect(fn);
+  });
+}
 
 type ExprToken =
   | { type: 'identifier'; value: string }
@@ -1171,7 +1195,7 @@ function bindTextNodeFromPlan(
 
     // Only schedule reactive updates when expression depends on reactive sources.
     if (expressionDependsOnReactiveSource(parsed.ast, ctx)) {
-      effect(() => {
+      bindEffect(node.parentElement, () => {
         applyResult(evalExpressionAst(parsed.ast, ctx));
       });
     }
@@ -1295,7 +1319,7 @@ function bindWhen(
     htmlEl.style.display = initialValue ? '' : 'none';
 
     // Then create reactive effect to keep it updated
-    effect(() => {
+    bindEffect(htmlEl, () => {
       const value = !!resolve(binding);
       htmlEl.style.display = value ? '' : 'none';
     });
@@ -1359,7 +1383,7 @@ function bindMatch(
     applyMatch();
 
     // Then create reactive effect to keep it updated
-    effect(() => {
+    bindEffect(el, () => {
       applyMatch();
     });
   }
@@ -1603,7 +1627,7 @@ function bindEach(
 
     if (isSignal(binding)) {
       // Effect owned by templateScope — no manual stop needed
-      effect(() => {
+      bindEffect(el, () => {
         const value = binding();
         renderList(Array.isArray(value) ? value : []);
       });
@@ -1663,7 +1687,7 @@ function bindIf(
     }
 
     // Then create reactive effect to keep it updated
-    effect(() => {
+    bindEffect(htmlEl, () => {
       const value = !!resolve(binding);
       if (value) {
         if (!htmlEl.parentNode) {
@@ -1707,7 +1731,7 @@ function bindHtml(
     const htmlEl = el as HTMLElement;
 
     if (isSignal(binding)) {
-      effect(() => {
+      bindEffect(htmlEl, () => {
         const v = binding();
         const html = v == null ? '' : String(v);
         if (isInDevMode() && /<script[\s>]|javascript:|onerror\s*=/i.test(html)) {
@@ -1789,7 +1813,7 @@ function bindAttrs(
       el.removeAttribute(attr.name);
 
       if (isSignal(binding)) {
-        effect(() => {
+        bindEffect(el, () => {
           applyAttr(el, attrName, binding());
         });
       } else {
@@ -1919,7 +1943,7 @@ function bindField(
 
     // Setup reactive aria-invalid based on error state
     if ('error' in form && typeof form.error === 'function') {
-      effect(() => {
+      bindEffect(htmlEl, () => {
         // Read current path from DOM attribute inside effect
         // This allows the effect to see updated paths after array reorder
         const currentPath = htmlEl.getAttribute('data-field-path') || htmlEl.getAttribute('name') || fieldPath;
@@ -1983,7 +2007,7 @@ function bindError(
     htmlEl.setAttribute('aria-live', 'polite');
 
     // Reactive error display
-    effect(() => {
+    bindEffect(htmlEl, () => {
       // Read current path from DOM attribute inside effect
       // This allows the effect to see updated paths after array reorder
       const currentPath = htmlEl.getAttribute('data-error-path') || fieldPath;
@@ -2038,7 +2062,7 @@ function bindFormError(
     htmlEl.setAttribute('aria-live', 'polite');
 
     // Reactive form error display
-    effect(() => {
+    bindEffect(htmlEl, () => {
       const errorMsg = (form as any).formError();
       if (errorMsg) {
         htmlEl.textContent = errorMsg;
@@ -2380,7 +2404,7 @@ function bindArray(
     }
 
     // Reactive rendering
-    effect(() => {
+    bindEffect(el, () => {
       renderList();
     });
 
@@ -2500,6 +2524,7 @@ export function bind(
   // Create a scope for this template binding
   const templateScope = createScope();
   const cleanups: DisposeFunction[] = [];
+  linkScopeToDom(templateScope, root, describeBindRoot(root));
 
   // Run all bindings within the template scope
   withScope(templateScope, () => {

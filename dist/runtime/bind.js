@@ -8,6 +8,7 @@
  */
 import { effect, createScope, withScope, isInDevMode, signal } from '../core/index.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
+import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -80,6 +81,26 @@ function warn(message) {
     if (isInDevMode()) {
         console.warn(`[Dalila] ${message}`);
     }
+}
+function describeBindRoot(root) {
+    const explicit = root.getAttribute('data-component') ||
+        root.getAttribute('data-devtools-label') ||
+        root.getAttribute('aria-label') ||
+        root.getAttribute('id');
+    if (explicit)
+        return String(explicit);
+    const className = root.getAttribute('class');
+    if (className) {
+        const first = className.split(/\s+/).find(Boolean);
+        if (first)
+            return `${root.tagName.toLowerCase()}.${first}`;
+    }
+    return root.tagName.toLowerCase();
+}
+function bindEffect(target, fn) {
+    withDevtoolsDomTarget(target ?? null, () => {
+        effect(fn);
+    });
 }
 const expressionCache = new Map();
 const templateInterpolationPlanCache = new Map();
@@ -964,7 +985,7 @@ function bindTextNodeFromPlan(node, plan, ctx, benchSession) {
         applyResult(evalExpressionAst(parsed.ast, ctx));
         // Only schedule reactive updates when expression depends on reactive sources.
         if (expressionDependsOnReactiveSource(parsed.ast, ctx)) {
-            effect(() => {
+            bindEffect(node.parentElement, () => {
                 applyResult(evalExpressionAst(parsed.ast, ctx));
             });
         }
@@ -1055,7 +1076,7 @@ function bindWhen(root, ctx, cleanups) {
         const initialValue = !!resolve(binding);
         htmlEl.style.display = initialValue ? '' : 'none';
         // Then create reactive effect to keep it updated
-        effect(() => {
+        bindEffect(htmlEl, () => {
             const value = !!resolve(binding);
             htmlEl.style.display = value ? '' : 'none';
         });
@@ -1107,7 +1128,7 @@ function bindMatch(root, ctx, cleanups) {
         // Apply initial state
         applyMatch();
         // Then create reactive effect to keep it updated
-        effect(() => {
+        bindEffect(el, () => {
             applyMatch();
         });
     }
@@ -1321,7 +1342,7 @@ function bindEach(root, ctx, cleanups) {
         }
         if (isSignal(binding)) {
             // Effect owned by templateScope — no manual stop needed
-            effect(() => {
+            bindEffect(el, () => {
                 const value = binding();
                 renderList(Array.isArray(value) ? value : []);
             });
@@ -1373,7 +1394,7 @@ function bindIf(root, ctx, cleanups) {
             comment.parentNode?.insertBefore(htmlEl, comment);
         }
         // Then create reactive effect to keep it updated
-        effect(() => {
+        bindEffect(htmlEl, () => {
             const value = !!resolve(binding);
             if (value) {
                 if (!htmlEl.parentNode) {
@@ -1409,7 +1430,7 @@ function bindHtml(root, ctx, cleanups) {
         }
         const htmlEl = el;
         if (isSignal(binding)) {
-            effect(() => {
+            bindEffect(htmlEl, () => {
                 const v = binding();
                 const html = v == null ? '' : String(v);
                 if (isInDevMode() && /<script[\s>]|javascript:|onerror\s*=/i.test(html)) {
@@ -1482,7 +1503,7 @@ function bindAttrs(root, ctx, cleanups) {
             }
             el.removeAttribute(attr.name);
             if (isSignal(binding)) {
-                effect(() => {
+                bindEffect(el, () => {
                     applyAttr(el, attrName, binding());
                 });
             }
@@ -1589,7 +1610,7 @@ function bindField(root, ctx, cleanups) {
         }
         // Setup reactive aria-invalid based on error state
         if ('error' in form && typeof form.error === 'function') {
-            effect(() => {
+            bindEffect(htmlEl, () => {
                 // Read current path from DOM attribute inside effect
                 // This allows the effect to see updated paths after array reorder
                 const currentPath = htmlEl.getAttribute('data-field-path') || htmlEl.getAttribute('name') || fieldPath;
@@ -1644,7 +1665,7 @@ function bindError(root, ctx, cleanups) {
         htmlEl.setAttribute('role', 'alert');
         htmlEl.setAttribute('aria-live', 'polite');
         // Reactive error display
-        effect(() => {
+        bindEffect(htmlEl, () => {
             // Read current path from DOM attribute inside effect
             // This allows the effect to see updated paths after array reorder
             const currentPath = htmlEl.getAttribute('data-error-path') || fieldPath;
@@ -1689,7 +1710,7 @@ function bindFormError(root, ctx, cleanups) {
         htmlEl.setAttribute('role', 'alert');
         htmlEl.setAttribute('aria-live', 'polite');
         // Reactive form error display
-        effect(() => {
+        bindEffect(htmlEl, () => {
             const errorMsg = form.formError();
             if (errorMsg) {
                 htmlEl.textContent = errorMsg;
@@ -1978,7 +1999,7 @@ function bindArray(root, ctx, cleanups) {
             }
         }
         // Reactive rendering
-        effect(() => {
+        bindEffect(el, () => {
             renderList();
         });
         // Bind array operation buttons
@@ -2080,6 +2101,7 @@ export function bind(root, ctx, options = {}) {
     // Create a scope for this template binding
     const templateScope = createScope();
     const cleanups = [];
+    linkScopeToDom(templateScope, root, describeBindRoot(root));
     // Run all bindings within the template scope
     withScope(templateScope, () => {
         // 1. Form setup — must run very early to register form instances

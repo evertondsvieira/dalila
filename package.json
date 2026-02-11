@@ -103,7 +103,9 @@
     "test": "npm run build && node --test",
     "test:e2e": "npm run build && playwright test",
     "test:watch": "jest --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "devtools:firefox:run": "npx web-ext run --source-dir devtools-extension --devtools",
+    "devtools:firefox:build": "npx web-ext build --source-dir devtools-extension --artifacts-dir devtools-extension/dist --overwrite-dest"
   },
   "keywords": [
     "framework",

@@ -91,6 +91,7 @@ npm install dalila
 
 14. [Scheduler](./core/scheduler.md) — Batching and DOM read/write coordination
 15. [Dev Mode](./core/dev.md) — Development helpers and warnings
+16. [Devtools Extension](../devtools-extension/README.md) — Browser panel to inspect signals/effects/scopes graph
 
 ## Comparison with Other Frameworks
 

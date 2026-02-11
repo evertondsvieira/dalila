@@ -1,5 +1,17 @@
 import { getCurrentScope, Scope, withScope } from './scope.js';
 import { scheduleMicrotask, isBatching, queueInBatch } from './scheduler.js';
+import {
+  aliasEffectToNode,
+  linkSubscriberSetToSignal,
+  registerEffect,
+  registerSignal,
+  trackDependency,
+  trackEffectDispose,
+  trackEffectRun,
+  trackSignalRead,
+  trackSignalWrite,
+  untrackDependencyBySet,
+} from './devtools.js';
 
 /**
  * Optional global error handler for reactive execution.
@@ -145,10 +157,14 @@ export interface Signal<T> {
  * - signals do not "own" subscriber lifetimes; they only maintain the set
  */
 export function signal<T>(initialValue: T): Signal<T> {
+  const owningScope = getCurrentScope();
   let value = initialValue;
   const subscribers = new Set<EffectFn>();
+  let signalRef: object;
 
   const read = () => {
+    trackSignalRead(signalRef);
+
     if (activeEffect && !activeEffect.disposed) {
       // Scope-aware subscription guard (best effort):
       // - if the active effect is not scoped, allow subscription
@@ -157,6 +173,7 @@ export function signal<T>(initialValue: T): Signal<T> {
         if (!subscribers.has(activeEffect)) {
           subscribers.add(activeEffect);
           (activeEffect.deps ??= new Set()).add(subscribers);
+          trackDependency(signalRef, activeEffect);
         }
       } else {
         const current = getCurrentScope();
@@ -164,6 +181,7 @@ export function signal<T>(initialValue: T): Signal<T> {
           if (!subscribers.has(activeEffect)) {
             subscribers.add(activeEffect);
             (activeEffect.deps ??= new Set()).add(subscribers);
+            trackDependency(signalRef, activeEffect);
           }
         }
       }
@@ -182,6 +200,7 @@ export function signal<T>(initialValue: T): Signal<T> {
 
     // State updates are immediate even inside `batch()`.
     value = nextValue;
+    trackSignalWrite(signalRef, nextValue);
 
     // Notify now, or defer into the batch queue.
     if (isBatching()) queueInBatch(notify);
@@ -215,6 +234,13 @@ export function signal<T>(initialValue: T): Signal<T> {
     };
   };
 
+  signalRef = read as unknown as object;
+  registerSignal(signalRef, 'signal', {
+    scopeRef: owningScope,
+    initialValue,
+  });
+  linkSubscriberSetToSignal(subscribers, signalRef);
+
   return read as Signal<T>;
 }
 
@@ -237,7 +263,10 @@ export function effect(fn: () => void): () => void {
 
   const cleanupDeps = () => {
     if (!run.deps) return;
-    for (const depSet of run.deps) depSet.delete(run);
+    for (const depSet of run.deps) {
+      depSet.delete(run);
+      untrackDependencyBySet(depSet, run);
+    }
     run.deps.clear();
   };
 
@@ -246,10 +275,12 @@ export function effect(fn: () => void): () => void {
     run.disposed = true;
     cleanupDeps();
     pendingEffects.delete(run);
+    trackEffectDispose(run);
   };
 
   const run: EffectFn = (() => {
     if (run.disposed) return;
+    trackEffectRun(run);
 
     // Dynamic deps: unsubscribe from previous reads.
     cleanupDeps();
@@ -270,6 +301,7 @@ export function effect(fn: () => void): () => void {
     }
   }) as EffectFn;
 
+  registerEffect(run, 'effect', owningScope);
   scheduleEffect(run);
   if (owningScope) owningScope.onCleanup(dispose);
 
@@ -292,10 +324,12 @@ export function effect(fn: () => void): () => void {
  * - other effects can subscribe to the computed like a normal signal
  */
 export function computed<T>(fn: () => T): Signal<T> {
+  const owningScope = getCurrentScope();
   let value: T;
   let dirty = true;
 
   const subscribers = new Set<EffectFn>();
+  let signalRef: object;
 
   // Dep sets that `markDirty` is currently registered in (so we can unsubscribe on recompute).
   let trackedDeps = new Set<Set<EffectFn>>();
@@ -314,18 +348,24 @@ export function computed<T>(fn: () => T): Signal<T> {
   markDirty.sync = true;
 
   const cleanupDeps = () => {
-    for (const depSet of trackedDeps) depSet.delete(markDirty);
+    for (const depSet of trackedDeps) {
+      depSet.delete(markDirty);
+      untrackDependencyBySet(depSet, markDirty);
+    }
     trackedDeps.clear();
     if (markDirty.deps) markDirty.deps.clear();
   };
 
   const read = (): T => {
+    trackSignalRead(signalRef);
+
     // Allow effects to subscribe to this computed (same rules as signal()).
     if (activeEffect && !activeEffect.disposed) {
       if (!activeScope) {
         if (!subscribers.has(activeEffect)) {
           subscribers.add(activeEffect);
           (activeEffect.deps ??= new Set()).add(subscribers);
+          trackDependency(signalRef, activeEffect);
         }
       } else {
         const current = getCurrentScope();
@@ -333,6 +373,7 @@ export function computed<T>(fn: () => T): Signal<T> {
           if (!subscribers.has(activeEffect)) {
             subscribers.add(activeEffect);
             (activeEffect.deps ??= new Set()).add(subscribers);
+            trackDependency(signalRef, activeEffect);
           }
         }
       }
@@ -419,6 +460,14 @@ export function computed<T>(fn: () => T): Signal<T> {
     };
   };
 
+  signalRef = read as unknown as object;
+  registerSignal(signalRef, 'computed', {
+    scopeRef: owningScope,
+  });
+  linkSubscriberSetToSignal(subscribers, signalRef);
+  aliasEffectToNode(markDirty, signalRef);
+  registerEffect(markDirty, 'effect', owningScope);
+
   return read as Signal<T>;
 }
 
@@ -436,7 +485,10 @@ export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
 
   const cleanupDeps = () => {
     if (!run.deps) return;
-    for (const depSet of run.deps) depSet.delete(run);
+    for (const depSet of run.deps) {
+      depSet.delete(run);
+      untrackDependencyBySet(depSet, run);
+    }
     run.deps.clear();
   };
 
@@ -449,10 +501,12 @@ export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
 
     cleanupDeps();
     pendingEffects.delete(run);
+    trackEffectDispose(run);
   };
 
   const run: EffectFn = (() => {
     if (run.disposed) return;
+    trackEffectRun(run);
 
     // Abort previous run (if any), then create a new controller for this run.
     controller?.abort();
@@ -476,6 +530,7 @@ export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
     }
   }) as EffectFn;
 
+  registerEffect(run, 'effectAsync', owningScope);
   scheduleEffect(run);
   if (owningScope) owningScope.onCleanup(dispose);
 

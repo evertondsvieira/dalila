@@ -1,3 +1,4 @@
+import { disposeScope, registerScope } from "./devtools.js";
 /** Tracks disposed scopes without mutating the public interface. */
 const disposedScopes = new WeakSet();
 const scopeCreateListeners = new Set();
@@ -73,6 +74,7 @@ export function createScope(parentOverride) {
             if (errors.length > 0) {
                 console.error('[Dalila] scope.dispose() had cleanup errors:', errors);
             }
+            disposeScope(scope);
             for (const listener of scopeDisposeListeners) {
                 try {
                     listener(scope);
@@ -84,6 +86,7 @@ export function createScope(parentOverride) {
         },
         parent,
     };
+    registerScope(scope, parent);
     if (parent) {
         parent.onCleanup(() => scope.dispose());
     }

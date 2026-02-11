@@ -94,6 +94,12 @@ bind(document.getElementById('app')!, ctx);
 - [Scheduler](./docs/core/scheduler.md) — Batching and coordination
 - [Keys](./docs/core/key.md) — Cache key encoding
 - [Dev Mode](./docs/core/dev.md) — Warnings and helpers
+- [Devtools Extension](./devtools-extension/README.md) — Browser panel for reactive graph and scopes
+
+Firefox extension workflows:
+
+- `npm run devtools:firefox:run` — launch Firefox with extension loaded for dev
+- `npm run devtools:firefox:build` — package extension artifact for submission/signing
 
 ## Features
 

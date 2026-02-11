@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dalila Devtools Panel</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Reactive Inspector</p>
+          <h1>Dalila Devtools</h1>
+        </div>
+        <div class="controls">
+          <button id="enable-devtools" class="btn">Enable Bridge</button>
+          <button id="refresh" class="btn btn-strong">Refresh</button>
+          <label class="toggle">
+            <input id="autorefresh" type="checkbox" checked />
+            <span>Live</span>
+          </label>
+          <label class="toggle">
+            <input id="highlight-updates" type="checkbox" checked />
+            <span>Highlight updates</span>
+          </label>
+        </div>
+      </header>
+
+      <section id="status" class="status"></section>
+
+      <section class="stats-grid" id="stats"></section>
+
+      <section class="layout-grid">
+        <article class="panel panel-left">
+          <div class="panel-head">
+            <h2>Nodes</h2>
+            <input id="search" type="search" placeholder="Filter by type, id or label" />
+          </div>
+          <div id="nodes" class="list"></div>
+        </article>
+
+        <article class="panel panel-center">
+          <div class="panel-head">
+            <h2>Dependencies</h2>
+          </div>
+          <div id="edges" class="list"></div>
+        </article>
+
+        <article class="panel panel-right">
+          <div class="panel-head">
+            <h2>Inspector</h2>
+          </div>
+          <div id="inspector" class="inspector empty">Select a node to inspect details.</div>
+        </article>
+      </section>
+    </div>
+
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>
