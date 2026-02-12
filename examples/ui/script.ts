@@ -59,7 +59,7 @@ mountUI(document.body, {
       ],
     },
   },
-  dropzones: { dropzone: dz },
-  calendars: { calendar: cal },
+  dropzones: { dz },
+  calendars: { cal },
   popovers: { popover: { api: pop } },
 });

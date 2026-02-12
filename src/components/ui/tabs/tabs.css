@@ -22,7 +22,10 @@
   border-bottom: 2px solid transparent;
   cursor: pointer;
   white-space: nowrap;
-  transition: all var(--d-duration-fast) ease;
+  transition:
+    color var(--d-duration-fast) var(--d-ease),
+    border-color var(--d-duration-fast) var(--d-ease),
+    background var(--d-duration-fast) var(--d-ease);
   margin-bottom: -1px;
 }
 
@@ -71,4 +74,5 @@
   background: var(--d-surface-card);
   color: var(--d-text-primary);
   border-color: var(--d-border-color);
+  box-shadow: var(--d-shadow-xs);
 }

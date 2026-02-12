@@ -17,11 +17,13 @@
   width: 1.125rem;
   height: 1.125rem;
   flex-shrink: 0;
-  background: var(--d-surface-page);
+  background: var(--d-surface-card);
   border: 2px solid var(--d-border-color);
   border-radius: 50%;
   cursor: pointer;
-  transition: all var(--d-duration-fast) ease;
+  transition:
+    border-color var(--d-duration-fast) var(--d-ease),
+    border-width var(--d-duration-fast) var(--d-ease);
 }
 
 .d-radio input:checked {
@@ -31,7 +33,7 @@
 
 .d-radio input:focus-visible {
   outline: none;
-  box-shadow: var(--d-shadow-glow);
+  box-shadow: 0 0 0 2px var(--d-surface-page), 0 0 0 4px var(--d-accent);
 }
 
 .d-radio input:disabled {

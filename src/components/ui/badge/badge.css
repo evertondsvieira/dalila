@@ -5,11 +5,11 @@
   align-items: center;
   gap: var(--d-space-1);
 
-  padding: 0.2rem 0.6rem;
+  padding: 2px 10px;
 
   font-family: var(--d-font-sans);
-  font-size: 0.7rem;
-  font-weight: var(--d-font-semibold);
+  font-size: var(--d-text-xs);
+  font-weight: var(--d-font-medium);
   line-height: 1.5;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -18,17 +18,17 @@
 
   background: var(--d-surface-raised);
   border: 1px solid var(--d-border-color);
-  border-radius: 4px;
+  border-radius: var(--d-radius-full);
 }
 
 .d-badge-primary {
-  color: #ffffff;
+  color: var(--d-text-inverse);
   background: var(--d-accent);
   border-color: var(--d-accent);
 }
 
 .d-badge-accent {
-  color: #ffffff;
+  color: var(--d-text-inverse);
   background: var(--d-accent-500);
   border-color: var(--d-accent-500);
 }
@@ -51,12 +51,18 @@
   border-color: transparent;
 }
 
+.d-badge-info {
+  color: var(--d-info);
+  background: var(--d-info-light);
+  border-color: transparent;
+}
+
 .d-badge-outline {
   background: transparent;
 }
 
 .d-badge-solid {
-  color: #ffffff;
+  color: var(--d-text-inverse);
   background: var(--d-gradient-brand);
   border-color: transparent;
 }

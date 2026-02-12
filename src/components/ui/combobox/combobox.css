@@ -21,10 +21,10 @@
   height: 1.5rem;
   background: none;
   border: none;
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
   cursor: pointer;
   border-radius: var(--d-radius-sm);
-  transition: color var(--d-duration-fast) ease;
+  transition: color var(--d-duration-fast) var(--d-ease);
 }
 
 .d-combobox-trigger:hover {
@@ -40,16 +40,18 @@
   max-height: 12rem;
   overflow-y: auto;
   padding: var(--d-space-1) 0;
-  background: var(--d-surface-card);
+  background: var(--d-surface-raised);
   border: 1px solid var(--d-border-color);
-  border-radius: var(--d-radius-md);
-  box-shadow: var(--d-shadow-md);
+  border-radius: var(--d-radius-sm);
+  box-shadow: var(--d-shadow-sm);
   list-style: none;
   margin: 0;
 
   opacity: 0;
   visibility: hidden;
-  transition: all var(--d-duration-fast) ease;
+  transition:
+    opacity var(--d-duration-fast) var(--d-ease),
+    visibility var(--d-duration-fast) var(--d-ease);
 }
 
 .d-combobox.open .d-combobox-list {
@@ -58,17 +60,23 @@
 }
 
 .d-combobox-option {
-  padding: var(--d-space-2) var(--d-space-3);
+  padding: var(--d-space-1) var(--d-space-3);
   font-family: var(--d-font-sans);
   font-size: var(--d-text-sm);
   color: var(--d-text-primary);
   cursor: pointer;
-  transition: background var(--d-duration-fast) ease;
+  border-radius: 0;
+  transition: background var(--d-duration-fast) var(--d-ease);
 }
 
 .d-combobox-option:hover,
 .d-combobox-option.highlighted {
-  background: var(--d-surface-raised);
+  background: var(--d-border-light);
+}
+
+.d-combobox-option:focus-visible {
+  outline: none;
+  background: var(--d-border-light);
 }
 
 .d-combobox-option.selected {
@@ -80,6 +88,6 @@
   padding: var(--d-space-3);
   font-family: var(--d-font-sans);
   font-size: var(--d-text-sm);
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
   text-align: center;
 }

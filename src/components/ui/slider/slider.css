@@ -16,10 +16,10 @@
   width: 1.125rem;
   height: 1.125rem;
   background: var(--d-accent);
-  border: 2px solid #fff;
+  border: 2px solid var(--d-surface-card);
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--d-shadow-xs);
   transition: transform var(--d-duration-fast) var(--d-ease-bounce);
 }
 
@@ -27,10 +27,10 @@
   width: 1.125rem;
   height: 1.125rem;
   background: var(--d-accent);
-  border: 2px solid #fff;
+  border: 2px solid var(--d-surface-card);
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--d-shadow-xs);
   transition: transform var(--d-duration-fast) var(--d-ease-bounce);
 }
 
@@ -43,7 +43,7 @@
 }
 
 .d-slider:focus-visible {
-  box-shadow: var(--d-shadow-glow);
+  box-shadow: 0 0 0 2px var(--d-surface-page), 0 0 0 4px var(--d-accent);
 }
 
 .d-slider:disabled {

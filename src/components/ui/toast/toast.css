@@ -30,9 +30,9 @@
   gap: var(--d-space-3);
   padding: var(--d-space-4) var(--d-space-4) var(--d-space-4) var(--d-space-5);
   background: var(--d-surface-card);
-  border: 1px solid var(--d-border-color);
+  border: 1px solid var(--d-border-light);
   border-radius: var(--d-radius-lg);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--d-shadow-md);
   font-family: var(--d-font-sans);
   animation: d-toast-in var(--d-duration-slow) var(--d-ease) forwards;
 }
@@ -72,29 +72,41 @@
   color: var(--d-text-muted);
   cursor: pointer;
   border-radius: var(--d-radius-sm);
-  transition: color var(--d-duration-fast) ease;
+  transition:
+    color var(--d-duration-fast) var(--d-ease),
+    background var(--d-duration-fast) var(--d-ease);
 }
 
 .d-toast-close:hover {
   color: var(--d-text-primary);
+  background: var(--d-surface-raised);
+}
+
+.d-toast-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--d-accent);
 }
 
 .d-toast-success {
   --_tone: var(--d-success);
   --_tone-bg: var(--d-success-light);
+  border-left: 3px solid var(--d-success);
 }
 
 .d-toast-error {
   --_tone: var(--d-error);
   --_tone-bg: var(--d-error-light);
+  border-left: 3px solid var(--d-error);
 }
 
 .d-toast-warning {
   --_tone: var(--d-warning);
   --_tone-bg: var(--d-warning-light);
+  border-left: 3px solid var(--d-warning);
 }
 
 .d-toast-info {
   --_tone: var(--d-info);
   --_tone-bg: var(--d-info-light);
+  border-left: 3px solid var(--d-info);
 }

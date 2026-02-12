@@ -45,11 +45,18 @@
 
 .d-card-accent {
   border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--d-shadow-sm);
 }
 
-[data-theme="dark"] .d-card-accent {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+.d-card-accent::before {
+  content: '';
+  position: absolute;
+  top: var(--d-space-3);
+  bottom: var(--d-space-3);
+  left: 0;
+  width: 3px;
+  background: var(--d-accent);
+  border-radius: 0 var(--d-radius-full) var(--d-radius-full) 0;
 }
 
 .d-card-section {
@@ -62,20 +69,24 @@
 }
 
 .d-card-hover {
-  transition: border-color var(--d-duration-fast) ease;
+  transition:
+    border-color var(--d-duration-fast) var(--d-ease),
+    box-shadow var(--d-duration-fast) var(--d-ease);
   cursor: pointer;
 }
 
 .d-card-hover:hover {
-  border-color: #404040;
+  border-color: var(--d-slate-300);
+  box-shadow: var(--d-shadow-sm);
 }
 
-[data-theme="light"] .d-card-hover:hover {
-  border-color: #c9c9c9;
+[data-theme="dark"] .d-card-hover:hover {
+  border-color: var(--d-slate-600);
 }
 
 .d-card-flat {
   background: var(--d-surface-raised);
+  border-color: transparent;
 }
 
 .d-card-header + .d-card-body {

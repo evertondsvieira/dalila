@@ -69,6 +69,10 @@
   overflow-y: auto;
 }
 
+.d-dialog-body p {
+  margin: 0;
+}
+
 .d-dialog-footer {
   display: flex;
   justify-content: flex-end;
@@ -92,12 +96,19 @@
   border: 1px solid transparent;
   border-radius: var(--d-radius-sm);
   cursor: pointer;
-  transition: color var(--d-duration-fast) ease, border-color var(--d-duration-fast) ease;
+  transition:
+    color var(--d-duration-fast) var(--d-ease),
+    border-color var(--d-duration-fast) var(--d-ease);
 }
 
 .d-dialog-close:hover {
   color: var(--d-text-primary);
-  border-color: var(--d-border-color);
+  background: var(--d-surface-raised);
+}
+
+.d-dialog-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--d-accent);
 }
 
 .d-dialog-sm { max-width: min(22rem, calc(100vw - var(--d-space-8))); }

@@ -7,7 +7,7 @@
   gap: var(--d-space-1);
   font-family: var(--d-font-sans);
   font-size: var(--d-text-sm);
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
   list-style: none;
   padding: 0;
   margin: 0;
@@ -21,14 +21,14 @@
 
 .d-breadcrumb-item + .d-breadcrumb-item::before {
   content: "/";
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
   margin: 0 var(--d-space-1);
 }
 
 .d-breadcrumb-item a {
   color: var(--d-text-muted);
   text-decoration: none;
-  transition: color var(--d-duration-fast) ease;
+  transition: color var(--d-duration-fast) var(--d-ease);
 }
 
 .d-breadcrumb-item a:hover {

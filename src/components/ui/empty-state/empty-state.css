@@ -12,7 +12,7 @@
 
 .d-empty-icon {
   font-size: 3rem;
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
   margin-bottom: var(--d-space-4);
   opacity: 0.5;
 }
@@ -26,7 +26,7 @@
 
 .d-empty-text {
   font-size: var(--d-text-sm);
-  color: var(--d-text-muted);
+  color: var(--d-text-secondary);
   max-width: 24rem;
   margin: 0 0 var(--d-space-6);
   line-height: var(--d-leading);

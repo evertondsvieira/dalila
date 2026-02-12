@@ -18,7 +18,7 @@
   font-weight: var(--d-font-semibold);
   color: var(--d-text-primary);
   padding-bottom: var(--d-space-2);
-  border-bottom: 1px solid var(--d-border-color);
+  border-bottom: 1px solid var(--d-border-light);
   margin: 0;
 }
 

@@ -29,17 +29,24 @@
   width: 2rem;
   height: 2rem;
   background: none;
-  border: 1px solid var(--d-border-color);
+  border: 1px solid transparent;
   border-radius: var(--d-radius-sm);
   color: var(--d-text-muted);
   cursor: pointer;
   font-size: var(--d-text-sm);
-  transition: all var(--d-duration-fast) ease;
+  transition:
+    background var(--d-duration-fast) var(--d-ease),
+    color var(--d-duration-fast) var(--d-ease);
 }
 
 .d-calendar-nav:hover {
   background: var(--d-surface-raised);
   color: var(--d-text-primary);
+}
+
+.d-calendar-nav:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--d-accent);
 }
 
 .d-calendar-grid {
@@ -52,7 +59,7 @@
 .d-calendar-dow {
   font-size: var(--d-text-xs);
   font-weight: var(--d-font-medium);
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
   padding: var(--d-space-2) 0;
 }
 
@@ -68,11 +75,18 @@
   border: none;
   border-radius: var(--d-radius-sm);
   cursor: pointer;
-  transition: all var(--d-duration-fast) ease;
+  transition:
+    background var(--d-duration-fast) var(--d-ease),
+    color var(--d-duration-fast) var(--d-ease);
 }
 
 .d-calendar-day:hover {
   background: var(--d-surface-raised);
+}
+
+.d-calendar-day:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--d-accent);
 }
 
 .d-calendar-day.today {
@@ -82,11 +96,11 @@
 
 .d-calendar-day.selected {
   background: var(--d-accent);
-  color: #fff;
+  color: var(--d-text-inverse);
 }
 
 .d-calendar-day.other-month {
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
   opacity: 0.4;
 }
 

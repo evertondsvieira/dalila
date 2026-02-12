@@ -40,7 +40,7 @@
 .d-link {
   color: var(--d-accent);
   text-decoration: none;
-  transition: color var(--d-duration-fast) ease;
+  transition: color var(--d-duration-fast) var(--d-ease);
 }
 
 .d-link:hover {

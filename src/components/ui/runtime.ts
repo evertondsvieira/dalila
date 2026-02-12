@@ -455,7 +455,8 @@ export function mountUI(root: Element, options: MountUIOptions): () => void {
 
     // Attach drawers
     for (const [key, drawer] of Object.entries(options.drawers ?? {})) {
-      const el = findByUI(mountedRoot, key, "d-drawer");
+      const fallbackTag = drawer.side() === "bottom" ? "d-sheet" : "d-drawer";
+      const el = findByUI(mountedRoot, key, fallbackTag);
       if (el) drawer._attachTo(el as HTMLDialogElement);
     }
 

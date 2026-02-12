@@ -2,7 +2,7 @@
 
 .d-collapsible {
   border: 1px solid var(--d-border-color);
-  border-radius: var(--d-radius-md);
+  border-radius: var(--d-radius-lg);
   overflow: hidden;
 }
 
@@ -19,7 +19,7 @@
   cursor: pointer;
   list-style: none;
   user-select: none;
-  transition: background var(--d-duration-fast) ease;
+  transition: background var(--d-duration-fast) var(--d-ease);
 }
 
 .d-collapsible > summary::-webkit-details-marker {
@@ -31,13 +31,19 @@
   background: var(--d-surface-raised);
 }
 
+.d-collapsible > summary:focus-visible,
+.d-collapsible-trigger:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--d-accent);
+}
+
 .d-collapsible > summary::after,
 .d-collapsible-trigger::after {
   content: "";
   width: 0.4rem;
   height: 0.4rem;
-  border-right: 2px solid var(--d-text-muted);
-  border-bottom: 2px solid var(--d-text-muted);
+  border-right: 2px solid var(--d-text-tertiary);
+  border-bottom: 2px solid var(--d-text-tertiary);
   transform: rotate(45deg);
   transition: transform var(--d-duration) var(--d-ease);
   flex-shrink: 0;

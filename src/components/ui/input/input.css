@@ -15,7 +15,7 @@
 
 .d-field-hint {
   font-size: var(--d-text-xs);
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
 }
 
 .d-field-error {
@@ -36,16 +36,18 @@
   color: var(--d-text-primary);
   line-height: var(--d-leading);
 
-  background: var(--d-surface-page);
+  background: var(--d-surface-card);
   border: 1px solid var(--d-border-color);
   border-radius: var(--d-radius-md);
 
-  transition: border-color var(--d-duration-fast) ease, box-shadow var(--d-duration-fast) ease;
+  transition:
+    border-color var(--d-duration-fast) var(--d-ease),
+    box-shadow var(--d-duration-fast) var(--d-ease);
 }
 
 .d-input::placeholder,
 .d-textarea::placeholder {
-  color: var(--d-text-muted);
+  color: var(--d-text-tertiary);
 }
 
 .d-input:focus,
@@ -53,7 +55,7 @@
 .d-select:focus {
   outline: none;
   border-color: var(--d-accent);
-  box-shadow: none;
+  box-shadow: 0 0 0 3px var(--d-ring);
 }
 
 .d-input[aria-invalid="true"],
@@ -71,7 +73,7 @@
 .d-input-error:focus,
 .d-textarea-error:focus,
 .d-select-error:focus {
-  box-shadow: none;
+  box-shadow: 0 0 0 3px var(--d-error-light);
 }
 
 .d-input:disabled,
@@ -92,11 +94,28 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath stroke='%23737373' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right var(--d-space-3) center;
+  background-size: 0.75rem 0.75rem;
   padding-right: var(--d-space-8);
+  cursor: pointer;
 }
 
 [data-theme="light"] .d-select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+}
+
+.d-select option {
+  background: var(--d-surface-card);
+  color: var(--d-text-primary);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-normal);
+  padding: var(--d-space-1) var(--d-space-3);
+}
+
+.d-select option:checked {
+  color: var(--d-accent);
+  font-weight: var(--d-font-medium);
+  background: var(--d-surface-raised);
 }
 
 .d-input-sm {

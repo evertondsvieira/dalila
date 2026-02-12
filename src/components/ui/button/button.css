@@ -17,19 +17,24 @@
   color: var(--d-text-primary);
   text-decoration: none;
 
-  background: var(--d-surface-raised);
+  background: var(--d-surface-card);
   border: 1px solid var(--d-border-color);
   border-radius: var(--d-radius-md);
 
   cursor: pointer;
   user-select: none;
-  transition: all var(--d-duration-fast) ease;
+  transition:
+    background var(--d-duration-fast) var(--d-ease),
+    border-color var(--d-duration-fast) var(--d-ease),
+    color var(--d-duration-fast) var(--d-ease),
+    box-shadow var(--d-duration-fast) var(--d-ease),
+    transform var(--d-duration-fast) var(--d-ease);
 }
 
 .d-btn:hover {
-  background: var(--d-accent);
-  border-color: var(--d-accent);
-  color: #fff;
+  background: var(--d-surface-raised);
+  border-color: var(--d-border-color);
+  color: var(--d-text-primary);
 }
 
 .d-btn:active {
@@ -38,7 +43,7 @@
 
 .d-btn:focus-visible {
   outline: none;
-  box-shadow: var(--d-shadow-glow);
+  box-shadow: 0 0 0 2px var(--d-surface-page), 0 0 0 4px var(--d-accent);
 }
 
 .d-btn:disabled,
@@ -48,7 +53,7 @@
 }
 
 .d-btn-primary {
-  color: #ffffff;
+  color: var(--d-text-inverse);
   background: var(--d-accent);
   border-color: var(--d-accent);
 }
@@ -56,10 +61,11 @@
 .d-btn-primary:hover {
   background: var(--d-accent-hover);
   border-color: var(--d-accent-hover);
+  color: var(--d-text-inverse);
 }
 
 .d-btn-accent {
-  color: #ffffff;
+  color: var(--d-text-inverse);
   background: var(--d-accent-500);
   border-color: var(--d-accent-500);
 }
@@ -67,6 +73,7 @@
 .d-btn-accent:hover {
   background: var(--d-accent-600);
   border-color: var(--d-accent-600);
+  color: var(--d-text-inverse);
 }
 
 .d-btn-ghost {
@@ -76,19 +83,21 @@
 
 .d-btn-ghost:hover {
   background: var(--d-surface-raised);
-  border-color: var(--d-border-color);
+  border-color: transparent;
   color: var(--d-text-primary);
 }
 
 .d-btn-danger {
-  color: #ffffff;
+  color: var(--d-text-inverse);
   background: var(--d-error);
   border-color: var(--d-error);
 }
 
 .d-btn-danger:hover {
-  background: #b91c1c;
-  border-color: #b91c1c;
+  background: var(--d-error);
+  border-color: var(--d-error);
+  filter: brightness(0.9);
+  color: var(--d-text-inverse);
 }
 
 .d-btn-sm {

@@ -11,15 +11,16 @@
   margin: 0;
   border: none;
   padding: 0;
-  max-height: 100vh;
+  max-width: none;
+  max-height: none;
   height: 100%;
+  width: min(24rem, 85vw);
   background: var(--d-surface-card);
   color: var(--d-text-primary);
   box-shadow: var(--d-shadow-lg);
   overflow: hidden;
 
   inset: 0 0 0 auto;
-  width: min(24rem, 85vw);
   border-left: 1px solid var(--d-border-color);
 
   opacity: 0;
@@ -86,6 +87,14 @@
   padding: var(--d-space-6);
   overflow-y: auto;
   flex: 1;
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  color: var(--d-text-secondary);
+  line-height: var(--d-leading);
+}
+
+.d-drawer-body p {
+  margin: 0;
 }
 
 .d-drawer-footer {

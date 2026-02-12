@@ -25,11 +25,13 @@
   width: 2.75rem;
   height: 1.5rem;
 
-  background: var(--d-surface-raised);
+  background: var(--d-border-color);
   border: 1px solid var(--d-border-color);
   border-radius: var(--d-radius-full);
 
-  transition: background var(--d-duration-fast) ease, border-color var(--d-duration-fast) ease;
+  transition:
+    background var(--d-duration-fast) var(--d-ease),
+    border-color var(--d-duration-fast) var(--d-ease);
 }
 
 .d-toggle-track::after {
@@ -40,13 +42,12 @@
   width: 1.125rem;
   height: 1.125rem;
 
-  background: #ffffff;
+  background: var(--d-surface-card);
   border-radius: 50%;
-  transition: transform var(--d-duration) var(--d-ease-bounce);
-}
-
-[data-theme="light"] .d-toggle-track::after {
-  background: #0a0a0a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition:
+    transform var(--d-duration) var(--d-ease-bounce),
+    background var(--d-duration-fast) var(--d-ease);
 }
 
 .d-toggle input:checked + .d-toggle-track {
@@ -56,11 +57,12 @@
 
 .d-toggle input:checked + .d-toggle-track::after {
   transform: translateX(1.25rem);
+  background: var(--d-text-inverse);
 }
 
 .d-toggle input:focus-visible + .d-toggle-track {
   outline: none;
-  box-shadow: var(--d-shadow-glow);
+  box-shadow: 0 0 0 2px var(--d-surface-page), 0 0 0 4px var(--d-accent);
 }
 
 .d-toggle input:disabled + .d-toggle-track {
