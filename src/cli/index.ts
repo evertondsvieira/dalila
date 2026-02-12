@@ -24,15 +24,18 @@ Usage:
   dalila routes init                  Initialize app and generate routes outputs
   dalila routes watch [options]       Watch routes and regenerate outputs on changes
   dalila routes --help                Show routes command help
+  dalila check [path] [--strict]     Static analysis of HTML templates against loaders
   dalila help                         Show this help message
 
 Options:
   --output <path>     Output file (default: ./routes.generated.ts)
 
 Examples:
-  dalila routes generate
-  dalila routes generate --output src/routes.generated.ts
-  dalila routes init
+  npx dalila routes generate
+  npx dalila routes generate --output src/routes.generated.ts
+  npx dalila routes init
+  npx dalila check
+  npx dalila check src/app --strict
 `);
 }
 
@@ -50,10 +53,34 @@ Options:
   --output <path>     Output file (default: ./routes.generated.ts)
 
 Examples:
-  dalila routes generate
-  dalila routes generate --output src/routes.generated.ts
-  dalila routes watch
-  dalila routes init
+  npx dalila routes generate
+  npx dalila routes generate --output src/routes.generated.ts
+  npx dalila routes watch
+  npx dalila routes init
+`);
+}
+
+function showCheckHelp() {
+  console.log(`
+Dalila CLI - Check
+
+Usage:
+  dalila check [path] [options]     Static analysis of HTML templates
+
+Validates that identifiers used in HTML templates ({expr}, d-* directives)
+match the return type of the corresponding loader() in TypeScript.
+
+Arguments:
+  [path]          App directory to check (default: src/app)
+
+Options:
+  --strict        Fail when exported loader return keys cannot be inferred
+  --help, -h      Show this help message
+
+Examples:
+  npx dalila check
+  npx dalila check src/app
+  npx dalila check --strict
 `);
 }
 
@@ -369,6 +396,21 @@ async function main() {
       console.error('Unknown subcommand:', subcommand);
       showRoutesHelp();
       process.exit(1);
+    }
+  } else if (command === 'check') {
+    const checkArgs = args.slice(1);
+    if (hasHelpFlag(checkArgs)) {
+      showCheckHelp();
+    } else {
+      const strict = checkArgs.includes('--strict');
+      const positional = checkArgs.filter(a => !a.startsWith('--'));
+      const appDir = positional[0]
+        ? path.resolve(positional[0])
+        : resolveDefaultAppDir(process.cwd());
+
+      const { runCheck } = await import('./check.js');
+      const exitCode = await runCheck(appDir, { strict });
+      process.exit(exitCode);
     }
   } else if (command === '--help' || command === '-h') {
     showHelp();
