@@ -376,11 +376,24 @@ The Dalila CLI generates route tables, manifests, and type definitions from your
 ### Setup
 
 ```bash
-dalila routes init                  # scaffold src/app with starter files
-dalila routes generate              # generate route files
-dalila routes watch                 # regenerate on file changes
-dalila routes generate --output src/routes.generated.ts
+npx dalila routes init                  # scaffold src/app with starter files
+npx dalila routes generate              # generate route files
+npx dalila routes watch                 # regenerate on file changes
+npx dalila routes generate --output src/routes.generated.ts
 ```
+
+### Template Validation
+
+When using file-based routes, run template checks against loader/route context:
+
+```bash
+npx dalila check                        # checks src/app by default
+npx dalila check src/app                # explicit app path
+npx dalila check src/app --strict       # fail when loader return keys cannot be inferred
+```
+
+This helps catch template/context mismatches before runtime.
+For full behavior details, see [Template Check CLI](./cli/check.md).
 
 ### File Structure
 

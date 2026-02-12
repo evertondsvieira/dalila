@@ -1,3 +1,22 @@
+/**
+ * Helper to define a single route with full type inference between
+ * `loader` return type and the `view` / `layout` / `error` `data` parameter.
+ *
+ * @example
+ * ```ts
+ * const route = defineRoute({
+ *   path: '/users',
+ *   loader: async () => ({ users: await fetchUsers() }),
+ *   view: (ctx, data) => {
+ *     // data is inferred as { users: User[] }
+ *     return fromHtml(tpl, { data });
+ *   },
+ * });
+ * ```
+ */
+export function defineRoute(route) {
+    return route;
+}
 /** Normalize a path: ensure leading slash, collapse duplicates, strip trailing slash. */
 export function normalizePath(path) {
     if (!path)

@@ -128,7 +128,7 @@ function parseRouteParamSegment(segment) {
     }
     return { key: raw, isCatchAll: false, isOptionalCatchAll: false };
 }
-function extractParamKeys(routePattern) {
+export function extractParamKeys(routePattern) {
     const keys = [];
     const segments = normalizeRoutePath(routePattern).split('/').filter(Boolean);
     for (const segment of segments) {
@@ -257,7 +257,7 @@ function resolveHtmlPath(htmlPath, routesDir, filePath, projectRoot) {
     }
     return path.resolve(routeFileDir, htmlPath);
 }
-async function injectHtmlPathTemplates(node, routesDir, projectRoot) {
+export async function injectHtmlPathTemplates(node, routesDir, projectRoot) {
     const syntheticHtmlFiles = [];
     for (const file of node.files) {
         if (file.isHtml || !file.htmlPath)
@@ -299,7 +299,7 @@ const DEFAULT_ROUTE_TAG_POLICY = {
     ],
     priority: ['auth', 'public']
 };
-async function findProjectRoot(startDir) {
+export async function findProjectRoot(startDir) {
     let current = path.resolve(startDir);
     while (true) {
         if (await pathExists(path.join(current, 'package.json'))) {
@@ -409,7 +409,7 @@ function validateManifestTags(entries, policy) {
         }
     }
 }
-function findFile(node, type, isHtml) {
+export function findFile(node, type, isHtml) {
     return node.files.find((file) => {
         if (file.type !== type)
             return false;
@@ -591,7 +591,7 @@ function buildRouteTreeSync(routesDir, currentPath = '', currentSegment = '') {
     }
     return node;
 }
-async function buildRouteTree(routesDir, currentPath = '', currentSegment = '') {
+export async function buildRouteTree(routesDir, currentPath = '', currentSegment = '') {
     const node = {
         fsPath: currentPath.replace(/\\/g, '/'),
         segment: currentSegment,

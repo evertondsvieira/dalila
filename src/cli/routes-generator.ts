@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 
-type RouteFileType =
+export type RouteFileType =
   | 'middleware'
   | 'layout'
   | 'page'
@@ -10,7 +10,7 @@ type RouteFileType =
   | 'pending'
   | 'notFound';
 
-interface RouteFile {
+export interface RouteFile {
   path: string;
   type: RouteFileType;
   importName: string;
@@ -23,7 +23,7 @@ interface RouteFile {
   lazy?: boolean;
 }
 
-interface RouteNode {
+export interface RouteNode {
   fsPath: string;
   segment: string;
   routePath: string;
@@ -201,7 +201,7 @@ function parseRouteParamSegment(segment: string): RouteParamSegment | null {
   return { key: raw, isCatchAll: false, isOptionalCatchAll: false };
 }
 
-function extractParamKeys(routePattern: string): string[] {
+export function extractParamKeys(routePattern: string): string[] {
   const keys: string[] = [];
   const segments = normalizeRoutePath(routePattern).split('/').filter(Boolean);
   for (const segment of segments) {
@@ -345,7 +345,7 @@ function resolveHtmlPath(
   return path.resolve(routeFileDir, htmlPath);
 }
 
-async function injectHtmlPathTemplates(node: RouteNode, routesDir: string, projectRoot: string): Promise<void> {
+export async function injectHtmlPathTemplates(node: RouteNode, routesDir: string, projectRoot: string): Promise<void> {
   const syntheticHtmlFiles: RouteFile[] = [];
 
   for (const file of node.files) {
@@ -405,7 +405,7 @@ const DEFAULT_ROUTE_TAG_POLICY: RouteTagPolicy = {
   priority: ['auth', 'public']
 };
 
-async function findProjectRoot(startDir: string): Promise<string | null> {
+export async function findProjectRoot(startDir: string): Promise<string | null> {
   let current = path.resolve(startDir);
   while (true) {
     if (await pathExists(path.join(current, 'package.json'))) {
@@ -536,7 +536,7 @@ function validateManifestTags(entries: ManifestEntry[], policy: RouteTagPolicy):
   }
 }
 
-function findFile(node: RouteNode, type: RouteFileType, isHtml?: boolean): RouteFile | undefined {
+export function findFile(node: RouteNode, type: RouteFileType, isHtml?: boolean): RouteFile | undefined {
   return node.files.find((file) => {
     if (file.type !== type) return false;
     if (typeof isHtml === 'boolean' && file.isHtml !== isHtml) return false;
@@ -732,7 +732,7 @@ function buildRouteTreeSync(routesDir: string, currentPath = '', currentSegment 
   return node;
 }
 
-async function buildRouteTree(routesDir: string, currentPath = '', currentSegment = ''): Promise<RouteNode> {
+export async function buildRouteTree(routesDir: string, currentPath = '', currentSegment = ''): Promise<RouteNode> {
   const node: RouteNode = {
     fsPath: currentPath.replace(/\\/g, '/'),
     segment: currentSegment,

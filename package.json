@@ -100,7 +100,7 @@
     "build": "tsc && node scripts/ensure-cli-executable.cjs",
     "dev": "tsc --watch",
     "serve": "node scripts/dev-server.cjs",
-    "test": "npm run build && node --test",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.js",
     "test:e2e": "npm run build && playwright test",
     "test:watch": "jest --watch",
     "clean": "rm -rf dist",

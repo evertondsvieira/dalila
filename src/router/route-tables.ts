@@ -52,7 +52,7 @@ export type RouteMiddlewareResolver =
  * data loading, state views, children, guards, middleware, redirects,
  * and params/query validation.
  */
-export interface RouteTable {
+export interface RouteTable<T = any> {
   path: string;
   id?: string;
   score?: number;
@@ -60,21 +60,21 @@ export interface RouteTable {
   tags?: string[];
 
   // Leaf view (final page)
-  view?: (ctx: RouteCtx, data: any) => Node | DocumentFragment | Node[];
+  view?: (ctx: RouteCtx, data: T) => Node | DocumentFragment | Node[];
 
   // Layout wraps children
-  layout?: (ctx: RouteCtx, child: Node | DocumentFragment | Node[], data: any) => Node | DocumentFragment | Node[];
+  layout?: (ctx: RouteCtx, child: Node | DocumentFragment | Node[], data: T) => Node | DocumentFragment | Node[];
 
   // Data loading
-  loader?: (ctx: RouteCtx) => Promise<any>;
-  preload?: (ctx: RouteCtx) => Promise<any>;
+  loader?: (ctx: RouteCtx) => Promise<T>;
+  preload?: (ctx: RouteCtx) => Promise<T>;
 
   // Post-mount lifecycle hook (called after view is mounted to DOM)
   onMount?: (root: HTMLElement) => void;
 
   // State views
   pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
-  error?: (ctx: RouteCtx, error: unknown, data?: any) => Node | DocumentFragment | Node[];
+  error?: (ctx: RouteCtx, error: unknown, data?: T) => Node | DocumentFragment | Node[];
   notFound?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
 
   children?: RouteTable[];
@@ -82,6 +82,26 @@ export interface RouteTable {
   guard?: (ctx: RouteCtx) => RouteGuardResult;
   redirect?: string | ((ctx: RouteCtx) => RouteRedirectResult);
   validation?: RouteValidationResolver;
+}
+
+/**
+ * Helper to define a single route with full type inference between
+ * `loader` return type and the `view` / `layout` / `error` `data` parameter.
+ *
+ * @example
+ * ```ts
+ * const route = defineRoute({
+ *   path: '/users',
+ *   loader: async () => ({ users: await fetchUsers() }),
+ *   view: (ctx, data) => {
+ *     // data is inferred as { users: User[] }
+ *     return fromHtml(tpl, { data });
+ *   },
+ * });
+ * ```
+ */
+export function defineRoute<T = any>(route: RouteTable<T>): RouteTable<T> {
+  return route;
 }
 
 /** Immutable snapshot of the current navigation state. */

@@ -7,7 +7,7 @@ Dalila is a reactive framework built on signals. No virtual DOM, no JSX required
 ## Quick Start
 
 ```bash
-npm create dalila my-app
+npm create dalila@latest my-app
 cd my-app
 npm install
 npm run dev
@@ -64,6 +64,7 @@ bind(document.getElementById('app')!, ctx);
 ### Routing
 
 - [Router](./docs/router.md) — Client-side routing with nested layouts, preloading, and file-based route generation
+- [Template Check CLI](./docs/cli/check.md) — `dalila check` static analysis for template/context consistency
 
 ### UI Components
 
@@ -214,7 +215,7 @@ src/app/
 ```
 
 ```bash
-dalila routes generate
+npx dalila routes generate
 ```
 
 ```ts

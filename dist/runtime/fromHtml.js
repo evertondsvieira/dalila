@@ -9,21 +9,6 @@
  * @module dalila/runtime
  */
 import { bind } from './bind.js';
-/**
- * Parse an HTML string into a bound DOM element.
- *
- * @example
- * ```ts
- * // Static HTML
- * const el = fromHtml('<div><h1>Hello</h1></div>');
- *
- * // With data binding
- * const el = fromHtml('<div>{name}</div>', { data: { name: 'Dalila' } });
- *
- * // Layout with children slot
- * const el = fromHtml('<div><div data-slot="children"></div></div>', { children });
- * ```
- */
 export function fromHtml(html, options = {}) {
     const { data, children, scope } = options;
     const template = document.createElement('template');

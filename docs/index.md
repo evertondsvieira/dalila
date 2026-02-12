@@ -93,6 +93,10 @@ npm install dalila
 15. [Dev Mode](./core/dev.md) — Development helpers and warnings
 16. [Devtools Extension](../devtools-extension/README.md) — Browser panel to inspect signals/effects/scopes graph
 
+### CLI
+
+17. [Template Check CLI](./cli/check.md) — `dalila check` static analysis for template/context consistency
+
 ## Comparison with Other Frameworks
 
 ### vs React
