@@ -8,7 +8,7 @@
  */
 
 export { bind, autoBind } from './bind.js';
-export type { BindOptions, BindContext, DisposeFunction } from './bind.js';
+export type { BindOptions, BindContext, BindData, DisposeFunction, BindHandle } from './bind.js';
 
 export { fromHtml } from './fromHtml.js';
 export type { FromHtmlOptions } from './fromHtml.js';

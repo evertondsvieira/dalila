@@ -14,13 +14,14 @@ No `eval`, no inline JS — directive attributes resolve identifiers from contex
 │                          ├─ 1  d-virtual-each fixed-height window  │
 │                          ├─ 2  d-each      remove template,        │
 │                          │                 clone + bind per item   │
-│                          ├─ 3  {...}       reactive text nodes     │
-│                          ├─ 4  d-attr-*    attributes / props      │
-│                          ├─ 5  d-html      innerHTML               │
-│                          ├─ 6  d-on-*      event listeners         │
-│                          ├─ 7  d-when      display toggle          │
-│                          ├─ 8  d-match/case conditional show       │
-│                          └─ 9  d-if        add / remove from DOM   │
+│                          ├─ 3  d-ref       collect element refs    │
+│                          ├─ 4  {...}       reactive text nodes     │
+│                          ├─ 5  d-attr-*    attributes / props      │
+│                          ├─ 6  d-html      innerHTML               │
+│                          ├─ 7  d-on-*      event listeners         │
+│                          ├─ 8  d-when      display toggle          │
+│                          ├─ 9  d-match/case conditional show       │
+│                          └─ 10 d-if        add / remove from DOM   │
 │                                                                    │
 │   All reactive effects are owned by a scope.                       │
 │   dispose() stops every effect and removes every listener.         │
@@ -38,7 +39,7 @@ No `eval`, no inline JS — directive attributes resolve identifiers from contex
 ### bind
 
 ```ts
-function bind(root: Element, ctx: BindContext, options?: BindOptions): DisposeFunction
+function bind(root: Element, ctx: BindContext, options?: BindOptions): BindHandle
 
 interface BindContext {
   [key: string]: unknown;   // signals, getters, handlers, plain values
@@ -53,12 +54,23 @@ interface BindOptions {
 }
 
 type DisposeFunction = () => void;
+
+interface BindHandle {
+  /** Dispose — stops all effects, removes all listeners, clears refs. */
+  (): void;
+  /** Get a single element ref by name, or null if not found. */
+  getRef(name: string): Element | null;
+  /** Get a frozen record of all collected refs. */
+  getRefs(): Readonly<Record<string, Element>>;
+}
 ```
+
+`BindHandle` is callable as `() => void`, so it is fully backward-compatible with code that expects a `DisposeFunction`.
 
 ### autoBind
 
 ```ts
-function autoBind(selector: string, ctx: BindContext, options?: BindOptions): Promise<DisposeFunction>
+function autoBind(selector: string, ctx: BindContext, options?: BindOptions): Promise<BindHandle>
 ```
 
 Convenience wrapper — waits for `DOMContentLoaded` if the document is still loading, then calls `bind()`.
@@ -138,6 +150,36 @@ Default event types: `click`, `input`, `change`, `submit`, `keydown`, `keyup`.
 Custom events can be added via `options.events`.
 
 Listeners are removed automatically when `dispose()` is called.
+
+---
+
+### Element refs `d-ref`
+
+Captures a reference to a DOM element by name.  Refs are collected once during `bind()` (not reactive) and cleared on `dispose()`.
+
+```html
+<div id="app">
+  <input d-ref="searchInput" type="text" placeholder="Search..." />
+  <button d-ref="submitBtn" d-on-click="focusSearch">Focus</button>
+</div>
+```
+
+```ts
+const handle = bind(document.getElementById('app')!, {
+  focusSearch: () => {
+    const input = handle.getRef('searchInput') as HTMLInputElement;
+    input?.focus();
+  },
+});
+```
+
+| Behaviour | Description |
+|---|---|
+| Collection time | After `d-each` (cloned templates are excluded), before text interpolation |
+| Scope | Each `bind()` call has its own ref map — refs inside `d-each` clones belong to the clone's scope |
+| Duplicates | Last-write-wins + dev-mode warning |
+| Empty name | Ignored + dev-mode warning |
+| After `dispose()` | `getRef()` returns `null`, `getRefs()` returns `{}` |
 
 ---
 

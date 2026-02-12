@@ -56,7 +56,21 @@ export interface BindContext {
   [key: string]: unknown;
 }
 
+/**
+ * Convenience alias: any object whose values are `unknown`.
+ * Use the generic parameter on `bind<T>()` / `autoBind<T>()` / `fromHtml<T>()`
+ * to preserve the concrete type at call sites while still satisfying internal
+ * look-ups that index by string key.
+ */
+export type BindData<T extends Record<string, unknown> = Record<string, unknown>> = T;
+
 export type DisposeFunction = () => void;
+
+export interface BindHandle {
+  (): void;
+  getRef(name: string): Element | null;
+  getRefs(): Readonly<Record<string, Element>>;
+}
 
 // ============================================================================
 // Utilities
@@ -2913,6 +2927,26 @@ function bindArrayOperations(
 }
 
 // ============================================================================
+// d-ref — declarative element references
+// ============================================================================
+
+function bindRef(root: Element, refs: Map<string, Element>): void {
+  const elements = qsaIncludingRoot(root, '[d-ref]');
+  for (const el of elements) {
+    const name = el.getAttribute('d-ref');
+    if (!name || !name.trim()) {
+      warn('d-ref: empty ref name ignored');
+      continue;
+    }
+    const trimmed = name.trim();
+    if (refs.has(trimmed)) {
+      warn(`d-ref: duplicate ref name "${trimmed}" in the same scope`);
+    }
+    refs.set(trimmed, el);
+  }
+}
+
+// ============================================================================
 // Main bind() Function
 // ============================================================================
 
@@ -2939,11 +2973,11 @@ function bindArrayOperations(
  * dispose();
  * ```
  */
-export function bind(
+export function bind<T extends Record<string, unknown> = BindContext>(
   root: Element,
-  ctx: BindContext,
+  ctx: T,
   options: BindOptions = {}
-): DisposeFunction {
+): BindHandle {
   const events = options.events ?? DEFAULT_EVENTS;
   const rawTextSelectors = options.rawTextSelectors ?? DEFAULT_RAW_TEXT_SELECTORS;
   const templatePlanCacheConfig = resolveTemplatePlanCacheConfig(options);
@@ -2960,6 +2994,7 @@ export function bind(
   // Create a scope for this template binding
   const templateScope = createScope();
   const cleanups: DisposeFunction[] = [];
+  const refs = new Map<string, Element>();
   linkScopeToDom(templateScope, root, describeBindRoot(root));
 
   // Run all bindings within the template scope
@@ -2976,32 +3011,35 @@ export function bind(
     // 4. d-each — must run early: removes templates before TreeWalker visits them
     bindEach(root, ctx, cleanups);
 
-    // 5. Text interpolation (template plan cache + lazy parser fallback)
+    // 5. d-ref — collect element references (after d-each removes templates)
+    bindRef(root, refs);
+
+    // 6. Text interpolation (template plan cache + lazy parser fallback)
     bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
 
-    // 6. d-attr bindings
+    // 7. d-attr bindings
     bindAttrs(root, ctx, cleanups);
 
-    // 7. d-html bindings
+    // 8. d-html bindings
     bindHtml(root, ctx, cleanups);
 
-    // 8. Form fields — register fields with form instances
+    // 9. Form fields — register fields with form instances
     bindField(root, ctx, cleanups);
 
-    // 9. Event bindings
+    // 10. Event bindings
     bindEvents(root, ctx, events, cleanups);
 
-    // 10. d-when directive
+    // 11. d-when directive
     bindWhen(root, ctx, cleanups);
 
-    // 11. d-match directive
+    // 12. d-match directive
     bindMatch(root, ctx, cleanups);
 
-    // 12. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
+    // 13. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
     bindError(root, ctx, cleanups);
     bindFormError(root, ctx, cleanups);
 
-    // 13. d-if — must run last: elements are fully bound before conditional removal
+    // 14. d-if — must run last: elements are fully bound before conditional removal
     bindIf(root, ctx, cleanups);
   });
 
@@ -3016,8 +3054,8 @@ export function bind(
 
   flushBindBenchSession(benchSession);
 
-  // Return dispose function
-  return () => {
+  // Return BindHandle (callable dispose + ref accessors)
+  const dispose = (): void => {
     // Run manual cleanups (event listeners)
     for (const cleanup of cleanups) {
       if (typeof cleanup === 'function') {
@@ -3031,6 +3069,7 @@ export function bind(
       }
     }
     cleanups.length = 0;
+    refs.clear();
 
     // Dispose template scope (stops all effects)
     try {
@@ -3041,6 +3080,17 @@ export function bind(
       }
     }
   };
+
+  const handle: BindHandle = Object.assign(dispose, {
+    getRef(name: string): Element | null {
+      return refs.get(name) ?? null;
+    },
+    getRefs(): Readonly<Record<string, Element>> {
+      return Object.freeze(Object.fromEntries(refs));
+    },
+  });
+
+  return handle;
 }
 
 // ============================================================================
@@ -3059,11 +3109,11 @@ export function bind(
  * </script>
  * ```
  */
-export function autoBind(
+export function autoBind<T extends Record<string, unknown> = BindContext>(
   selector: string,
-  ctx: BindContext,
+  ctx: T,
   options?: BindOptions
-): Promise<DisposeFunction> {
+): Promise<BindHandle> {
   return new Promise((resolve, reject) => {
     const doBind = () => {
       const root = document.querySelector(selector);

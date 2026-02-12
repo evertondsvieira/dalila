@@ -41,7 +41,19 @@ export interface BindOptions {
 export interface BindContext {
     [key: string]: unknown;
 }
+/**
+ * Convenience alias: any object whose values are `unknown`.
+ * Use the generic parameter on `bind<T>()` / `autoBind<T>()` / `fromHtml<T>()`
+ * to preserve the concrete type at call sites while still satisfying internal
+ * look-ups that index by string key.
+ */
+export type BindData<T extends Record<string, unknown> = Record<string, unknown>> = T;
 export type DisposeFunction = () => void;
+export interface BindHandle {
+    (): void;
+    getRef(name: string): Element | null;
+    getRefs(): Readonly<Record<string, Element>>;
+}
 /**
  * Bind a DOM tree to a reactive context.
  *
@@ -65,7 +77,7 @@ export type DisposeFunction = () => void;
  * dispose();
  * ```
  */
-export declare function bind(root: Element, ctx: BindContext, options?: BindOptions): DisposeFunction;
+export declare function bind<T extends Record<string, unknown> = BindContext>(root: Element, ctx: T, options?: BindOptions): BindHandle;
 /**
  * Automatically bind when DOM is ready.
  * Useful for simple pages without a build step.
@@ -78,4 +90,4 @@ export declare function bind(root: Element, ctx: BindContext, options?: BindOpti
  * </script>
  * ```
  */
-export declare function autoBind(selector: string, ctx: BindContext, options?: BindOptions): Promise<DisposeFunction>;
+export declare function autoBind<T extends Record<string, unknown> = BindContext>(selector: string, ctx: T, options?: BindOptions): Promise<BindHandle>;

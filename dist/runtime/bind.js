@@ -2445,6 +2445,24 @@ function bindArrayOperations(container, fieldArray, cleanups) {
     }
 }
 // ============================================================================
+// d-ref — declarative element references
+// ============================================================================
+function bindRef(root, refs) {
+    const elements = qsaIncludingRoot(root, '[d-ref]');
+    for (const el of elements) {
+        const name = el.getAttribute('d-ref');
+        if (!name || !name.trim()) {
+            warn('d-ref: empty ref name ignored');
+            continue;
+        }
+        const trimmed = name.trim();
+        if (refs.has(trimmed)) {
+            warn(`d-ref: duplicate ref name "${trimmed}" in the same scope`);
+        }
+        refs.set(trimmed, el);
+    }
+}
+// ============================================================================
 // Main bind() Function
 // ============================================================================
 /**
@@ -2484,6 +2502,7 @@ export function bind(root, ctx, options = {}) {
     // Create a scope for this template binding
     const templateScope = createScope();
     const cleanups = [];
+    const refs = new Map();
     linkScopeToDom(templateScope, root, describeBindRoot(root));
     // Run all bindings within the template scope
     withScope(templateScope, () => {
@@ -2495,24 +2514,26 @@ export function bind(root, ctx, options = {}) {
         bindVirtualEach(root, ctx, cleanups);
         // 4. d-each — must run early: removes templates before TreeWalker visits them
         bindEach(root, ctx, cleanups);
-        // 5. Text interpolation (template plan cache + lazy parser fallback)
+        // 5. d-ref — collect element references (after d-each removes templates)
+        bindRef(root, refs);
+        // 6. Text interpolation (template plan cache + lazy parser fallback)
         bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
-        // 6. d-attr bindings
+        // 7. d-attr bindings
         bindAttrs(root, ctx, cleanups);
-        // 7. d-html bindings
+        // 8. d-html bindings
         bindHtml(root, ctx, cleanups);
-        // 8. Form fields — register fields with form instances
+        // 9. Form fields — register fields with form instances
         bindField(root, ctx, cleanups);
-        // 9. Event bindings
+        // 10. Event bindings
         bindEvents(root, ctx, events, cleanups);
-        // 10. d-when directive
+        // 11. d-when directive
         bindWhen(root, ctx, cleanups);
-        // 11. d-match directive
+        // 12. d-match directive
         bindMatch(root, ctx, cleanups);
-        // 12. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
+        // 13. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
         bindError(root, ctx, cleanups);
         bindFormError(root, ctx, cleanups);
-        // 13. d-if — must run last: elements are fully bound before conditional removal
+        // 14. d-if — must run last: elements are fully bound before conditional removal
         bindIf(root, ctx, cleanups);
     });
     // Bindings complete: remove loading state and mark as ready.
@@ -2524,8 +2545,8 @@ export function bind(root, ctx, options = {}) {
         });
     }
     flushBindBenchSession(benchSession);
-    // Return dispose function
-    return () => {
+    // Return BindHandle (callable dispose + ref accessors)
+    const dispose = () => {
         // Run manual cleanups (event listeners)
         for (const cleanup of cleanups) {
             if (typeof cleanup === 'function') {
@@ -2540,6 +2561,7 @@ export function bind(root, ctx, options = {}) {
             }
         }
         cleanups.length = 0;
+        refs.clear();
         // Dispose template scope (stops all effects)
         try {
             templateScope.dispose();
@@ -2550,6 +2572,15 @@ export function bind(root, ctx, options = {}) {
             }
         }
     };
+    const handle = Object.assign(dispose, {
+        getRef(name) {
+            return refs.get(name) ?? null;
+        },
+        getRefs() {
+            return Object.freeze(Object.fromEntries(refs));
+        },
+    });
+    return handle;
 }
 // ============================================================================
 // Convenience: Auto-bind on DOMContentLoaded

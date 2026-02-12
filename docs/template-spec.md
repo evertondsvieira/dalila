@@ -243,7 +243,37 @@ trusted HTML or sanitize before binding.
 `d-attr-*` removes the directive attribute and sets the target attribute to
 `String(value)` for any attribute name (e.g. `href`, `class`, `style`, `id`).
 
-## 11. Lifecycle and Cleanup
+## 11. `d-ref` Directive
+
+### Syntax
+
+```html
+<input d-ref="searchInput" type="text" />
+<button d-ref="submitBtn">Go</button>
+```
+
+### Rules
+
+| Rule | Description |
+|------|-------------|
+| `d-ref="name"` | Registers the element under `name` in the bind handle's ref map |
+| Collection | One-time, during `bind()` — not reactive |
+| Scope | Scoped to the `bind()` call — refs inside `d-each` clones belong to the clone |
+| Duplicates | Last-write-wins + warning in dev mode |
+| Empty name | Ignored + warning in dev mode |
+| Access | `handle.getRef("name")` returns `Element \| null` |
+| Cleanup | `dispose()` clears all refs |
+
+### Access
+
+```ts
+const handle = bind(root, ctx);
+
+handle.getRef('searchInput');  // Element | null
+handle.getRefs();              // Readonly<Record<string, Element>>
+```
+
+## 12. Lifecycle and Cleanup
 
 ```
 bind() creates:
@@ -259,7 +289,7 @@ dispose() cleans up:
   └── Disconnects observers (if any)
 ```
 
-## 12. Dev Mode
+## 13. Dev Mode
 
 In dev mode, the runtime logs warnings:
 
@@ -274,10 +304,12 @@ In dev mode, the runtime logs warnings:
 | `d-each="list"` but not array/signal | `d-each: "list" is not an array or signal` |
 | `d-virtual-each="list"` but `ctx.list` undefined | `d-virtual-each: "list" not found in context` |
 | `d-virtual-item-height` invalid | `d-virtual-each: invalid item height ... Falling back to d-each.` |
+| `d-ref=""` (empty) | `d-ref: empty ref name ignored` |
+| `d-ref="x"` duplicated in same scope | `d-ref: duplicate ref name "x" in the same scope` |
 | `d-html="x"` but `ctx.x` undefined | `d-html: "x" not found in context` |
 | `d-attr-href="x"` but `ctx.x` undefined | `d-attr-href: "x" not found in context` |
 
-## 13. Future Compatibility (Compiler)
+## 14. Future Compatibility (Compiler)
 
 This spec defines **semantics**. A future compiler must generate code that produces the **same result** as the runtime, following these exact rules.
 
