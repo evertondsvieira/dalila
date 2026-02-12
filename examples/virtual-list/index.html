@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en-US">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dalila - d-each vs d-virtual-each</title>
+  <title>Dalila - d-each vs d-virtual-each comparison</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -19,22 +19,22 @@
       <p class="eyebrow">Dalila Runtime</p>
       <h1>d-each vs d-virtual-each</h1>
       <p class="subtitle">
-        Comparativo simples com o mesmo dataset. Em listas grandes, o
-        <code>d-virtual-each</code> mantém poucos nós ativos no DOM.
+        A simple comparison using the same dataset. On large lists,
+        <code>d-virtual-each</code> keeps only a few active DOM nodes.
       </p>
     </header>
 
     <section class="controls">
-      <button class="btn" d-on-click="load500">500 itens</button>
-      <button class="btn" d-on-click="load5000">5.000 itens</button>
-      <button class="btn" d-on-click="load20000">20.000 itens</button>
+      <button class="btn" d-on-click="load500">500 items</button>
+      <button class="btn" d-on-click="load5000">5,000 items</button>
+      <button class="btn" d-on-click="load20000">20,000 items</button>
 
       <div class="stats">
         <span>Total: <strong>{totalRowsLabel}</strong></span>
-        <span>Estimativa DOM com <code>d-each</code>: <strong>{nativeNodeEstimateLabel}</strong></span>
-        <span>Estimativa DOM com <code>d-virtual-each</code>: <strong>{virtualNodeEstimateLabel}</strong></span>
-        <span>DOM real no painel <code>d-each</code>: <strong>{nativeRenderedNowLabel}</strong></span>
-        <span>DOM real no painel <code>d-virtual-each</code>: <strong>{virtualRenderedNowLabel}</strong></span>
+        <span>Estimated DOM with <code>d-each</code>: <strong>{nativeNodeEstimateLabel}</strong></span>
+        <span>Estimated DOM with <code>d-virtual-each</code>: <strong>{virtualNodeEstimateLabel}</strong></span>
+        <span>Actual DOM in <code>d-each</code> panel: <strong>{nativeRenderedNowLabel}</strong></span>
+        <span>Actual DOM in <code>d-virtual-each</code> panel: <strong>{virtualRenderedNowLabel}</strong></span>
       </div>
 
       <p class="status">{buildInfo}</p>
@@ -43,8 +43,8 @@
     <section class="grid">
       <article class="panel">
         <header class="panel-header">
-          <h2>Renderização completa (<code>d-each</code>)</h2>
-          <p>Renderiza todos os itens de uma vez.</p>
+          <h2>Full render (<code>d-each</code>)</h2>
+          <p>Renders all items at once.</p>
         </header>
 
         <div class="list-viewport native-viewport">
@@ -58,10 +58,10 @@
 
       <article class="panel">
         <header class="panel-header">
-          <h2>Renderização virtualizada (<code>d-virtual-each</code>)</h2>
+          <h2>Virtualized render (<code>d-virtual-each</code>)</h2>
           <p>
-            Renderiza apenas a janela visível + overscan
-            (<strong>{virtualWindowLabel}</strong> linhas aprox).
+            Renders only the visible window + overscan
+            (<strong>{virtualWindowLabel}</strong> rows approx).
           </p>
         </header>
 

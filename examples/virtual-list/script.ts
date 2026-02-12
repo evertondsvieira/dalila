@@ -8,7 +8,7 @@ type DemoRow = {
   score: number;
 };
 
-const fmt = new Intl.NumberFormat("pt-BR");
+const fmt = new Intl.NumberFormat("en-US");
 
 const VIEWPORT_HEIGHT = 360;
 const ROW_HEIGHT = 40;
@@ -23,8 +23,8 @@ function buildRows(size: number): DemoRow[] {
     const id = i + 1;
     rows.push({
       id,
-      title: `Registro ${id}`,
-      group: `grupo-${(i % 32) + 1}`,
+      title: `Record ${id}`,
+      group: `group-${(i % 32) + 1}`,
       score: (i * 37) % 997,
     });
   }
@@ -32,7 +32,7 @@ function buildRows(size: number): DemoRow[] {
 }
 
 const rows = signal<DemoRow[]>(buildRows(5000));
-const buildInfo = signal("Dataset inicial: 5.000 itens.");
+const buildInfo = signal("Initial dataset: 5,000 items.");
 const nativeRenderedNowLabel = signal("0");
 const virtualRenderedNowLabel = signal("0");
 
@@ -40,7 +40,7 @@ function setDataset(size: number): void {
   const start = typeof performance !== "undefined" ? performance.now() : Date.now();
   rows.set(buildRows(size));
   const end = typeof performance !== "undefined" ? performance.now() : Date.now();
-  buildInfo.set(`Gerou ${fmt.format(size)} itens em ${(end - start).toFixed(1)}ms.`);
+  buildInfo.set(`Generated ${fmt.format(size)} items in ${(end - start).toFixed(1)}ms.`);
   scheduleRefresh();
 }
 
