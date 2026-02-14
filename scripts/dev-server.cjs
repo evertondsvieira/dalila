@@ -1047,7 +1047,7 @@ startKeepalive();
 
 server.listen(port, () => {
   console.log('');
-  console.log('  🐰 ✂️  Dalila dev server');
+  console.log('  🐰✂️  Dalila dev server');
   console.log(`        http://localhost:${port}`);
   console.log('');
 });

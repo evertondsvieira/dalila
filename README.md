@@ -1,4 +1,4 @@
-# 🐰 ✂️ Dalila
+# 🐰✂️ Dalila
 
 **DOM-first reactivity without the re-renders.**
 

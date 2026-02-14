@@ -17,7 +17,7 @@ interface GenerateConfig {
 
 function showHelp() {
   console.log(`
-🐰 ✂️  Dalila CLI
+🐰✂️  Dalila CLI
 
 Usage:
   dalila routes generate [options]    Generate routes + manifest from app file structure
@@ -41,7 +41,7 @@ Examples:
 
 function showRoutesHelp() {
   console.log(`
-🐰 ✂️  Dalila CLI - Routes
+🐰✂️  Dalila CLI - Routes
 
 Usage:
   dalila routes generate [options]    Generate routes + manifest from app file structure
@@ -62,7 +62,7 @@ Examples:
 
 function showCheckHelp() {
   console.log(`
-🐰 ✂️  Dalila CLI - Check
+🐰✂️  Dalila CLI - Check
 
 Usage:
   dalila check [path] [options]     Static analysis of HTML templates
@@ -219,7 +219,7 @@ async function generateRoutes(cliArgs: string[]) {
   const { appDir, outputPath } = resolveGenerateConfig(cliArgs);
 
   console.log('');
-  console.log('🐰 ✂️  Dalila Routes Generator');
+  console.log('🐰✂️  Dalila Routes Generator');
   console.log('');
 
   try {
@@ -284,7 +284,7 @@ function watchRoutes(cliArgs: string[]) {
   }
 
   console.log('');
-  console.log('🐰 ✂️  Dalila Routes Watch');
+  console.log('🐰✂️  Dalila Routes Watch');
   console.log(`   app: ${appDir}`);
   console.log(`   output: ${outputPath}`);
   console.log('');
