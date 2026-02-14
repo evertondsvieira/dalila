@@ -6,5 +6,6 @@
  *
  * @module dalila/runtime
  */
-export { bind, autoBind } from './bind.js';
+export { bind, autoBind, mount, configure } from './bind.js';
 export { fromHtml } from './fromHtml.js';
+export { defineComponent } from './component.js';

@@ -10,6 +10,8 @@
 import { effect, createScope, withScope, isInDevMode, signal, Signal, computeVirtualRange } from '../core/index.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
+import type { Component, SetupContext, ComponentDefinition } from './component.js';
+import { isComponent, normalizePropDef, coercePropValue, kebabToCamel, camelToKebab } from './component.js';
 
 // ============================================================================
 // Types
@@ -36,6 +38,12 @@ export interface BindOptions {
     /** Time-to-live (ms) per plan, refreshed on hit (0 disables cache). */
     ttlMs?: number;
   };
+
+  /** Component registry — accepts map `{ tag: component }` or array `[component]` */
+  components?: Record<string, Component> | Component[];
+
+  /** Error policy for component `ctx.onMount()` callbacks. Default: 'log'. */
+  onMountError?: 'log' | 'throw';
 
   /**
    * Internal flag — set by fromHtml for router/template rendering.
@@ -81,6 +89,20 @@ export interface BindHandle {
  */
 function isSignal(value: unknown): value is (() => unknown) & { set: unknown; update: unknown } {
   return typeof value === 'function' && 'set' in value && 'update' in value;
+}
+
+function isWritableSignal(value: unknown): value is Signal<unknown> {
+  if (!isSignal(value)) return false;
+
+  // `computed()` exposes set/update that always throw. Probe with a no-op write
+  // (same value) to detect read-only signals without mutating state.
+  try {
+    const current = (value as Signal<unknown>).peek();
+    (value as Signal<unknown>).set(current);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -933,6 +955,9 @@ function expressionDependsOnReactiveSource(node: ExprNode, ctx: BindContext): bo
 const DEFAULT_EVENTS = ['click', 'input', 'change', 'submit', 'keydown', 'keyup'];
 const DEFAULT_RAW_TEXT_SELECTORS = 'pre, code';
 
+const COMPONENT_REGISTRY_KEY = '__dalila_component_registry__';
+const COMPONENT_EMIT_KEY = '__dalila_component_emit__';
+
 // ============================================================================
 // Text Interpolation
 // ============================================================================
@@ -1296,6 +1321,78 @@ function bindEvents(
 
       el.addEventListener(eventName, handler as EventListener);
       cleanups.push(() => el.removeEventListener(eventName, handler as EventListener));
+    }
+  }
+}
+
+// ============================================================================
+// d-emit-<event> Directive
+// ============================================================================
+
+/**
+ * Bind all [d-emit-<event>] directives within root.
+ * Only active inside component contexts (where COMPONENT_EMIT_KEY exists).
+ * Works inside d-each because child contexts inherit via prototype chain.
+ */
+function bindEmit(
+  root: Element,
+  ctx: BindContext,
+  cleanups: DisposeFunction[]
+): void {
+  const emitFn = ctx[COMPONENT_EMIT_KEY];
+  if (typeof emitFn !== 'function') return;
+
+  const elements = qsaIncludingRoot(root, '*');
+  for (const el of elements) {
+    for (const attrNode of Array.from(el.attributes)) {
+      if (!attrNode.name.startsWith('d-emit-')) continue;
+      if (attrNode.name === 'd-emit-value') continue;
+      const eventName = attrNode.name.slice('d-emit-'.length).trim();
+      const attr = attrNode.name;
+
+      if (!eventName) {
+        warn(`${attr}: missing DOM event name`);
+        continue;
+      }
+
+      const emitName = normalizeBinding(attrNode.value);
+      if (!emitName) {
+        warn(`${attr}: empty value ignored`);
+        continue;
+      }
+
+      const payloadExpr = el.getAttribute('d-emit-value');
+      const payloadRaw = payloadExpr?.trim();
+      let payloadAst: ExprNode | null = null;
+      if (payloadRaw) {
+        try {
+          payloadAst = parseExpression(payloadRaw);
+        } catch (err) {
+          warn(`${attr}: invalid d-emit-value="${payloadRaw}" (${(err as Error).message})`);
+          continue;
+        }
+      } else if (payloadExpr !== null) {
+        warn(`${attr}: d-emit-value is empty; emitting DOM Event instead`);
+      }
+
+      if (emitName.includes(':')) {
+        warn(`${attr}: ":" syntax is no longer supported. Use d-emit-value instead.`);
+        continue;
+      }
+
+      const handler = (e: Event) => {
+        if (payloadAst) {
+          const eventCtx = Object.create(ctx) as BindContext;
+          eventCtx.$event = e;
+          const result = evalExpressionAst(payloadAst, eventCtx);
+          (emitFn as Function)(emitName, result.ok ? result.value : undefined);
+        } else {
+          (emitFn as Function)(emitName, e);
+        }
+      };
+
+      el.addEventListener(eventName, handler);
+      cleanups.push(() => el.removeEventListener(eventName, handler));
     }
   }
 }
@@ -1861,7 +1958,16 @@ function bindEach(
     .filter(el => !el.parentElement?.closest('[d-each], [d-virtual-each]'));
 
   for (const el of elements) {
-    const bindingName = normalizeBinding(el.getAttribute('d-each'));
+    const rawValue = el.getAttribute('d-each')?.trim() ?? '';
+    let bindingName: string | null;
+    let alias = 'item'; // default
+    const asMatch = rawValue.match(/^(\S+)\s+as\s+(\S+)$/);
+    if (asMatch) {
+      bindingName = normalizeBinding(asMatch[1]);
+      alias = asMatch[2];
+    } else {
+      bindingName = normalizeBinding(rawValue);
+    }
     if (!bindingName) continue;
 
     let binding = ctx[bindingName];
@@ -1927,7 +2033,7 @@ function bindEach(
     const readKeyValue = (item: unknown, index: number): unknown => {
       if (keyBinding) {
         if (keyBinding === '$index') return index;
-        if (keyBinding === 'item') return item;
+        if (keyBinding === alias || keyBinding === 'item') return item;
         if (typeof item === 'object' && item !== null && keyBinding in (item as Record<string, unknown>)) {
           return (item as Record<string, unknown>)[keyBinding];
         }
@@ -1968,8 +2074,11 @@ function bindEach(
       metadataByKey.set(key, metadata);
       itemsByKey.set(key, item);
 
-      // Expose item + positional / collection helpers.
-      itemCtx.item = item;
+      // Expose item under the alias name + positional / collection helpers.
+      itemCtx[alias] = item;
+      if (alias !== 'item') {
+        itemCtx.item = item; // backward compat
+      }
       itemCtx.key = key;
       itemCtx.$index = metadata.$index;
       itemCtx.$count = metadata.$count;
@@ -2113,6 +2222,7 @@ function bindIf(
   cleanups: DisposeFunction[]
 ): void {
   const elements = qsaIncludingRoot(root, '[d-if]');
+  const processedElse = new Set<Element>();
 
   for (const el of elements) {
     const bindingName = normalizeBinding(el.getAttribute('d-if'));
@@ -2124,31 +2234,70 @@ function bindIf(
       continue;
     }
 
+    // Detect d-else sibling BEFORE removing from DOM
+    const elseEl = el.nextElementSibling?.hasAttribute('d-else') ? el.nextElementSibling : null;
+
     const comment = document.createComment('d-if');
     el.parentNode?.replaceChild(comment, el);
     el.removeAttribute('d-if');
 
     const htmlEl = el as HTMLElement;
 
+    // Handle d-else branch
+    let elseHtmlEl: HTMLElement | null = null;
+    let elseComment: Comment | null = null;
+    if (elseEl) {
+      processedElse.add(elseEl);
+      elseComment = document.createComment('d-else');
+      elseEl.parentNode?.replaceChild(elseComment, elseEl);
+      elseEl.removeAttribute('d-else');
+      elseHtmlEl = elseEl as HTMLElement;
+    }
+
     // Apply initial state synchronously to avoid FOUC
     const initialValue = !!resolve(binding);
     if (initialValue) {
       comment.parentNode?.insertBefore(htmlEl, comment);
+    } else if (elseHtmlEl && elseComment) {
+      elseComment.parentNode?.insertBefore(elseHtmlEl, elseComment);
     }
 
     // Then create reactive effect to keep it updated
-    bindEffect(htmlEl, () => {
-      const value = !!resolve(binding);
-      if (value) {
-        if (!htmlEl.parentNode) {
-          comment.parentNode?.insertBefore(htmlEl, comment);
+    if (elseHtmlEl && elseComment) {
+      const capturedElseEl = elseHtmlEl;
+      const capturedElseComment = elseComment;
+      bindEffect(htmlEl, () => {
+        const value = !!resolve(binding);
+        if (value) {
+          if (!htmlEl.parentNode) {
+            comment.parentNode?.insertBefore(htmlEl, comment);
+          }
+          if (capturedElseEl.parentNode) {
+            capturedElseEl.parentNode.removeChild(capturedElseEl);
+          }
+        } else {
+          if (htmlEl.parentNode) {
+            htmlEl.parentNode.removeChild(htmlEl);
+          }
+          if (!capturedElseEl.parentNode) {
+            capturedElseComment.parentNode?.insertBefore(capturedElseEl, capturedElseComment);
+          }
         }
-      } else {
-        if (htmlEl.parentNode) {
-          htmlEl.parentNode.removeChild(htmlEl);
+      });
+    } else {
+      bindEffect(htmlEl, () => {
+        const value = !!resolve(binding);
+        if (value) {
+          if (!htmlEl.parentNode) {
+            comment.parentNode?.insertBefore(htmlEl, comment);
+          }
+        } else {
+          if (htmlEl.parentNode) {
+            htmlEl.parentNode.removeChild(htmlEl);
+          }
         }
-      }
-    });
+      });
+    }
   }
 }
 
@@ -2196,6 +2345,48 @@ function bindHtml(
         warn(`d-html: potentially unsafe HTML in "${bindingName}". Never use with unsanitized user input.`);
       }
       htmlEl.innerHTML = html;
+    }
+  }
+}
+
+// ============================================================================
+// d-text Directive
+// ============================================================================
+
+/**
+ * Bind all [d-text] directives within root.
+ * Sets textContent — safe from XSS by design (no HTML parsing).
+ * Counterpart to d-html which renders raw HTML.
+ */
+function bindText(
+  root: Element,
+  ctx: BindContext,
+  cleanups: DisposeFunction[]
+): void {
+  const elements = qsaIncludingRoot(root, '[d-text]');
+
+  for (const el of elements) {
+    const bindingName = normalizeBinding(el.getAttribute('d-text'));
+    if (!bindingName) continue;
+
+    const binding = ctx[bindingName];
+    if (binding === undefined) {
+      warn(`d-text: "${bindingName}" not found in context`);
+      continue;
+    }
+
+    const htmlEl = el as HTMLElement;
+
+    // Sync initial render
+    const initial = resolve(binding);
+    htmlEl.textContent = initial == null ? '' : String(initial);
+
+    // Reactive effect only if needed
+    if (isSignal(binding) || (typeof binding === 'function' && (binding as Function).length === 0)) {
+      bindEffect(htmlEl, () => {
+        const v = resolve(binding);
+        htmlEl.textContent = v == null ? '' : String(v);
+      });
     }
   }
 }
@@ -2268,6 +2459,68 @@ function bindAttrs(
         });
       } else {
         applyAttr(el, attrName, resolve(binding));
+      }
+    }
+  }
+}
+
+// ============================================================================
+// d-bind-* Directive (Two-way Binding)
+// ============================================================================
+
+/**
+ * Bind all [d-bind-value] and [d-bind-checked] directives within root.
+ * Two-way binding: signal → DOM (outbound) and DOM → signal (inbound).
+ * Only works with signals — logs a warning otherwise.
+ */
+function bindTwoWay(
+  root: Element,
+  ctx: BindContext,
+  cleanups: DisposeFunction[]
+): void {
+  const SUPPORTED = ['value', 'checked'] as const;
+
+  for (const prop of SUPPORTED) {
+    const attr = `d-bind-${prop}`;
+    const elements = qsaIncludingRoot(root, `[${attr}]`);
+
+    for (const el of elements) {
+      const bindingName = normalizeBinding(el.getAttribute(attr));
+      if (!bindingName) continue;
+
+      const binding = ctx[bindingName];
+
+      if (!isSignal(binding)) {
+        warn(`d-bind-${prop}: "${bindingName}" must be a signal`);
+        continue;
+      }
+      const writable = isWritableSignal(binding);
+      if (!writable) {
+        warn(`d-bind-${prop}: "${bindingName}" is read-only (inbound updates disabled)`);
+      }
+
+      el.removeAttribute(attr);
+
+      // Outbound: signal → DOM
+      const isBoolean = prop === 'checked';
+      bindEffect(el, () => {
+        const val = binding();
+        if (isBoolean) {
+          (el as any)[prop] = !!val;
+        } else {
+          (el as any)[prop] = val == null ? '' : String(val);
+        }
+      });
+
+      // Inbound: DOM → signal
+      if (writable) {
+        const eventName = (el as HTMLElement).tagName === 'SELECT' || isBoolean ? 'change' : 'input';
+        const handler = () => {
+          const val = isBoolean ? (el as HTMLInputElement).checked : (el as HTMLInputElement).value;
+          (binding as Signal<unknown>).set(val);
+        };
+        el.addEventListener(eventName, handler);
+        cleanups.push(() => el.removeEventListener(eventName, handler));
       }
     }
   }
@@ -2947,6 +3200,361 @@ function bindRef(root: Element, refs: Map<string, Element>): void {
 }
 
 // ============================================================================
+// Component System
+// ============================================================================
+
+function extractSlots(el: Element): { defaultSlot: DocumentFragment; namedSlots: Map<string, DocumentFragment> } {
+  const getSlotName = (node: Element): string | null => {
+    const raw = node.getAttribute('d-slot') ?? node.getAttribute('slot');
+    if (!raw) return null;
+    const name = raw.trim();
+    return name || null;
+  };
+
+  const namedSlots = new Map<string, DocumentFragment>();
+  const defaultSlot = document.createDocumentFragment();
+  for (const child of Array.from(el.childNodes)) {
+    if (child instanceof Element && child.tagName === 'TEMPLATE') {
+      const name = getSlotName(child);
+      if (name) {
+        const frag = namedSlots.get(name) ?? document.createDocumentFragment();
+        frag.append(...Array.from((child as HTMLTemplateElement).content.childNodes));
+        namedSlots.set(name, frag);
+      } else {
+        defaultSlot.appendChild(child);
+      }
+    } else if (child instanceof Element) {
+      const name = getSlotName(child);
+      if (name) {
+        const frag = namedSlots.get(name) ?? document.createDocumentFragment();
+        child.removeAttribute('d-slot');
+        child.removeAttribute('slot');
+        frag.appendChild(child);
+        namedSlots.set(name, frag);
+      } else {
+        defaultSlot.appendChild(child);
+      }
+    } else {
+      defaultSlot.appendChild(child);
+    }
+  }
+  return { defaultSlot, namedSlots };
+}
+
+function fillSlots(root: Element, defaultSlot: DocumentFragment, namedSlots: Map<string, DocumentFragment>): void {
+  for (const slotEl of Array.from(root.querySelectorAll('slot[name]'))) {
+    const name = slotEl.getAttribute('name')!;
+    const content = namedSlots.get(name);
+    if (content && content.childNodes.length > 0) slotEl.replaceWith(content);
+  }
+  const defaultSlotEl = root.querySelector('slot:not([name])');
+  if (defaultSlotEl && defaultSlot.childNodes.length > 0) defaultSlotEl.replaceWith(defaultSlot);
+}
+
+function bindSlotFragments(
+  defaultSlot: DocumentFragment,
+  namedSlots: Map<string, DocumentFragment>,
+  parentCtx: BindContext,
+  events: string[],
+  cleanups: DisposeFunction[]
+): void {
+  const bindFrag = (frag: DocumentFragment) => {
+    if (frag.childNodes.length === 0) return;
+    const container = document.createElement('div');
+    container.setAttribute('data-dalila-internal-bound', '');
+    container.appendChild(frag);
+    const handle = bind(container, parentCtx, { events, _skipLifecycle: true, _internal: true });
+    cleanups.push(handle);
+    while (container.firstChild) frag.appendChild(container.firstChild);
+  };
+  bindFrag(defaultSlot);
+  for (const frag of namedSlots.values()) bindFrag(frag);
+}
+
+function resolveComponentProps(
+  el: Element,
+  parentCtx: BindContext,
+  def: ComponentDefinition
+): Record<string, Signal<unknown>> {
+  const props: Record<string, Signal<unknown>> = {};
+  const schema = def.props ?? {};
+  const hasSchema = Object.keys(schema).length > 0;
+  const PREFIX = 'd-props-';
+
+  for (const attr of Array.from(el.attributes)) {
+    if (!attr.name.startsWith(PREFIX)) continue;
+    const kebab = attr.name.slice(PREFIX.length);
+    const propName = kebabToCamel(kebab);
+    if (hasSchema && !(propName in schema)) {
+      warn(`Component <${def.tag}>: d-props-${kebab} is not declared in props schema`);
+    }
+    const bindingName = normalizeBinding(attr.value);
+    if (!bindingName) continue;
+
+    const parentValue = parentCtx[bindingName];
+    if (parentValue === undefined) {
+      warn(`d-props-${kebab}: "${bindingName}" not found in parent context`);
+    }
+
+    // Read raw value — signals and zero-arity functions (getters/computed-like) are
+    // unwrapped reactively; everything else passes through as-is.
+    const isGetter = !isSignal(parentValue) && typeof parentValue === 'function' && (parentValue as Function).length === 0;
+    const raw = isSignal(parentValue) ? parentValue() : isGetter ? (parentValue as Function)() : parentValue;
+    const propSignal = signal<unknown>(raw);
+
+    // Reactive sync: signals and zero-arity getters
+    if (isSignal(parentValue) || isGetter) {
+      effect(() => { propSignal.set(isSignal(parentValue) ? parentValue() : (parentValue as Function)()); });
+    }
+
+    props[propName] = propSignal;
+  }
+
+  for (const [propName, propOption] of Object.entries(schema)) {
+    if (props[propName]) continue;
+
+    const propDef = normalizePropDef(propOption);
+    const kebabPropName = camelToKebab(propName);
+    const attrName = el.hasAttribute(propName)
+      ? propName
+      : (el.hasAttribute(kebabPropName) ? kebabPropName : null);
+
+    if (attrName) {
+      const raw = el.getAttribute(attrName)!;
+      // Dev warning: Array/Object props should use d-props-*
+      if (propDef.type === Array || propDef.type === Object) {
+        warn(
+          `Component <${def.tag}>: prop "${propName}" has type ${propDef.type === Array ? 'Array' : 'Object'} ` +
+          `but received a static string attribute. Use d-props-${camelToKebab(propName)} to pass reactive data.`
+        );
+      }
+      props[propName] = signal(coercePropValue(raw, propDef.type));
+    } else {
+      if (propDef.default !== undefined) {
+        const defaultValue = typeof propDef.default === 'function'
+          ? (propDef.default as () => unknown)()
+          : propDef.default;
+        props[propName] = signal(defaultValue);
+      } else {
+        if (propDef.required) {
+          warn(`Component <${def.tag}>: required prop "${propName}" was not provided`);
+        }
+        props[propName] = signal(undefined);
+      }
+    }
+  }
+
+  return props;
+}
+
+function getComponentRegistry(ctx: BindContext): Map<string, Component> | null {
+  const reg = ctx[COMPONENT_REGISTRY_KEY];
+  return reg instanceof Map ? reg as Map<string, Component> : null;
+}
+
+function bindComponents(
+  root: Element,
+  ctx: BindContext,
+  events: string[],
+  cleanups: DisposeFunction[],
+  onMountError: 'log' | 'throw'
+): void {
+  const registry = getComponentRegistry(ctx);
+  if (!registry || registry.size === 0) return;
+
+  const tagSelector = Array.from(registry.keys()).join(', ');
+  const elements = qsaIncludingRoot(root, tagSelector);
+  const boundary = root.closest('[data-dalila-internal-bound]');
+
+  for (const el of elements) {
+    // Skip stale entries from the initial snapshot.
+    // Earlier iterations may replace/move nodes (e.g. slot projection),
+    // so this element might no longer belong to the current bind boundary.
+    if (!root.contains(el)) continue;
+    if (el.closest('[data-dalila-internal-bound]') !== boundary) continue;
+
+    const tag = el.tagName.toLowerCase();
+    const component = registry.get(tag);
+    if (!component) continue;
+    const def = component.definition;
+
+    // 1. Extract slots
+    const { defaultSlot, namedSlots } = extractSlots(el);
+
+    // 2. Create component DOM
+    const templateEl = document.createElement('template');
+    templateEl.innerHTML = def.template.trim();
+    const content = templateEl.content;
+
+    // Dev-mode template validation
+    if (isInDevMode()) {
+      if (!def.template.trim()) {
+        warn(`Component <${def.tag}>: template is empty`);
+      } else if (content.childNodes.length === 0) {
+        warn(`Component <${def.tag}>: template produced no DOM nodes`);
+      }
+    }
+
+    // Single-root optimization: no wrapper needed
+    // A d-each on the sole element will clone siblings at runtime, so it needs a container.
+    const elementChildren = Array.from(content.children);
+    const hasOnlyOneElement = elementChildren.length === 1
+      && !elementChildren[0].hasAttribute('d-each')
+      && Array.from(content.childNodes).every(
+        n => n === elementChildren[0] || (n.nodeType === 3 && !n.textContent!.trim())
+      );
+
+    let componentRoot: Element;
+    if (hasOnlyOneElement) {
+      componentRoot = elementChildren[0] as Element;
+      content.removeChild(componentRoot);
+    } else {
+      componentRoot = document.createElement('dalila-c');
+      (componentRoot as HTMLElement).style.display = 'contents';
+      componentRoot.appendChild(content);
+    }
+
+    // 3. Create component scope (child of current template scope)
+    const componentScope = createScope();
+    const pendingMountCallbacks: Array<() => void> = [];
+
+    // 4. Within component scope: resolve props, run setup, bind
+    let componentHandle: BindHandle | null = null;
+
+    // Collect d-on-* event handlers from the component tag for ctx.emit()
+    const componentEventHandlers: Record<string, Function> = {};
+    for (const attr of Array.from(el.attributes)) {
+      if (!attr.name.startsWith('d-on-')) continue;
+      const eventName = attr.name.slice(5); // "d-on-select" → "select"
+      const handlerName = normalizeBinding(attr.value);
+      if (!handlerName) continue;
+      const handler = ctx[handlerName];
+      if (typeof handler === 'function') {
+        componentEventHandlers[eventName] = handler as Function;
+      } else if (handler !== undefined) {
+        warn(`Component <${def.tag}>: d-on-${eventName}="${handlerName}" is not a function`);
+      }
+    }
+
+    withScope(componentScope, () => {
+      // 4a. Resolve props
+      const propSignals = resolveComponentProps(el, ctx, def);
+
+      // 4b. Create ref accessor + emit
+      const setupCtx: SetupContext = {
+        ref: (name: string) => componentHandle?.getRef(name) ?? null,
+        refs: () => componentHandle?.getRefs() ?? Object.freeze({}),
+        emit: (event: string, ...args: unknown[]) => {
+          const handler = componentEventHandlers[event];
+          if (typeof handler === 'function') handler(...args);
+        },
+        onMount: (fn: () => void) => {
+          pendingMountCallbacks.push(fn);
+        },
+        onCleanup: (fn: () => void) => {
+          componentScope.onCleanup(fn);
+        },
+      };
+
+      // 4c. Run setup
+      let setupReturn: Record<string, unknown> = {};
+      if (def.setup) {
+        setupReturn = def.setup(propSignals as any, setupCtx);
+        for (const key of Object.keys(setupReturn)) {
+          if (key in propSignals) {
+            warn(`Component <${def.tag}>: setup() returned "${key}" which overrides a prop binding`);
+          }
+        }
+      }
+
+      // 4d. Build component bind context (propagate registry for nested components)
+      const componentCtx: BindContext = { ...propSignals, ...setupReturn };
+      const parentRegistry = getComponentRegistry(ctx);
+      if (parentRegistry) {
+        componentCtx[COMPONENT_REGISTRY_KEY] = parentRegistry;
+      }
+
+      // 4d'. Store emit function for d-emit-* directives
+      componentCtx[COMPONENT_EMIT_KEY] = (event: string, ...args: unknown[]) => {
+        const handler = componentEventHandlers[event];
+        if (typeof handler === 'function') handler(...args);
+      };
+
+      // 4e. Bind slot content with PARENT context/scope
+      const parentScope = componentScope.parent;
+      if (parentScope) {
+        withScope(parentScope, () => {
+          bindSlotFragments(defaultSlot, namedSlots, ctx, events, cleanups);
+        });
+      }
+
+      // 4f. Fill slots
+      fillSlots(componentRoot, defaultSlot, namedSlots);
+
+      // 4g. Mark as bound boundary
+      componentRoot.setAttribute('data-dalila-internal-bound', '');
+
+      // 4h. Bind component template
+      componentHandle = bind(componentRoot, componentCtx, { events, _skipLifecycle: true, _internal: true });
+      cleanups.push(componentHandle);
+    });
+
+    // 5. Replace original tag with component DOM
+    el.replaceWith(componentRoot);
+
+    // 6. Run component onMount callbacks after the DOM swap.
+    if (pendingMountCallbacks.length > 0) {
+      withScope(componentScope, () => {
+        for (const cb of pendingMountCallbacks) {
+          if (onMountError === 'throw') {
+            cb();
+          } else {
+            try {
+              cb();
+            } catch (err) {
+              console.error(`[Dalila] Component <${def.tag}> onMount() threw:`, err);
+            }
+          }
+        }
+      });
+    }
+
+    // 7. Register scope cleanup
+    cleanups.push(() => componentScope.dispose());
+  }
+}
+
+// ============================================================================
+// Global Configuration
+// ============================================================================
+
+let globalConfig: BindOptions = {};
+
+/**
+ * Set global defaults for all `bind()` / `mount()` calls.
+ *
+ * Options set here are merged with per-call options (per-call wins).
+ * Call with an empty object to reset.
+ *
+ * @example
+ * ```ts
+ * import { configure } from 'dalila/runtime';
+ *
+ * configure({
+ *   components: [FruitPicker],
+ *   onMountError: 'log',
+ * });
+ * ```
+ */
+export function configure(config: BindOptions): void {
+  if (Object.keys(config).length === 0) {
+    globalConfig = {};
+    return;
+  }
+  globalConfig = { ...globalConfig, ...config };
+}
+
+// ============================================================================
 // Main bind() Function
 // ============================================================================
 
@@ -2974,11 +3582,81 @@ function bindRef(root: Element, refs: Map<string, Element>): void {
  * ```
  */
 export function bind<T extends Record<string, unknown> = BindContext>(
-  root: Element,
+  root: Element | string,
   ctx: T,
   options: BindOptions = {}
 ): BindHandle {
+  // ── Merge global config with per-call options ──
+  if (Object.keys(globalConfig).length > 0) {
+    const { components: globalComponents, ...globalRest } = globalConfig;
+    const { components: localComponents, ...localRest } = options;
+    const mergedOpts: BindOptions = { ...globalRest, ...localRest };
+
+    // Combine component registries: local takes precedence over global
+    if (globalComponents || localComponents) {
+      const combined: Record<string, Component> = {};
+
+      const mergeComponents = (src: Record<string, Component> | Component[] | undefined) => {
+        if (!src) return;
+        if (Array.isArray(src)) {
+          for (const comp of src) {
+            if (isComponent(comp)) combined[comp.definition.tag] = comp;
+          }
+        } else {
+          for (const [key, comp] of Object.entries(src)) {
+            if (isComponent(comp)) combined[comp.definition.tag] = comp;
+          }
+        }
+      };
+
+      mergeComponents(globalComponents);
+      mergeComponents(localComponents); // local wins
+      mergedOpts.components = combined;
+    }
+
+    options = mergedOpts;
+  }
+
+  // ── Resolve string selector ──
+  if (typeof root === 'string') {
+    const found = document.querySelector(root);
+    if (!found) throw new Error(`[Dalila] bind: element not found: ${root}`);
+    root = found;
+  }
+
+  // ── Component registry propagation via context ──
+  if (options.components) {
+    const existing = (ctx as BindContext)[COMPONENT_REGISTRY_KEY];
+    const merged = new Map(existing instanceof Map ? existing as Map<string, Component> : []);
+    if (Array.isArray(options.components)) {
+      for (const comp of options.components) {
+        if (!isComponent(comp)) {
+          warn('bind: components[] contains an invalid component entry');
+          continue;
+        }
+        merged.set(comp.definition.tag, comp);
+      }
+    } else {
+      for (const [key, comp] of Object.entries(options.components)) {
+        if (!isComponent(comp)) {
+          warn(`bind: components["${key}"] is not a valid component`);
+          continue;
+        }
+        const tag = comp.definition.tag;
+        if (key !== tag) {
+          warn(`bind: components key "${key}" differs from component tag "${tag}" (using "${tag}")`);
+        }
+        merged.set(tag, comp);
+      }
+    }
+    // Preserve prototype/inherited lookups from the original context.
+    const ctxWithRegistry = Object.create(ctx) as BindContext;
+    ctxWithRegistry[COMPONENT_REGISTRY_KEY] = merged;
+    ctx = ctxWithRegistry as T;
+  }
+
   const events = options.events ?? DEFAULT_EVENTS;
+  const onMountError = options.onMountError ?? 'log';
   const rawTextSelectors = options.rawTextSelectors ?? DEFAULT_RAW_TEXT_SELECTORS;
   const templatePlanCacheConfig = resolveTemplatePlanCacheConfig(options);
   const benchSession = createBindBenchSession();
@@ -3011,35 +3689,47 @@ export function bind<T extends Record<string, unknown> = BindContext>(
     // 4. d-each — must run early: removes templates before TreeWalker visits them
     bindEach(root, ctx, cleanups);
 
-    // 5. d-ref — collect element references (after d-each removes templates)
+    // 5. Components — must run after d-each but before d-ref / text interpolation
+    bindComponents(root, ctx, events, cleanups, onMountError);
+
+    // 6. d-ref — collect element references (after d-each removes templates)
     bindRef(root, refs);
 
-    // 6. Text interpolation (template plan cache + lazy parser fallback)
+    // 6.5. d-text — safe textContent binding (before text interpolation)
+    bindText(root, ctx, cleanups);
+
+    // 7. Text interpolation (template plan cache + lazy parser fallback)
     bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
 
-    // 7. d-attr bindings
+    // 8. d-attr bindings
     bindAttrs(root, ctx, cleanups);
 
-    // 8. d-html bindings
+    // 9. d-bind-* two-way bindings
+    bindTwoWay(root, ctx, cleanups);
+
+    // 10. d-html bindings
     bindHtml(root, ctx, cleanups);
 
-    // 9. Form fields — register fields with form instances
+    // 11. Form fields — register fields with form instances
     bindField(root, ctx, cleanups);
 
-    // 10. Event bindings
+    // 12. Event bindings
     bindEvents(root, ctx, events, cleanups);
 
-    // 11. d-when directive
+    // 13. d-emit-* bindings (component template → parent)
+    bindEmit(root, ctx, cleanups);
+
+    // 14. d-when directive
     bindWhen(root, ctx, cleanups);
 
-    // 12. d-match directive
+    // 15. d-match directive
     bindMatch(root, ctx, cleanups);
 
-    // 13. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
+    // 16. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
     bindError(root, ctx, cleanups);
     bindFormError(root, ctx, cleanups);
 
-    // 14. d-if — must run last: elements are fully bound before conditional removal
+    // 17. d-if — must run last: elements are fully bound before conditional removal
     bindIf(root, ctx, cleanups);
   });
 
@@ -3129,5 +3819,67 @@ export function autoBind<T extends Record<string, unknown> = BindContext>(
     } else {
       doBind();
     }
+  });
+}
+
+// ============================================================================
+// mount() — Imperative Component Mounting + Shorthand bind()
+// ============================================================================
+
+/**
+ * Mount a component imperatively, or bind a selector to a view-model.
+ *
+ * Overload 1 — `mount(selector, vm, options?)`:
+ *   Shorthand for `bind(selector, vm, options)`.
+ *
+ * Overload 2 — `mount(component, target, props?)`:
+ *   Mount a component created with defineComponent() into a target element.
+ */
+export function mount<T extends object>(
+  selector: string,
+  vm: T,
+  options?: BindOptions
+): BindHandle;
+export function mount(
+  component: Component,
+  target: Element,
+  props?: Record<string, unknown>
+): BindHandle;
+export function mount(
+  first: Component | string,
+  second: Element | object,
+  third?: Record<string, unknown> | BindOptions
+): BindHandle {
+  // Overload 1: mount(selector, vm, options?)
+  if (typeof first === 'string' && !isComponent(first)) {
+    return bind(first, second as Record<string, unknown>, (third ?? {}) as BindOptions);
+  }
+
+  // Overload 2: mount(component, target, props?)
+  const component = first as Component;
+  const target = second as Element;
+  const props = third as Record<string, unknown> | undefined;
+
+  const def = component.definition;
+
+  const el = document.createElement(def.tag);
+  if (props) {
+    for (const key of Object.keys(props)) {
+      el.setAttribute(`d-props-${camelToKebab(key)}`, key);
+    }
+  }
+  target.appendChild(el);
+
+  const parentCtx: BindContext = {};
+  if (props) {
+    for (const [key, value] of Object.entries(props)) {
+      parentCtx[key] = isSignal(value) ? value : signal(value);
+    }
+  }
+
+  return bind(el, parentCtx, {
+    components: { [def.tag]: component },
+    _skipLifecycle: true,
+    _internal: true,
   });
 }

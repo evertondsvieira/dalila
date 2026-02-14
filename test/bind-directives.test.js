@@ -22,7 +22,7 @@ import test   from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-import { signal }  from '../dist/core/signal.js';
+import { signal, computed }  from '../dist/core/signal.js';
 import { bind }    from '../dist/runtime/bind.js';
 
 // ─── shared helpers ─────────────────────────────────────────────────────────
@@ -1050,5 +1050,334 @@ test('d-html – warns on onerror= pattern in dev mode', async () => {
     });
 
     assert.ok(warns.some(w => w.includes('potentially unsafe')));
+  });
+});
+
+// ─── 15  d-bind-* two-way binding ──────────────────────────────────────────
+
+test('d-bind-value – signal → input (outbound)', async () => {
+  await withDom(async (doc) => {
+    const name = signal('hello');
+    const root = el(doc, '<div><input d-bind-value="name" /></div>');
+    bind(root, { name });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    assert.equal(input.value, 'hello');
+  });
+});
+
+test('d-bind-value – input → signal (inbound)', async () => {
+  await withDom(async (doc) => {
+    const name = signal('');
+    const root = el(doc, '<div><input d-bind-value="name" /></div>');
+    bind(root, { name });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    input.value = 'typed';
+    input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+
+    assert.equal(name(), 'typed');
+  });
+});
+
+test('d-bind-value – two-way roundtrip', async () => {
+  await withDom(async (doc) => {
+    const name = signal('A');
+    const root = el(doc, '<div><input d-bind-value="name" /></div>');
+    bind(root, { name });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    assert.equal(input.value, 'A');
+
+    // User types 'B'
+    input.value = 'B';
+    input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+    assert.equal(name(), 'B');
+
+    // Programmatic update to 'C'
+    name.set('C');
+    await tick(10);
+    assert.equal(input.value, 'C');
+  });
+});
+
+test('d-bind-value – textarea', async () => {
+  await withDom(async (doc) => {
+    const text = signal('initial');
+    const root = el(doc, '<div><textarea d-bind-value="text"></textarea></div>');
+    bind(root, { text });
+    await tick(10);
+
+    const ta = root.querySelector('textarea');
+    assert.equal(ta.value, 'initial');
+
+    ta.value = 'updated';
+    ta.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+    assert.equal(text(), 'updated');
+  });
+});
+
+test('d-bind-value – select uses change event', async () => {
+  await withDom(async (doc) => {
+    const choice = signal('b');
+    const root = el(doc, `<div>
+      <select d-bind-value="choice">
+        <option value="a">A</option>
+        <option value="b">B</option>
+        <option value="c">C</option>
+      </select>
+    </div>`);
+    bind(root, { choice });
+    await tick(10);
+
+    const select = root.querySelector('select');
+    assert.equal(select.value, 'b');
+
+    select.value = 'c';
+    select.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+    await tick(10);
+    assert.equal(choice(), 'c');
+  });
+});
+
+test('d-bind-checked – checkbox two-way', async () => {
+  await withDom(async (doc) => {
+    const done = signal(false);
+    const root = el(doc, '<div><input type="checkbox" d-bind-checked="done" /></div>');
+    bind(root, { done });
+    await tick(10);
+
+    const cb = root.querySelector('input');
+    assert.equal(cb.checked, false);
+
+    // Simulate user click
+    cb.checked = true;
+    cb.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+    await tick(10);
+    assert.equal(done(), true);
+
+    // Programmatic uncheck
+    done.set(false);
+    await tick(10);
+    assert.equal(cb.checked, false);
+  });
+});
+
+test('d-bind-value – warns when binding is not a signal', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div><input d-bind-value="name" /></div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { name: 'plain string' });
+      await tick(10);
+    });
+
+    assert.ok(warns.some(w => w.includes('must be a signal')),
+      'must warn that binding is not a signal');
+  });
+});
+
+test('d-bind-value – read-only signal keeps outbound and disables inbound', async () => {
+  await withDom(async (doc) => {
+    globalThis.__dalila_dev = true;
+
+    const source = signal('derived');
+    const readonly = computed(() => source());
+    const root = el(doc, '<div><input d-bind-value="readonly" /></div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { readonly });
+      await tick(10);
+    });
+
+    const input = root.querySelector('input');
+    assert.equal(input.value, 'derived');
+    assert.ok(warns.some(w => w.includes('read-only') && w.includes('inbound updates disabled')),
+      'must warn about read-only signal inbound disable');
+
+    // Inbound user input must not throw and must not update source.
+    input.value = 'typed';
+    input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+    assert.equal(source(), 'derived');
+
+    // Outbound sync still works.
+    source.set('updated');
+    await tick(10);
+    assert.equal(input.value, 'updated');
+
+    delete globalThis.__dalila_dev;
+  });
+});
+
+test('d-bind-value – cleanup on dispose', async () => {
+  await withDom(async (doc) => {
+    const name = signal('before');
+    const root = el(doc, '<div><input d-bind-value="name" /></div>');
+    const dispose = bind(root, { name });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    assert.equal(input.value, 'before');
+
+    dispose();
+
+    // After dispose, input events should not update the signal
+    input.value = 'after';
+    input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+    assert.equal(name(), 'before', 'signal must not change after dispose');
+  });
+});
+
+// ─── d-text ──────────────────────────────────────────────────────────────────
+
+test('d-text – static value', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div><span d-text="msg"></span></div>');
+    bind(root, { msg: 'hello' });
+    await tick(10);
+    assert.equal(root.querySelector('span').textContent, 'hello');
+  });
+});
+
+test('d-text – signal value', async () => {
+  await withDom(async (doc) => {
+    const msg = signal('initial');
+    const root = el(doc, '<div><span d-text="msg"></span></div>');
+    bind(root, { msg });
+    await tick(10);
+    assert.equal(root.querySelector('span').textContent, 'initial');
+
+    msg.set('updated');
+    await tick(10);
+    assert.equal(root.querySelector('span').textContent, 'updated');
+  });
+});
+
+test('d-text – computed value', async () => {
+  await withDom(async (doc) => {
+    const count = signal(5);
+    const doubled = computed(() => count() * 2);
+    const root = el(doc, '<div><span d-text="doubled"></span></div>');
+    bind(root, { doubled });
+    await tick(10);
+    assert.equal(root.querySelector('span').textContent, '10');
+
+    count.set(3);
+    await tick(10);
+    assert.equal(root.querySelector('span').textContent, '6');
+  });
+});
+
+test('d-text – null/undefined renders empty string', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div><span d-text="val"></span></div>');
+    bind(root, { val: null });
+    await tick(10);
+    assert.equal(root.querySelector('span').textContent, '');
+  });
+});
+
+// ─── d-if + d-else ───────────────────────────────────────────────────────────
+
+test('d-if + d-else – basic toggle', async () => {
+  await withDom(async (doc) => {
+    const show = signal(true);
+    const root = el(doc, '<div><p d-if="show">yes</p><p d-else>no</p></div>');
+    bind(root, { show });
+    await tick(10);
+
+    assert.equal(root.querySelectorAll('p').length, 1);
+    assert.equal(root.querySelector('p').textContent, 'yes');
+
+    show.set(false);
+    await tick(10);
+
+    assert.equal(root.querySelectorAll('p').length, 1);
+    assert.equal(root.querySelector('p').textContent, 'no');
+
+    show.set(true);
+    await tick(10);
+    assert.equal(root.querySelector('p').textContent, 'yes');
+  });
+});
+
+test('d-if + d-else – initial false shows else', async () => {
+  await withDom(async (doc) => {
+    const show = signal(false);
+    const root = el(doc, '<div><p d-if="show">yes</p><p d-else>no</p></div>');
+    bind(root, { show });
+    await tick(10);
+
+    assert.equal(root.querySelectorAll('p').length, 1);
+    assert.equal(root.querySelector('p').textContent, 'no');
+  });
+});
+
+test('d-if without d-else – backward compat', async () => {
+  await withDom(async (doc) => {
+    const show = signal(true);
+    const root = el(doc, '<div><p d-if="show">visible</p></div>');
+    bind(root, { show });
+    await tick(10);
+
+    assert.equal(root.querySelectorAll('p').length, 1);
+
+    show.set(false);
+    await tick(10);
+
+    assert.equal(root.querySelectorAll('p').length, 0);
+  });
+});
+
+// ─── d-each alias ────────────────────────────────────────────────────────────
+
+test('d-each – "items as fruit" alias in context', async () => {
+  await withDom(async (doc) => {
+    const items = signal(['Apple', 'Banana', 'Cherry']);
+    const root = el(doc, '<div><span d-each="items as fruit" d-text="fruit"></span></div>');
+    bind(root, { items });
+    await tick(10);
+
+    const spans = root.querySelectorAll('span');
+    assert.equal(spans.length, 3);
+    assert.equal(spans[0].textContent, 'Apple');
+    assert.equal(spans[1].textContent, 'Banana');
+    assert.equal(spans[2].textContent, 'Cherry');
+  });
+});
+
+test('d-each – plain syntax backward compat', async () => {
+  await withDom(async (doc) => {
+    const items = signal(['A', 'B']);
+    const root = el(doc, '<div><span d-each="items">{item}</span></div>');
+    bind(root, { items });
+    await tick(10);
+
+    const spans = root.querySelectorAll('span');
+    assert.equal(spans.length, 2);
+    assert.equal(spans[0].textContent, 'A');
+    assert.equal(spans[1].textContent, 'B');
+  });
+});
+
+test('d-each – alias with d-key resolves item', async () => {
+  await withDom(async (doc) => {
+    const items = signal(['X', 'Y']);
+    const root = el(doc, '<div><span d-each="items as letter" d-key="letter" d-text="letter"></span></div>');
+    bind(root, { items });
+    await tick(10);
+
+    const spans = root.querySelectorAll('span');
+    assert.equal(spans.length, 2);
+    assert.equal(spans[0].textContent, 'X');
+    assert.equal(spans[1].textContent, 'Y');
   });
 });

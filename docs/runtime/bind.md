@@ -6,26 +6,30 @@ No `eval`, no inline JS — directive attributes resolve identifiers from contex
 ## How it works
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                        bind() pipeline                             │
-│                                                                    │
-│   HTML template ──► bind(root, ctx) ──► live reactive DOM          │
-│                          │                                         │
-│                          ├─ 1  d-virtual-each fixed-height window  │
-│                          ├─ 2  d-each      remove template,        │
-│                          │                 clone + bind per item   │
-│                          ├─ 3  d-ref       collect element refs    │
-│                          ├─ 4  {...}       reactive text nodes     │
-│                          ├─ 5  d-attr-*    attributes / props      │
-│                          ├─ 6  d-html      innerHTML               │
-│                          ├─ 7  d-on-*      event listeners         │
-│                          ├─ 8  d-when      display toggle          │
-│                          ├─ 9  d-match/case conditional show       │
-│                          └─ 10 d-if        add / remove from DOM   │
-│                                                                    │
-│   All reactive effects are owned by a scope.                       │
-│   dispose() stops every effect and removes every listener.         │
-└────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         bind() pipeline                              │
+│                                                                      │
+│   HTML template ──► bind(root, ctx) ──► live reactive DOM            │
+│                          │                                           │
+│                          ├─ 1  d-virtual-each fixed-height window    │
+│                          ├─ 2  d-each       remove template,         │
+│                          │                  clone + bind per item    │
+│                          ├─ 3  components   resolve custom tags      │
+│                          ├─ 4  d-ref        collect element refs     │
+│                          ├─ 5  d-text       safe textContent binding │
+│                          ├─ 6  {...}        reactive text nodes      │
+│                          ├─ 7  d-attr-*     attributes / props       │
+│                          ├─ 8  d-bind-*     two-way binding          │
+│                          ├─ 9  d-html       innerHTML                │
+│                          ├─ 10 d-on-*       event listeners          │
+│                          ├─ 11 d-emit-*     component → parent emit  │
+│                          ├─ 12 d-when       display toggle           │
+│                          ├─ 13 d-match/case conditional show         │
+│                          └─ 14 d-if/d-else  add / remove from DOM    │
+│                                                                      │
+│   All reactive effects are owned by a scope.                         │
+│   dispose() stops every effect and removes every listener.           │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key invariants:**
@@ -39,7 +43,7 @@ No `eval`, no inline JS — directive attributes resolve identifiers from contex
 ### bind
 
 ```ts
-function bind(root: Element, ctx: BindContext, options?: BindOptions): BindHandle
+function bind(root: Element | string, ctx: BindContext, options?: BindOptions): BindHandle
 
 interface BindContext {
   [key: string]: unknown;   // signals, getters, handlers, plain values
@@ -51,6 +55,20 @@ interface BindOptions {
 
   /** CSS selectors inside which {...} interpolation is skipped. Default: 'pre, code' */
   rawTextSelectors?: string;
+
+  /** Runtime cache policy for text interpolation template plans */
+  templatePlanCache?: {
+    /** Maximum number of cached template plans (0 disables cache). Default: 250 */
+    maxEntries?: number;
+    /** Time-to-live (ms) per plan, refreshed on hit (0 disables cache). Default: 600000 */
+    ttlMs?: number;
+  };
+
+  /** Component registry — map `{ tag: component }` or list `[component]` */
+  components?: Record<string, Component> | Component[];
+
+  /** Error policy for component ctx.onMount() callbacks. Default: 'log' */
+  onMountError?: 'log' | 'throw';
 }
 
 type DisposeFunction = () => void;
@@ -67,6 +85,20 @@ interface BindHandle {
 
 `BindHandle` is callable as `() => void`, so it is fully backward-compatible with code that expects a `DisposeFunction`.
 
+`onMountError` controls how component `ctx.onMount()` callback failures are handled:
+- `'log'` (default): catches and logs the error, preserving the rest of the bind pipeline.
+- `'throw'`: rethrows the error.
+
+Note: `ctx.onMount()` runs after the component DOM swap, so thrown errors do not roll back already-rendered DOM.
+
+`root` can be a CSS selector string instead of an `Element`. If the selector matches no element, `bind()` throws.
+
+```ts
+// These are equivalent:
+bind(document.querySelector('.app')!, ctx);
+bind('.app', ctx);
+```
+
 ### autoBind
 
 ```ts
@@ -74,6 +106,69 @@ function autoBind(selector: string, ctx: BindContext, options?: BindOptions): Pr
 ```
 
 Convenience wrapper — waits for `DOMContentLoaded` if the document is still loading, then calls `bind()`.
+
+### configure
+
+```ts
+function configure(config: BindOptions): void
+```
+
+Sets global defaults for all `bind()` / `mount()` calls. Options set here are merged with per-call options (per-call wins). For `components`, both registries are combined (local takes precedence). Call with `{}` to reset.
+
+```ts
+import { configure } from 'dalila/runtime';
+
+configure({
+  components: [FruitPicker, UserCard],
+  onMountError: 'log',
+});
+```
+
+### mount
+
+```ts
+// Overload 1 — shorthand for bind()
+function mount(selector: string, vm: Record<string, unknown>, options?: BindOptions): BindHandle
+
+// Overload 2 — imperative component mounting
+function mount(component: Component, target: Element, props?: Record<string, unknown>): BindHandle
+```
+
+**Overload 1** is a convenience alias for `bind(selector, vm, options)`:
+
+```ts
+import { configure, mount } from 'dalila/runtime';
+import { signal } from 'dalila';
+
+configure({ components: [MyComponent] });
+
+mount('.app', {
+  count: signal(0),
+  increment: () => count.update(n => n + 1),
+});
+```
+
+**Overload 2** imperatively mounts a component into a target element. Props can be plain values or signals — plain values are wrapped in a signal automatically.
+
+```ts
+import { mount, defineComponent } from 'dalila/runtime';
+
+const UserCard = defineComponent({
+  tag: 'user-card',
+  template: '<span>{name}</span>',
+  props: { name: String },
+  setup(props) { return { name: props.name }; },
+});
+
+const handle = mount(UserCard, document.getElementById('container')!, {
+  name: 'Alice',
+});
+
+// Later:
+handle(); // dispose
+```
+
+`mount()` only binds the created component element — existing content in `target` is not rebound.
 
 ## Basic Usage
 
@@ -132,7 +227,53 @@ Replaces `{...}` placeholders with expression results from the context.  Multipl
 | `null` / `undefined` | Renders as **empty string** |
 | anything else | Stringified once (static) |
 
+**Synchronous initial render:** The first render of every expression is synchronous — the text node is populated during `bind()`, before the microtask flush. This prevents a brief empty flash for initial values.
+
 Text inside `<pre>` and `<code>` is skipped by default (configurable via `rawTextSelectors`).
+
+### Safe text binding `d-text`
+
+Sets `textContent` from a context value. Safe from XSS by design — no HTML parsing.
+
+```html
+<span d-text="username"></span>
+<p d-text="statusMessage"></p>
+```
+
+| Value | Result |
+|---|---|
+| `null` / `undefined` | textContent is set to **empty string** |
+| signal / zero-arity function | Reactive — updates automatically |
+| anything else | Stringified once (static) |
+
+`d-text` is an alternative to `{...}` interpolation when you want to set the entire text content of an element to a single value. It runs before text interpolation in the pipeline, so elements with `d-text` can also contain `{...}` tokens in child elements.
+
+#### Expression engine
+
+The `{...}` interpolation supports a safe subset of JavaScript expressions. **No `eval` or `new Function` is used** — all expressions are parsed and evaluated by a built-in expression engine.
+
+| Category | Operators |
+|---|---|
+| Arithmetic | `+`, `-`, `*`, `/`, `%` |
+| Comparison | `<`, `>`, `<=`, `>=` |
+| Equality | `==`, `!=`, `===`, `!==` |
+| Logical | `&&`, `\|\|`, `!` |
+| Nullish coalescing | `??` |
+| Ternary | `condition ? a : b` |
+| Member access | `obj.prop`, `obj[0]` |
+| Optional chaining | `obj?.prop`, `arr?.[0]` |
+| Unary | `!`, `+`, `-` |
+| Grouping | `(expr)` |
+| Literals | `true`, `false`, `null`, `undefined`, numbers, strings (`'...'` / `"..."`) |
+
+Nested member access on signals and zero-arity getters is tracked reactively:
+
+```html
+<!-- user is { name: signal('Ana') } — updates when the inner signal changes -->
+<p>{user.name}</p>
+```
+
+**Not supported in expressions:** function calls (`foo()`), assignment, `typeof`, `instanceof`, destructuring, template literals.
 
 ---
 
@@ -141,7 +282,7 @@ Text inside `<pre>` and `<code>` is skipped by default (configurable via `rawTex
 Binds an event listener.  The attribute value must name a **function** in the context.
 
 ```html
-<button d-on-click="increment">+</button>
+<button  d-on-click="increment">+</button>
 <input   d-on-input="onInput">
 <form    d-on-submit="onSubmit">
 ```
@@ -197,7 +338,7 @@ Reactive: re-evaluates whenever the bound signal changes.
 
 ---
 
-### Conditional rendering `d-if`
+### Conditional rendering `d-if` / `d-else`
 
 Adds or removes the element from the DOM entirely.  A comment node is left as a placeholder so the element can be re-inserted when the condition becomes truthy again.
 
@@ -206,6 +347,23 @@ Adds or removes the element from the DOM entirely.  A comment node is left as a 
 ```
 
 Use `d-if` instead of `d-when` when you want the element's subtree to be removed (saves layout/paint cost) or when you need to prevent its children from being visible at all.
+
+#### `d-else`
+
+If the **immediate next sibling** of a `d-if` element has the `d-else` attribute, the two branches toggle inversely: when the condition is truthy the `d-if` element is shown and the `d-else` element is hidden, and vice versa.
+
+```html
+<div d-if="hasItems">
+  <p>Items found!</p>
+</div>
+<div d-else>
+  <p>No items.</p>
+</div>
+```
+
+- Only the immediate next sibling is checked — no deep search.
+- `d-if` without `d-else` works exactly as before.
+- Both branches are fully bound before the conditional toggle runs (since `d-if` is the last pipeline step).
 
 ---
 
@@ -236,10 +394,22 @@ Repeats an element for every item in an array or signal-of-array.  The element w
 
 ```html
 <ul>
-  <li d-each="users">{name} — {email}</li>
-  <li d-each="users" d-key="id">{name} — {email}</li>
+  <li d-each="users as user">{user.name} — {user.email}</li>
+  <li d-each="users as user" d-key="id">{user.name} — {user.email}</li>
 </ul>
 ```
+
+For compatibility, object-item fields can still be referenced directly (`{name}`), but the recommended style is explicit alias access (`{user.name}`).
+
+#### Alias syntax
+
+Use `as` to give the current item a custom name instead of the default `item`:
+
+```html
+<button d-each="fruits as fruit" d-key="fruit" d-text="fruit"></button>
+```
+
+The alias is available in all child directives (`d-text`, `d-key`, `d-emit-click`, `{...}`, etc.). The default `item` name is still set for backward compatibility even when an alias is used.
 
 #### Keyed diffing
 
@@ -269,6 +439,7 @@ Each clone's context **inherits from the parent** via the prototype chain.  Hand
 |---|---|---|
 | *(spread)* | own properties of `item` | only when `item` is an object |
 | `item` | the raw item | always available — even for objects |
+| *alias* | the raw item | when using `d-each="items as fruit"`, exposed as `fruit` |
 | `$index` | `0, 1, 2 …` | zero-based position |
 | `$count` | length of the array | |
 | `$first` | `true` on the first item | |
@@ -383,6 +554,88 @@ Certain attributes must be set as DOM **properties** (not attributes) to reflect
 | `indeterminate` | `.indeterminate` | boolean |
 
 This means `d-attr-value` stays in sync even after the user has typed into an input — `setAttribute` alone cannot do that.
+
+---
+
+### Two-way binding `d-bind-*`
+
+Binds a **signal** to a form element property with automatic synchronization in both directions:
+- **Outbound:** signal changes update the DOM property.
+- **Inbound:** user interaction updates the signal.
+
+```html
+<input d-bind-value="name" />
+<textarea d-bind-value="bio"></textarea>
+<select d-bind-value="choice">
+  <option value="a">A</option>
+  <option value="b">B</option>
+</select>
+<input type="checkbox" d-bind-checked="agree" />
+```
+
+```ts
+import { signal } from 'dalila';
+import { bind }   from 'dalila/runtime';
+
+const name  = signal('');
+const bio   = signal('');
+const choice = signal('a');
+const agree = signal(false);
+
+bind(document.getElementById('app')!, { name, bio, choice, agree });
+```
+
+#### Supported properties
+
+| Directive | Property | Event | Elements |
+|---|---|---|---|
+| `d-bind-value` | `.value` (string) | `input` | `<input>`, `<textarea>` |
+| `d-bind-value` | `.value` (string) | `change` | `<select>` |
+| `d-bind-checked` | `.checked` (boolean) | `change` | `<input type="checkbox">` |
+
+#### Rules
+
+| Rule | Description |
+|---|---|
+| Signal only | The context value **must** be a signal. Non-signals produce a dev-mode warning and are skipped. |
+| No infinite loop | Signals perform equality checks — setting the same value does not re-trigger the effect. |
+| Cleanup | `dispose()` removes the inbound event listener and stops the outbound effect. |
+| Attribute removal | The `d-bind-*` attribute is removed from the DOM after processing. |
+
+> **Tip:** `d-bind-value` replaces the common `d-attr-value` + `d-on-input` pattern, reducing two directives to one.
+
+---
+
+## Template Plan Cache
+
+Text interpolation compiles a **template plan** (list of text nodes and their expression segments) for each `bind()` call. Plans are cached using a structural hash of the DOM tree, so repeated `bind()` calls on structurally identical templates skip the scanning phase entirely.
+
+**Defaults:** max 250 entries, 10-minute TTL (refreshed on hit).
+
+Configure per `bind()` call:
+
+```ts
+bind(root, ctx, {
+  templatePlanCache: { maxEntries: 100, ttlMs: 300_000 },
+});
+```
+
+Or globally:
+
+```ts
+globalThis.__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 0 }; // disables cache
+```
+
+`bind()` options override the global config when both are set.
+
+### Bench mode (dev only)
+
+Set `globalThis.__dalila_bind_bench = true` to collect per-bind timing stats in `globalThis.__dalila_bind_bench_stats`:
+
+```ts
+globalThis.__dalila_bind_bench_stats.last;
+// { scanMs, parseMs, totalExpressions, fastPathExpressions, fastPathHitPercent, planCacheHit }
+```
 
 ---
 
@@ -549,6 +802,7 @@ No special handling needed — the effect re-queries `[case]` children each time
 
 ## See Also
 
+- [Components](./component.md) — declarative component system
 - [Signals](../core/signals.md) — reactive primitives
 - [Scope](../core/scope.md) — lifecycle and automatic cleanup
 - [Template Spec](../template-spec.md) — full directive syntax reference
