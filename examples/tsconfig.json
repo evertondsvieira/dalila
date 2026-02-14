@@ -5,9 +5,10 @@
     "rootDir": "../",
     "baseUrl": "..",
     "paths": {
-      "dalila": ["src/index.ts"]
+      "dalila": ["src/index.ts"],
+      "dalila/*": ["src/*"]
     }
   },
-  "include": ["./playground/**/*"],
+  "include": ["./**/*"],
   "exclude": ["../node_modules", "../dist", "../**/*.test.ts"]
 }

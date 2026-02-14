@@ -718,6 +718,12 @@ const server = http.createServer((req, res) => {
   const effectivePath =
     requestPath === '/' || requestPath === '/index.html' ? defaultEntry : requestPath;
   let resolvedRequestPath = effectivePath;
+  const fetchModeHeader = req.headers['sec-fetch-mode'];
+  const fetchDestHeader = req.headers['sec-fetch-dest'];
+  const fetchMode = Array.isArray(fetchModeHeader) ? fetchModeHeader[0] : fetchModeHeader;
+  const fetchDest = Array.isArray(fetchDestHeader) ? fetchDestHeader[0] : fetchDestHeader;
+  const isNavigationRequest = fetchMode === 'navigate' || fetchDest === 'document';
+  const isScriptRequest = fetchDest === 'script';
   const fsPath = resolvePath(effectivePath);
 
   if (!fsPath) {
@@ -748,15 +754,46 @@ const server = http.createServer((req, res) => {
         return;
       }
     } else {
-      const spaFallback = resolveSpaFallbackPath(requestPath);
-      if (spaFallback) {
-        targetPath = spaFallback.fsPath;
-        resolvedRequestPath = spaFallback.requestPath;
+      // Extensionless import — try .ts, then .js
+      const tsPath = targetPath + '.ts';
+      const jsPath = targetPath + '.js';
+      if (!path.extname(targetPath) && isScriptRequest && fs.existsSync(tsPath)) {
+        targetPath = tsPath;
+      } else if (!path.extname(targetPath) && isScriptRequest && fs.existsSync(jsPath)) {
+        targetPath = jsPath;
       } else {
-        send(res, 404, 'Not Found');
-        return;
+        const spaFallback = resolveSpaFallbackPath(requestPath);
+        if (spaFallback) {
+          targetPath = spaFallback.fsPath;
+          resolvedRequestPath = spaFallback.requestPath;
+        } else {
+          send(res, 404, 'Not Found');
+          return;
+        }
       }
     }
+  }
+
+  // Raw import — serve file as `export default` JS module.
+  // Triggered by ?raw suffix OR .html imported as script/module.
+  const isRawQuery = req.url && req.url.includes('?raw');
+  const isHtmlModuleImport = targetPath.endsWith('.html')
+    && isScriptRequest
+    && !isNavigationRequest;
+  if (isRawQuery || isHtmlModuleImport) {
+    fs.readFile(targetPath, 'utf8', (err, source) => {
+      if (err) {
+        send(res, err.code === 'ENOENT' ? 404 : 500, err.code === 'ENOENT' ? 'Not Found' : 'Error');
+        return;
+      }
+      const escaped = source.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+      res.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      });
+      res.end(`export default \`${escaped}\`;`);
+    });
+    return;
   }
 
   // TypeScript transpilation (only if ts available)
@@ -1009,5 +1046,8 @@ setupWatcher();
 startKeepalive();
 
 server.listen(port, () => {
-  console.log(`Dalila dev server on http://localhost:${port}`);
+  console.log('');
+  console.log('  🐰 ✂️  Dalila dev server');
+  console.log(`        http://localhost:${port}`);
+  console.log('');
 });

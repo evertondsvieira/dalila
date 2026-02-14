@@ -1,4 +1,4 @@
-# Dalila
+# 🐰 ✂️ Dalila
 
 **DOM-first reactivity without the re-renders.**
 
@@ -58,7 +58,8 @@ bind(document.getElementById('app')!, ctx);
 
 ### Runtime
 
-- [Template Binding](./docs/runtime/bind.md) — `bind()`, text interpolation, events
+- [Template Binding](./docs/runtime/bind.md) — `bind()`, `mount()`, `configure()`, text interpolation, events
+- [Components](./docs/runtime/component.md) — `defineComponent`, typed props/emits/refs, slots
 - [FOUC Prevention](./docs/runtime/fouc-prevention.md) — Automatic token hiding
 
 ### Routing
@@ -107,7 +108,7 @@ Firefox extension workflows:
 
 ```
 dalila           → signal, computed, effect, batch, ...
-dalila/runtime   → bind() for HTML templates
+dalila/runtime   → bind(), mount(), configure(), defineComponent()
 dalila/context   → createContext, provide, inject
 dalila/http      → createHttpClient with XSRF protection
 ```
@@ -130,10 +131,13 @@ count.set(5); // logs: Count is 5
 ### Template Binding
 
 ```ts
-import { bind } from 'dalila/runtime';
+import { configure, mount } from 'dalila/runtime';
 
-// Binds {tokens}, d-on-*, d-when, d-match to the DOM
-const dispose = bind(rootElement, ctx);
+// Global component registry and options
+configure({ components: [MyComponent] });
+
+// Bind a selector to a reactive view-model
+const dispose = mount('.app', { count: signal(0) });
 
 // Cleanup when done
 dispose();
@@ -279,39 +283,46 @@ async function handleSubmit(data, { signal }) {
 
 ```ts
 // page.ts
-import { signal } from 'dalila';
+import { computed, signal } from 'dalila';
 import { createDialog, mountUI } from 'dalila/components/ui';
 
-const dialog = createDialog();
+class HomePageVM {
+  count = signal(0);
+  status = computed(() => `Count: ${this.count()}`);
+  dialog = createDialog({ closeOnBackdrop: true, closeOnEscape: true });
+  increment = () => this.count.update(n => n + 1);
+  openModal = () => this.dialog.show();
+  closeModal = () => this.dialog.close();
+}
 
 export function loader() {
-  const count = signal(0);
-
-  return {
-    count,
-    increment: () => count.update(n => n + 1),
-    openDialog: () => dialog.show(),
-  };
+  return new HomePageVM();
 }
 
 // Called after view is mounted
-export function onMount(root: HTMLElement) {
-  mountUI(root, {
-    dialogs: { dialog }
+export function onMount(root: HTMLElement, data: HomePageVM) {
+  return mountUI(root, {
+    dialogs: { dialog: data.dialog },
+    events: []
   });
 }
+
+// Optional extra hook on route leave
+export function onUnmount(_root: HTMLElement) {}
 ```
 
 ```html
 <!-- page.html -->
-<d-button d-on-click="openDialog">Open Dialog</d-button>
+<d-button d-on-click="increment">Increment</d-button>
+<d-button d-on-click="openModal">Open Dialog</d-button>
 
 <d-dialog d-ui="dialog">
   <d-dialog-header>
-    <d-dialog-title>Count: {count}</d-dialog-title>
+    <d-dialog-title>{status}</d-dialog-title>
+    <d-dialog-close d-on-click="closeModal">&times;</d-dialog-close>
   </d-dialog-header>
   <d-dialog-body>
-    <d-button d-on-click="increment">Increment</d-button>
+    <p>Modal controlled by the official route + UI pattern.</p>
   </d-dialog-body>
 </d-dialog>
 ```

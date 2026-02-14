@@ -130,6 +130,16 @@ effect(() => {
 
 ## Lifecycle Hooks
 
+### Naming note
+
+There are multiple `onMount` APIs in Dalila:
+
+- `onMount(() => {})` from `dalila` (this page): scope-level helper.
+- `ctx.onMount(() => {})` in `defineComponent(...).setup(...)`: component lifecycle helper.
+- `export function onMount(root)` in route modules: router lifecycle hook.
+
+This page documents the **scope-level** `onMount` from `dalila`.
+
 ### onMount
 
 Runs once when the scope becomes active:
