@@ -140,6 +140,101 @@ test('Router - layout-only segment root does not keep stale DOM', { concurrency:
   });
 });
 
+test('Router - route lifecycle supports onMount cleanup return and onUnmount', { concurrency: false }, async () => {
+  await withDom('/a', async () => {
+    const outlet = document.createElement('main');
+    document.body.appendChild(outlet);
+
+    let mountCalls = 0;
+    let cleanupCalls = 0;
+    let unmountCalls = 0;
+
+    const router = createRouter({
+      outlet,
+      routes: [
+        {
+          path: '/a',
+          view: () => {
+            const el = document.createElement('div');
+            el.textContent = 'route-a';
+            return el;
+          },
+          onMount: () => {
+            mountCalls += 1;
+            return () => {
+              cleanupCalls += 1;
+            };
+          },
+          onUnmount: () => {
+            unmountCalls += 1;
+          }
+        },
+        {
+          path: '/b',
+          view: () => {
+            const el = document.createElement('div');
+            el.textContent = 'route-b';
+            return el;
+          }
+        }
+      ]
+    });
+
+    router.start();
+    await tick(20);
+
+    assert.equal(mountCalls, 1);
+    assert.equal(cleanupCalls, 0);
+    assert.equal(unmountCalls, 0);
+
+    await router.navigate('/b');
+    await tick(20);
+
+    assert.equal(cleanupCalls, 1);
+    assert.equal(unmountCalls, 1);
+
+    router.stop();
+  });
+});
+
+test('Router - stop() triggers route lifecycle cleanup', { concurrency: false }, async () => {
+  await withDom('/cleanup', async () => {
+    const outlet = document.createElement('main');
+    document.body.appendChild(outlet);
+
+    let cleanupCalls = 0;
+    let unmountCalls = 0;
+
+    const router = createRouter({
+      outlet,
+      routes: [
+        {
+          path: '/cleanup',
+          view: () => {
+            const el = document.createElement('div');
+            el.textContent = 'cleanup';
+            return el;
+          },
+          onMount: () => () => {
+            cleanupCalls += 1;
+          },
+          onUnmount: () => {
+            unmountCalls += 1;
+          }
+        }
+      ]
+    });
+
+    router.start();
+    await tick(20);
+
+    router.stop();
+
+    assert.equal(cleanupCalls, 1);
+    assert.equal(unmountCalls, 1);
+  });
+});
+
 test('Router - guard redirect on start() updates location with replace semantics', { concurrency: false }, async () => {
   await withDom('/admin', async () => {
     const outlet = document.createElement('main');

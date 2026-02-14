@@ -44,6 +44,9 @@ export type RouteMiddleware = (ctx: RouteCtx) => RouteMiddlewareResult;
 export type RouteMiddlewareResolver =
   | RouteMiddleware[]
   | ((ctx: RouteCtx) => RouteMiddleware[] | null | undefined | Promise<RouteMiddleware[] | null | undefined>);
+export type RouteMountCleanup = () => void;
+export type RouteMountResult = void | RouteMountCleanup | Promise<void | RouteMountCleanup>;
+export type RouteUnmountResult = void | Promise<void>;
 
 /**
  * Route definition.
@@ -70,7 +73,12 @@ export interface RouteTable<T = any> {
   preload?: (ctx: RouteCtx) => Promise<T>;
 
   // Post-mount lifecycle hook (called after view is mounted to DOM)
-  onMount?: (root: HTMLElement) => void;
+  // Receives the leaf loader data and route context.
+  // May return a cleanup function that runs automatically on route leave/replace.
+  onMount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteMountResult;
+  // Pre-unmount lifecycle hook (called before route content is replaced/cleared)
+  // Receives the previous leaf loader data and route context.
+  onUnmount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteUnmountResult;
 
   // State views
   pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];

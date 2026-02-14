@@ -404,9 +404,14 @@ Components are found by `d-ui` attribute, ID, or fallback `data-d-tag`.
 
 ---
 
-## Lifecycle Hook: `onMount`
+## Lifecycle Hooks: `onMount` / `onUnmount`
 
-When using Dalila Router with UI components, export an `onMount` function from your route to initialize components after the view is mounted to the DOM.
+**Naming note:** this `onMount(root)` is the **router hook**.
+It is different from:
+- `onMount(() => {})` from `dalila` (scope-level helper in `docs/core/watch.md`)
+- `ctx.onMount(() => {})` inside component `setup()` (component lifecycle in `docs/runtime/component.md`)
+
+When using Dalila Router with UI components, export `onMount` to initialize components after the view is mounted. You can return a cleanup function from `onMount`, and/or export `onUnmount` for additional teardown.
 
 **Why `onMount`?**
 
@@ -416,61 +421,66 @@ The router needs to render the HTML first before UI components can attach to DOM
 
 ```ts
 // src/app/page.ts
-import { signal } from 'dalila';
+import { computed, signal } from 'dalila';
 import { createDialog, mountUI } from 'dalila/components/ui';
 
-// Create components at module scope (shared across lifecycle)
-const confirmDialog = createDialog({
-  closeOnBackdrop: true,
-  closeOnEscape: true
-});
+class HomePageVM {
+  count = signal(0);
+  status = computed(() => `Contador: ${this.count()}`);
+  infoDialog = createDialog({ closeOnBackdrop: true, closeOnEscape: true });
+  increment = () => this.count.update(v => v + 1);
+  openModal = () => this.infoDialog.show();
+  closeModal = () => this.infoDialog.close();
+}
 
 export function loader() {
-  const count = signal(0);
-
-  return {
-    count,
-    increment: () => count.update(n => n + 1),
-    openDialog: () => confirmDialog.show(),
-    closeDialog: () => confirmDialog.close(),
-  };
+  return new HomePageVM();
 }
 
 // Called after the view is mounted to the DOM
-export function onMount(root: HTMLElement) {
-  mountUI(root, {
-    dialogs: { confirmDialog }
+export function onMount(root: HTMLElement, data: HomePageVM) {
+  return mountUI(root, {
+    dialogs: { infoDialog: data.infoDialog },
+    events: []
   });
+}
+
+// Optional extra hook called before route leave/replace
+export function onUnmount(_root: HTMLElement) {
+  // custom teardown if needed
 }
 ```
 
 ```html
 <!-- src/app/page.html -->
 <div>
-  <p>Count: {count}</p>
+  <p>Status: {status}</p>
   <button d-on-click="increment">+</button>
-  <button d-on-click="openDialog">Open Dialog</button>
+  <button d-on-click="openModal">Open Dialog</button>
 </div>
 
-<d-dialog d-ui="confirmDialog">
+<d-dialog d-ui="infoDialog">
   <d-dialog-header>
     <d-dialog-title>Confirm Action</d-dialog-title>
-    <d-dialog-close d-on-click="closeDialog">&times;</d-dialog-close>
+    <d-dialog-close d-on-click="closeModal">&times;</d-dialog-close>
   </d-dialog-header>
   <d-dialog-body>
     <p>Current count: {count}</p>
   </d-dialog-body>
   <d-dialog-footer>
-    <d-button variant="ghost" d-on-click="closeDialog">Cancel</d-button>
-    <d-button variant="primary" d-on-click="closeDialog">OK</d-button>
+    <d-button variant="ghost" d-on-click="closeModal">Cancel</d-button>
+    <d-button variant="primary" d-on-click="closeModal">OK</d-button>
   </d-dialog-footer>
 </d-dialog>
 ```
 
 **Key points:**
 
-- `onMount(root)` receives the root element where your view was mounted
-- Create components outside `loader()` so they persist across calls
+- `onMount(root, data, ctx)` receives the mounted root, leaf loader data, and route context
+- `onMount` may return a cleanup function; the router calls it automatically on route leave/replace
+- `onUnmount(root, data, ctx)` is optional and runs before route content is replaced/cleared
+- Keep route state in a VM returned by `loader()` (e.g. `return new HomePageVM()`)
+- Create UI instances in the route VM (`loader`) and connect them in `onMount` using loader data
 - The `d-ui` attribute connects HTML elements to component instances
 - Works with both eager and lazy-loaded routes
 

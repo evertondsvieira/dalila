@@ -3,6 +3,7 @@ import { createScope, withScope, withScopeAsync, type Scope } from '../core/scop
 import { normalizeRules, validateValue, type RuleFn } from './validation.js';
 import {
   RouteTable,
+  RouteMountCleanup,
   RouteState,
   RouteTableMatch,
   RouteCtx,
@@ -269,6 +270,11 @@ export function createRouter(config: RouterConfig): Router {
   let currentLoaderController: AbortController | null = null;
   let started = false;
   let navigationToken = 0;
+  let activeLeafRoute: RouteTable | null = null;
+  let activeRouteMountCleanup: RouteMountCleanup | null = null;
+  let activeRouteUnmountHook: RouteTable['onUnmount'] | null = null;
+  let activeLeafData: unknown = undefined;
+  let activeLeafCtx: RouteCtx | null = null;
   const transitionCoalescing = new Map<string, Promise<void>>();
   const scrollPositions = new LRUCache<string, number>(config.scrollPositionsCacheSize ?? 100);
   const preloadTagsByKey = new Map<string, Set<string>>();
@@ -829,10 +835,45 @@ export function createRouter(config: RouterConfig): Router {
     };
   }
 
+  function runRouteUnmountLifecycle(): void {
+    const cleanup = activeRouteMountCleanup;
+    const onUnmount = activeRouteUnmountHook;
+    const data = activeLeafData;
+    const ctx = activeLeafCtx;
+
+    activeRouteMountCleanup = null;
+    activeRouteUnmountHook = null;
+    activeLeafRoute = null;
+    activeLeafData = undefined;
+    activeLeafCtx = null;
+
+    if (cleanup) {
+      try {
+        cleanup();
+      } catch (error) {
+        console.error('[Dalila] Error in onMount cleanup lifecycle hook:', error);
+      }
+    }
+
+    if (onUnmount) {
+      try {
+        const result = onUnmount(outletElement as HTMLElement, data as any, ctx as RouteCtx);
+        if (result && typeof (result as Promise<void>).then === 'function') {
+          void (result as Promise<void>).catch((error) => {
+            console.error('[Dalila] Error in onUnmount lifecycle hook:', error);
+          });
+        }
+      } catch (error) {
+        console.error('[Dalila] Error in onUnmount lifecycle hook:', error);
+      }
+    }
+  }
+
   /**
    * Mount nodes into outlet and remove loading state
    */
   function mountToOutlet(...nodes: Node[]): void {
+    runRouteUnmountLifecycle();
     outletElement.replaceChildren(...nodes);
     queueMicrotask(() => {
       outletElement.removeAttribute('d-loading');
@@ -1241,7 +1282,7 @@ export function createRouter(config: RouterConfig): Router {
     commitRouteState();
 
     try {
-      mountViewStack(matchStack, ctx, dataStack);
+      mountViewStack(matchStack, ctx, dataStack, token);
       await finishSuccessfulTransition();
     } catch (error) {
       console.error('[Dalila] Navigation failed:', error);
@@ -1281,10 +1322,11 @@ export function createRouter(config: RouterConfig): Router {
   }
 
   /** Compose and mount the view stack (leaf view wrapped by parent layouts). */
-  function mountViewStack(matchStack: RouteTableMatch[], ctx: RouteCtx, dataStack: any[]): void {
+  function mountViewStack(matchStack: RouteTableMatch[], ctx: RouteCtx, dataStack: any[], navToken: number): void {
     try {
       let content: Node | DocumentFragment | Node[] | null = null;
       let leafRoute: RouteTable | null = null;
+      let leafData: unknown = undefined;
 
       for (let i = matchStack.length - 1; i >= 0; i--) {
         const match = matchStack[i];
@@ -1293,6 +1335,7 @@ export function createRouter(config: RouterConfig): Router {
 
         if (i === matchStack.length - 1) {
           leafRoute = route;
+          leafData = data;
           if (!route.view) {
             console.warn(`[Dalila] Leaf route ${match.path} has no view function`);
             return;
@@ -1324,12 +1367,49 @@ export function createRouter(config: RouterConfig): Router {
       if (content) {
         const nodes = Array.isArray(content) ? content : [content];
         mountToOutlet(...nodes);
+        activeLeafRoute = leafRoute ?? null;
+        activeRouteUnmountHook = leafRoute?.onUnmount ?? null;
+        activeLeafData = leafData;
+        activeLeafCtx = ctx;
 
         // Call onMount lifecycle hook if present
         if (leafRoute?.onMount) {
           queueMicrotask(() => {
+            if (navigationToken !== navToken) return;
+            if (activeLeafRoute !== leafRoute) return;
             try {
-              leafRoute!.onMount!(outletElement as HTMLElement);
+              const result = leafRoute!.onMount!(outletElement as HTMLElement, leafData as any, ctx);
+              if (typeof result === 'function') {
+                if (navigationToken === navToken && activeLeafRoute === leafRoute) {
+                  activeRouteMountCleanup = result as RouteMountCleanup;
+                } else {
+                  try {
+                    (result as RouteMountCleanup)();
+                  } catch (cleanupError) {
+                    console.error('[Dalila] Error in stale onMount cleanup lifecycle hook:', cleanupError);
+                  }
+                }
+                return;
+              }
+
+              if (result && typeof (result as Promise<void | RouteMountCleanup>).then === 'function') {
+                void (result as Promise<void | RouteMountCleanup>)
+                  .then((resolved) => {
+                    if (typeof resolved !== 'function') return;
+                    if (navigationToken === navToken && activeLeafRoute === leafRoute) {
+                      activeRouteMountCleanup = resolved as RouteMountCleanup;
+                    } else {
+                      try {
+                        (resolved as RouteMountCleanup)();
+                      } catch (cleanupError) {
+                        console.error('[Dalila] Error in stale async onMount cleanup lifecycle hook:', cleanupError);
+                      }
+                    }
+                  })
+                  .catch((error) => {
+                    console.error('[Dalila] Error in onMount lifecycle hook:', error);
+                  });
+              }
             } catch (error) {
               console.error('[Dalila] Error in onMount lifecycle hook:', error);
             }
@@ -1739,6 +1819,8 @@ export function createRouter(config: RouterConfig): Router {
     document.removeEventListener('click', handleLink);
     document.removeEventListener('pointerover', handleLinkIntent);
     document.removeEventListener('focusin', handleLinkIntent);
+
+    runRouteUnmountLifecycle();
 
     if (currentLoaderController) {
       currentLoaderController.abort();

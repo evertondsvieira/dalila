@@ -33,6 +33,9 @@ export type RouteRedirectResult = string | null | undefined | Promise<string | n
 export type RouteMiddlewareResult = RouteGuardResult;
 export type RouteMiddleware = (ctx: RouteCtx) => RouteMiddlewareResult;
 export type RouteMiddlewareResolver = RouteMiddleware[] | ((ctx: RouteCtx) => RouteMiddleware[] | null | undefined | Promise<RouteMiddleware[] | null | undefined>);
+export type RouteMountCleanup = () => void;
+export type RouteMountResult = void | RouteMountCleanup | Promise<void | RouteMountCleanup>;
+export type RouteUnmountResult = void | Promise<void>;
 /**
  * Route definition.
  *
@@ -50,7 +53,8 @@ export interface RouteTable<T = any> {
     layout?: (ctx: RouteCtx, child: Node | DocumentFragment | Node[], data: T) => Node | DocumentFragment | Node[];
     loader?: (ctx: RouteCtx) => Promise<T>;
     preload?: (ctx: RouteCtx) => Promise<T>;
-    onMount?: (root: HTMLElement) => void;
+    onMount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteMountResult;
+    onUnmount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteUnmountResult;
     pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
     error?: (ctx: RouteCtx, error: unknown, data?: T) => Node | DocumentFragment | Node[];
     notFound?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];

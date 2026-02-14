@@ -467,14 +467,29 @@ function pageProps(pageHtml, pageTs) {
             if (hasNamedExport(pageTs, 'onMount')) {
                 if (pageTs.lazy) {
                     const lazyLoader = `${pageTs.importName}_lazy`;
-                    props.push(`onMount: (root: HTMLElement) => ${lazyLoader}().then(mod => {
+                    props.push(`onMount: (root: HTMLElement, data: unknown, ctx: unknown) => ${lazyLoader}().then(mod => {
       if (typeof (mod as any).onMount === 'function') {
-        (mod as any).onMount(root);
+        return (mod as any).onMount(root, data, ctx);
       }
+      return undefined;
     })`);
                 }
                 else {
                     props.push(`onMount: ${moduleExport(pageTs, 'onMount')}`);
+                }
+            }
+            if (hasNamedExport(pageTs, 'onUnmount')) {
+                if (pageTs.lazy) {
+                    const lazyLoader = `${pageTs.importName}_lazy`;
+                    props.push(`onUnmount: (root: HTMLElement, data: unknown, ctx: unknown) => ${lazyLoader}().then(mod => {
+      if (typeof (mod as any).onUnmount === 'function') {
+        return (mod as any).onUnmount(root, data, ctx);
+      }
+      return undefined;
+    })`);
+                }
+                else {
+                    props.push(`onUnmount: ${moduleExport(pageTs, 'onUnmount')}`);
                 }
             }
         }
@@ -500,6 +515,12 @@ function pageProps(pageHtml, pageTs) {
     }
     if (hasNamedExport(pageTs, 'validation')) {
         props.push(`validation: ${moduleExport(pageTs, 'validation', { allowValue: true })}`);
+    }
+    if (hasNamedExport(pageTs, 'onMount')) {
+        props.push(`onMount: ${moduleExport(pageTs, 'onMount')}`);
+    }
+    if (hasNamedExport(pageTs, 'onUnmount')) {
+        props.push(`onUnmount: ${moduleExport(pageTs, 'onUnmount')}`);
     }
     return props;
 }

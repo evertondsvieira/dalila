@@ -79,6 +79,8 @@ interface RouteTable {
   layout?: (ctx: RouteCtx, child: Node | DocumentFragment | Node[], data: any) => Node | DocumentFragment | Node[];
   loader?: (ctx: RouteCtx) => Promise<any>;
   preload?: (ctx: RouteCtx) => Promise<any>;
+  onMount?: (root: HTMLElement, data: any, ctx: RouteCtx) => void | (() => void) | Promise<void | (() => void)>;
+  onUnmount?: (root: HTMLElement, data: any, ctx: RouteCtx) => void | Promise<void>;
   pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
   error?: (ctx: RouteCtx, error: unknown) => Node | DocumentFragment | Node[];
   notFound?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
@@ -432,7 +434,7 @@ src/app/
 | File | Purpose |
 |------|---------|
 | `page.html` | Route view template |
-| `page.ts` | Route logic: `loader`, `guard`, `redirect`, `preload`, `tags`, `score`, `validation` |
+| `page.ts` | Route logic: `loader`, `guard`, `redirect`, `preload`, `tags`, `score`, `validation`, `onMount`, `onUnmount` |
 | `layout.html` | Layout template (wraps children via `data-slot="children"`) |
 | `layout.ts` | Layout logic: `guard`, `redirect`, `middleware`, `tags` |
 | `middleware.ts` | Route middleware (exports `middleware` array) |
@@ -460,6 +462,15 @@ export async function loader(ctx) {
   return res.json();
 }
 
+export function onMount(root, data, ctx) {
+  const cleanup = setupSomething(root, data, ctx);
+  return cleanup; // optional cleanup called automatically on route leave/replace
+}
+
+export function onUnmount(root, data, ctx) {
+  // optional extra cleanup hook
+}
+
 export function guard(ctx) {
   return isAuthenticated() ? true : '/login';
 }
@@ -483,12 +494,12 @@ Running `dalila routes generate` produces three files:
 
 ```ts
 import { createRouter } from 'dalila/router';
-import { routeTable } from './routes.generated';
+import { routes } from './routes.generated';
 import { routeManifest } from './routes.generated.manifest';
 
 const router = createRouter({
   outlet: document.getElementById('app')!,
-  routes: routeTable,
+  routes,
   routeManifest
 });
 

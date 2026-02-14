@@ -109,6 +109,11 @@ export function createRouter(config) {
     let currentLoaderController = null;
     let started = false;
     let navigationToken = 0;
+    let activeLeafRoute = null;
+    let activeRouteMountCleanup = null;
+    let activeRouteUnmountHook = null;
+    let activeLeafData = undefined;
+    let activeLeafCtx = null;
     const transitionCoalescing = new Map();
     const scrollPositions = new LRUCache(config.scrollPositionsCacheSize ?? 100);
     const preloadTagsByKey = new Map();
@@ -582,10 +587,43 @@ export function createRouter(config) {
             replace: true
         };
     }
+    function runRouteUnmountLifecycle() {
+        const cleanup = activeRouteMountCleanup;
+        const onUnmount = activeRouteUnmountHook;
+        const data = activeLeafData;
+        const ctx = activeLeafCtx;
+        activeRouteMountCleanup = null;
+        activeRouteUnmountHook = null;
+        activeLeafRoute = null;
+        activeLeafData = undefined;
+        activeLeafCtx = null;
+        if (cleanup) {
+            try {
+                cleanup();
+            }
+            catch (error) {
+                console.error('[Dalila] Error in onMount cleanup lifecycle hook:', error);
+            }
+        }
+        if (onUnmount) {
+            try {
+                const result = onUnmount(outletElement, data, ctx);
+                if (result && typeof result.then === 'function') {
+                    void result.catch((error) => {
+                        console.error('[Dalila] Error in onUnmount lifecycle hook:', error);
+                    });
+                }
+            }
+            catch (error) {
+                console.error('[Dalila] Error in onUnmount lifecycle hook:', error);
+            }
+        }
+    }
     /**
      * Mount nodes into outlet and remove loading state
      */
     function mountToOutlet(...nodes) {
+        runRouteUnmountLifecycle();
         outletElement.replaceChildren(...nodes);
         queueMicrotask(() => {
             outletElement.removeAttribute('d-loading');
@@ -950,7 +988,7 @@ export function createRouter(config) {
         }
         commitRouteState();
         try {
-            mountViewStack(matchStack, ctx, dataStack);
+            mountViewStack(matchStack, ctx, dataStack, token);
             await finishSuccessfulTransition();
         }
         catch (error) {
@@ -986,16 +1024,18 @@ export function createRouter(config) {
         return promise;
     }
     /** Compose and mount the view stack (leaf view wrapped by parent layouts). */
-    function mountViewStack(matchStack, ctx, dataStack) {
+    function mountViewStack(matchStack, ctx, dataStack, navToken) {
         try {
             let content = null;
             let leafRoute = null;
+            let leafData = undefined;
             for (let i = matchStack.length - 1; i >= 0; i--) {
                 const match = matchStack[i];
                 const data = dataStack[i];
                 const route = match.route;
                 if (i === matchStack.length - 1) {
                     leafRoute = route;
+                    leafData = data;
                     if (!route.view) {
                         console.warn(`[Dalila] Leaf route ${match.path} has no view function`);
                         return;
@@ -1027,11 +1067,54 @@ export function createRouter(config) {
             if (content) {
                 const nodes = Array.isArray(content) ? content : [content];
                 mountToOutlet(...nodes);
+                activeLeafRoute = leafRoute ?? null;
+                activeRouteUnmountHook = leafRoute?.onUnmount ?? null;
+                activeLeafData = leafData;
+                activeLeafCtx = ctx;
                 // Call onMount lifecycle hook if present
                 if (leafRoute?.onMount) {
                     queueMicrotask(() => {
+                        if (navigationToken !== navToken)
+                            return;
+                        if (activeLeafRoute !== leafRoute)
+                            return;
                         try {
-                            leafRoute.onMount(outletElement);
+                            const result = leafRoute.onMount(outletElement, leafData, ctx);
+                            if (typeof result === 'function') {
+                                if (navigationToken === navToken && activeLeafRoute === leafRoute) {
+                                    activeRouteMountCleanup = result;
+                                }
+                                else {
+                                    try {
+                                        result();
+                                    }
+                                    catch (cleanupError) {
+                                        console.error('[Dalila] Error in stale onMount cleanup lifecycle hook:', cleanupError);
+                                    }
+                                }
+                                return;
+                            }
+                            if (result && typeof result.then === 'function') {
+                                void result
+                                    .then((resolved) => {
+                                    if (typeof resolved !== 'function')
+                                        return;
+                                    if (navigationToken === navToken && activeLeafRoute === leafRoute) {
+                                        activeRouteMountCleanup = resolved;
+                                    }
+                                    else {
+                                        try {
+                                            resolved();
+                                        }
+                                        catch (cleanupError) {
+                                            console.error('[Dalila] Error in stale async onMount cleanup lifecycle hook:', cleanupError);
+                                        }
+                                    }
+                                })
+                                    .catch((error) => {
+                                    console.error('[Dalila] Error in onMount lifecycle hook:', error);
+                                });
+                            }
                         }
                         catch (error) {
                             console.error('[Dalila] Error in onMount lifecycle hook:', error);
@@ -1413,6 +1496,7 @@ export function createRouter(config) {
         document.removeEventListener('click', handleLink);
         document.removeEventListener('pointerover', handleLinkIntent);
         document.removeEventListener('focusin', handleLinkIntent);
+        runRouteUnmountLifecycle();
         if (currentLoaderController) {
             currentLoaderController.abort();
             currentLoaderController = null;
