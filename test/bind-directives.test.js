@@ -1169,6 +1169,123 @@ test('d-bind-checked – checkbox two-way', async () => {
   });
 });
 
+test('d-bind-disabled / d-bind-readonly – outbound property bindings', async () => {
+  await withDom(async (doc) => {
+    const disabled = signal(false);
+    const readonly = signal(false);
+    const root = el(doc, '<div><input d-bind-disabled="disabled" d-bind-readonly="readonly" /></div>');
+    bind(root, { disabled, readonly });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    assert.equal(input.disabled, false);
+    assert.equal(input.readOnly, false);
+
+    disabled.set(true);
+    readonly.set(true);
+    await tick(10);
+    assert.equal(input.disabled, true);
+    assert.equal(input.readOnly, true);
+  });
+});
+
+test('d-bind-maxlength / d-bind-placeholder / d-bind-pattern – outbound bindings', async () => {
+  await withDom(async (doc) => {
+    const maxLen = signal(12);
+    const placeholder = signal('Type here');
+    const pattern = signal('[a-z]+');
+    const root = el(
+      doc,
+      '<div><input d-bind-maxlength="maxLen" d-bind-placeholder="placeholder" d-bind-pattern="pattern" /></div>'
+    );
+    bind(root, { maxLen, placeholder, pattern });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    assert.equal(input.maxLength, 12);
+    assert.equal(input.placeholder, 'Type here');
+    assert.equal(input.pattern, '[a-z]+');
+
+    maxLen.set(5);
+    placeholder.set('Changed');
+    pattern.set('[0-9]+');
+    await tick(10);
+    assert.equal(input.maxLength, 5);
+    assert.equal(input.placeholder, 'Changed');
+    assert.equal(input.pattern, '[0-9]+');
+  });
+});
+
+test('d-bind-multiple – outbound property binding on select', async () => {
+  await withDom(async (doc) => {
+    const isMultiple = signal(false);
+    const root = el(doc, `<div>
+      <select d-bind-multiple="isMultiple">
+        <option value="a">A</option>
+        <option value="b">B</option>
+      </select>
+    </div>`);
+    bind(root, { isMultiple });
+    await tick(10);
+
+    const select = root.querySelector('select');
+    assert.equal(select.multiple, false);
+
+    isMultiple.set(true);
+    await tick(10);
+    assert.equal(select.multiple, true);
+  });
+});
+
+test('d-bind-* supports multiple bindings on the same element', async () => {
+  await withDom(async (doc) => {
+    const name = signal('A');
+    const ph = signal('Type');
+    const disabled = signal(false);
+    const root = el(
+      doc,
+      '<div><input d-bind-value="name" d-bind-placeholder="ph" d-bind-disabled="disabled" /></div>'
+    );
+    bind(root, { name, ph, disabled });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    assert.equal(input.value, 'A');
+    assert.equal(input.placeholder, 'Type');
+    assert.equal(input.disabled, false);
+
+    name.set('B');
+    ph.set('Changed');
+    disabled.set(true);
+    await tick(10);
+    assert.equal(input.value, 'B');
+    assert.equal(input.placeholder, 'Changed');
+    assert.equal(input.disabled, true);
+  });
+});
+
+test('d-bind-transform / d-bind-parse – applies outbound and inbound transforms', async () => {
+  await withDom(async (doc) => {
+    const price = signal(1000);
+    const formatPrice = (value) => `R$ ${Number(value).toFixed(2)}`;
+    const parsePrice = (value) => Number(String(value).replace(/[^\d.-]/g, ''));
+    const root = el(
+      doc,
+      '<div><input d-bind-value="price" d-bind-transform="formatPrice" d-bind-parse="parsePrice" /></div>'
+    );
+    bind(root, { price, formatPrice, parsePrice });
+    await tick(10);
+
+    const input = root.querySelector('input');
+    assert.equal(input.value, 'R$ 1000.00');
+
+    input.value = 'R$ 1250.00';
+    input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+    assert.equal(price(), 1250);
+  });
+});
+
 test('d-bind-value – warns when binding is not a signal', async () => {
   await withDom(async (doc) => {
     const root = el(doc, '<div><input d-bind-value="name" /></div>');

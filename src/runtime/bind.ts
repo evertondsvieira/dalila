@@ -2469,19 +2469,98 @@ function bindAttrs(
 // ============================================================================
 
 /**
- * Bind all [d-bind-value] and [d-bind-checked] directives within root.
- * Two-way binding: signal → DOM (outbound) and DOM → signal (inbound).
- * Only works with signals — logs a warning otherwise.
+ * Bind all [d-bind-*] directives within root.
+ * Two-way bindings:
+ * - d-bind-value
+ * - d-bind-checked
+ *
+ * One-way reactive property bindings:
+ * - d-bind-readonly
+ * - d-bind-disabled
+ * - d-bind-maxlength
+ * - d-bind-placeholder
+ * - d-bind-pattern
+ * - d-bind-multiple
+ *
+ * Optional transform/parse hooks:
+ * - d-bind-transform="fnName" (signal -> view)
+ * - d-bind-parse="fnName" (view -> signal)
  */
 function bindTwoWay(
   root: Element,
   ctx: BindContext,
   cleanups: DisposeFunction[]
 ): void {
-  const SUPPORTED = ['value', 'checked'] as const;
+  type BindDirective = {
+    attr: string;
+    prop: string;
+    twoWay: boolean;
+  };
 
-  for (const prop of SUPPORTED) {
-    const attr = `d-bind-${prop}`;
+  const SUPPORTED: readonly BindDirective[] = [
+    { attr: 'd-bind-value', prop: 'value', twoWay: true },
+    { attr: 'd-bind-checked', prop: 'checked', twoWay: true },
+    { attr: 'd-bind-readonly', prop: 'readOnly', twoWay: false },
+    { attr: 'd-bind-disabled', prop: 'disabled', twoWay: false },
+    { attr: 'd-bind-maxlength', prop: 'maxLength', twoWay: false },
+    { attr: 'd-bind-placeholder', prop: 'placeholder', twoWay: false },
+    { attr: 'd-bind-pattern', prop: 'pattern', twoWay: false },
+    { attr: 'd-bind-multiple', prop: 'multiple', twoWay: false },
+  ] as const;
+
+  const BOOLEAN_PROPS = new Set(['checked', 'readOnly', 'disabled', 'multiple']);
+  const STRING_PROPS = new Set(['value', 'placeholder', 'pattern']);
+
+  const applyBoundProp = (el: Element, prop: string, value: unknown): void => {
+    if (!(prop in el)) return;
+
+    if (BOOLEAN_PROPS.has(prop)) {
+      (el as any)[prop] = !!value;
+      return;
+    }
+
+    if (STRING_PROPS.has(prop)) {
+      (el as any)[prop] = value == null ? '' : String(value);
+      return;
+    }
+
+    if (prop === 'maxLength') {
+      if (value == null || value === '') {
+        (el as any).maxLength = -1;
+        return;
+      }
+      const parsed = Number(value);
+      (el as any).maxLength = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : -1;
+      return;
+    }
+
+    (el as any)[prop] = value;
+  };
+
+  const resolveFunctionBinding = (
+    el: Element,
+    attrName: 'd-bind-transform' | 'd-bind-parse'
+  ): ((value: unknown, el: Element) => unknown) | null => {
+    const fnBindingName = normalizeBinding(el.getAttribute(attrName));
+    if (!fnBindingName) return null;
+
+    const fnBinding = ctx[fnBindingName];
+    if (fnBinding === undefined) {
+      warn(`${attrName}: "${fnBindingName}" not found in context`);
+      return null;
+    }
+
+    const resolved = isSignal(fnBinding) ? fnBinding() : fnBinding;
+    if (typeof resolved !== 'function') {
+      warn(`${attrName}: "${fnBindingName}" must be a function (or signal-of-function)`);
+      return null;
+    }
+
+    return resolved as (value: unknown, el: Element) => unknown;
+  };
+
+  for (const directive of SUPPORTED) {
+    const attr = directive.attr;
     const elements = qsaIncludingRoot(root, `[${attr}]`);
 
     for (const el of elements) {
@@ -2491,33 +2570,59 @@ function bindTwoWay(
       const binding = ctx[bindingName];
 
       if (!isSignal(binding)) {
-        warn(`d-bind-${prop}: "${bindingName}" must be a signal`);
+        warn(`${attr}: "${bindingName}" must be a signal`);
         continue;
       }
+
       const writable = isWritableSignal(binding);
-      if (!writable) {
-        warn(`d-bind-${prop}: "${bindingName}" is read-only (inbound updates disabled)`);
+      if (directive.twoWay && !writable) {
+        warn(`${attr}: "${bindingName}" is read-only (inbound updates disabled)`);
       }
 
       el.removeAttribute(attr);
+      const transformFn = resolveFunctionBinding(el, 'd-bind-transform');
+      const parseFn = resolveFunctionBinding(el, 'd-bind-parse');
+      if (directive.twoWay) {
+        el.removeAttribute('d-bind-transform');
+        el.removeAttribute('d-bind-parse');
+      }
 
       // Outbound: signal → DOM
-      const isBoolean = prop === 'checked';
       bindEffect(el, () => {
-        const val = binding();
-        if (isBoolean) {
-          (el as any)[prop] = !!val;
-        } else {
-          (el as any)[prop] = val == null ? '' : String(val);
+        const rawValue = binding();
+        let value = rawValue;
+        if (transformFn) {
+          try {
+            value = transformFn(rawValue, el);
+          } catch (err) {
+            warn(`d-bind-transform: "${bindingName}" failed (${(err as Error).message || String(err)})`);
+            value = rawValue;
+          }
         }
+        applyBoundProp(el, directive.prop, value);
       });
 
       // Inbound: DOM → signal
-      if (writable) {
-        const eventName = (el as HTMLElement).tagName === 'SELECT' || isBoolean ? 'change' : 'input';
+      if (directive.twoWay && writable) {
+        const eventName = (el as HTMLElement).tagName === 'SELECT' || directive.prop === 'checked'
+          ? 'change'
+          : 'input';
         const handler = () => {
-          const val = isBoolean ? (el as HTMLInputElement).checked : (el as HTMLInputElement).value;
-          (binding as Signal<unknown>).set(val);
+          const rawValue = directive.prop === 'checked'
+            ? (el as HTMLInputElement).checked
+            : (el as HTMLInputElement).value;
+          let nextValue: unknown = rawValue;
+
+          if (parseFn) {
+            try {
+              nextValue = parseFn(rawValue, el);
+            } catch (err) {
+              warn(`d-bind-parse: "${bindingName}" failed (${(err as Error).message || String(err)})`);
+              nextValue = rawValue;
+            }
+          }
+
+          (binding as Signal<unknown>).set(nextValue);
         };
         el.addEventListener(eventName, handler);
         cleanups.push(() => el.removeEventListener(eventName, handler));

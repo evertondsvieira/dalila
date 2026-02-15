@@ -571,6 +571,13 @@ Binds a **signal** to a form element property with automatic synchronization in 
   <option value="b">B</option>
 </select>
 <input type="checkbox" d-bind-checked="agree" />
+<input
+  d-bind-value="price"
+  d-bind-disabled="locked"
+  d-bind-placeholder="placeholder"
+  d-bind-transform="formatPrice"
+  d-bind-parse="parsePrice"
+/>
 ```
 
 ```ts
@@ -581,8 +588,15 @@ const name  = signal('');
 const bio   = signal('');
 const choice = signal('a');
 const agree = signal(false);
+const locked = signal(false);
+const placeholder = signal('Type price');
+const price = signal(1000);
+const formatPrice = (value: unknown) => `R$ ${Number(value).toFixed(2)}`;
+const parsePrice = (value: unknown) => Number(String(value).replace(/[^\d.-]/g, ''));
 
-bind(document.getElementById('app')!, { name, bio, choice, agree });
+bind(document.getElementById('app')!, {
+  name, bio, choice, agree, locked, placeholder, price, formatPrice, parsePrice
+});
 ```
 
 #### Supported properties
@@ -592,6 +606,19 @@ bind(document.getElementById('app')!, { name, bio, choice, agree });
 | `d-bind-value` | `.value` (string) | `input` | `<input>`, `<textarea>` |
 | `d-bind-value` | `.value` (string) | `change` | `<select>` |
 | `d-bind-checked` | `.checked` (boolean) | `change` | `<input type="checkbox">` |
+| `d-bind-readonly` | `.readOnly` (boolean) | — | form controls with `readOnly` |
+| `d-bind-disabled` | `.disabled` (boolean) | — | form controls with `disabled` |
+| `d-bind-maxlength` | `.maxLength` (number) | — | `<input>`, `<textarea>` |
+| `d-bind-placeholder` | `.placeholder` (string) | — | inputs/textareas |
+| `d-bind-pattern` | `.pattern` (string) | — | inputs with pattern support |
+| `d-bind-multiple` | `.multiple` (boolean) | — | `<select>` |
+
+#### Transform/parse hooks
+
+| Directive | Purpose |
+|---|---|
+| `d-bind-transform` | Outbound transform: signal value → displayed value |
+| `d-bind-parse` | Inbound parse: input value → signal value |
 
 #### Rules
 
@@ -599,6 +626,8 @@ bind(document.getElementById('app')!, { name, bio, choice, agree });
 |---|---|
 | Signal only | The context value **must** be a signal. Non-signals produce a dev-mode warning and are skipped. |
 | No infinite loop | Signals perform equality checks — setting the same value does not re-trigger the effect. |
+| Multiple directives | You can combine multiple `d-bind-*` directives on the same element. |
+| Transform/parse errors | In dev mode, failing transform/parse handlers emit warnings and fall back to raw values. |
 | Cleanup | `dispose()` removes the inbound event listener and stops the outbound effect. |
 | Attribute removal | The `d-bind-*` attribute is removed from the DOM after processing. |
 

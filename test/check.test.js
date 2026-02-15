@@ -465,6 +465,26 @@ test('Check - virtual sizing directives participate in identifier checks', async
   });
 });
 
+// 26. d-bind directives participate in identifier checks
+test('Check - d-bind directives participate in identifier checks', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { name: 'Ana', parseName: (v: string) => v.trim() }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<input d-bind-value="naem" d-bind-parse="parseName" />`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /"naem" is not defined in template context \(d-bind-value\)/);
+  });
+});
+
 // 26. non-strict mode skips template var errors when loader shape is not inferable
 test('Check - non-strict ignores template identifiers for non-inferable loader types', async () => {
   await withTempProject(async ({ appDir, write, logs }) => {
