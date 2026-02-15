@@ -6,6 +6,7 @@
  *
  * @module dalila/runtime
  */
+import { Signal } from '../core/index.js';
 import type { Component } from './component.js';
 export interface BindOptions {
     /**
@@ -30,6 +31,10 @@ export interface BindOptions {
     components?: Record<string, Component> | Component[];
     /** Error policy for component `ctx.onMount()` callbacks. Default: 'log'. */
     onMountError?: 'log' | 'throw';
+    /**
+     * Optional runtime transition registry used by `d-transition`.
+     */
+    transitions?: TransitionConfig[];
     /**
      * Internal flag — set by fromHtml for router/template rendering.
      * Skips HMR context registration but KEEPS d-ready/d-loading lifecycle.
@@ -59,6 +64,13 @@ export interface BindHandle {
     getRef(name: string): Element | null;
     getRefs(): Readonly<Record<string, Element>>;
 }
+export interface TransitionConfig {
+    name: string;
+    enter?: (el: HTMLElement) => void;
+    leave?: (el: HTMLElement) => void;
+    duration?: number;
+}
+export declare function createPortalTarget(id: string): Signal<Element | null>;
 /**
  * Set global defaults for all `bind()` / `mount()` calls.
  *

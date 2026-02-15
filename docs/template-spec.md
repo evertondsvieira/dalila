@@ -151,6 +151,26 @@ The element becomes:
 
 Reactive via `effect()`, cleaned up on `dispose()`.
 
+### 5.1 `d-transition` with `d-when`
+
+If an element has `d-transition="..."`, `d-when` toggles transition state attributes:
+
+- Enter: sets `data-enter`, removes `data-leave`
+- Leave: sets `data-leave`, removes `data-enter`
+
+When leaving, `display: none` is applied only after transition duration completes
+(derived from CSS transition duration/delay or configured transition duration).
+
+Custom transition hooks can be provided via runtime config:
+
+```ts
+configure({
+  transitions: [
+    { name: 'fade', duration: 300, enter: (el) => {}, leave: (el) => {} }
+  ]
+});
+```
+
 ## 6. `d-match` and `case` Directive
 
 ### Syntax
@@ -203,6 +223,36 @@ branches toggle inversely. `d-if` without `d-else` works exactly as before.
 
 **Note:** `d-if` removes/reattaches nodes. Use `d-when` if you only need
 visibility toggling via `display: none`.
+
+### 7.1 `d-transition` with `d-if`
+
+If `d-transition` is present on a `d-if` branch:
+- entering applies `data-enter`
+- leaving applies `data-leave`
+- node removal is delayed until leave duration completes
+
+This applies to both `d-if` and immediate `d-else` branch elements.
+
+## 7.2 `d-portal` Directive
+
+### Syntax
+
+```html
+<div d-portal="#modal-root">...</div>
+<div d-portal="showModal ? '#modal-root' : null">...</div>
+<div d-portal="modalTarget">...</div>
+```
+
+### Rules
+
+`d-portal` resolves expression in context and supports:
+- selector string (`document.querySelector`)
+- `Element`
+- `null` / `false` (restores to original anchor position)
+
+If target changes reactively, the element is moved to the new target.
+
+`createPortalTarget(id)` can be used to create/reuse a target element and pass it as signal.
 
 ## 8. `d-each` Directive
 
@@ -335,6 +385,7 @@ Use `d-text` when you want to set the entire text content of an element to a sin
 <textarea d-bind-value="bio"></textarea>
 <select d-bind-value="choice">...</select>
 <input type="checkbox" d-bind-checked="done" />
+<input d-bind-disabled="locked" d-bind-placeholder="ph" />
 ```
 
 ### Rules
@@ -343,11 +394,20 @@ Use `d-text` when you want to set the entire text content of an element to a sin
 |------|-------------|
 | `d-bind-value="key"` | Two-way binding between `ctx[key]` (signal) and `.value` property |
 | `d-bind-checked="key"` | Two-way binding between `ctx[key]` (signal) and `.checked` property |
+| `d-bind-readonly="key"` | Reactive binding to `.readOnly` |
+| `d-bind-disabled="key"` | Reactive binding to `.disabled` |
+| `d-bind-maxlength="key"` | Reactive binding to `.maxLength` |
+| `d-bind-placeholder="key"` | Reactive binding to `.placeholder` |
+| `d-bind-pattern="key"` | Reactive binding to `.pattern` |
+| `d-bind-multiple="key"` | Reactive binding to `.multiple` (e.g. `<select>`) |
+| `d-bind-transform="fn"` | Outbound transform: signal value -> displayed value |
+| `d-bind-parse="fn"` | Inbound parse: displayed/input value -> signal value |
 | Signal required | `ctx[key]` **must** be a signal. Non-signals are ignored with a dev-mode warning. |
 | Outbound | Signal changes update the DOM property reactively via `effect()` |
 | Inbound (input/textarea) | Listens to `input` event, sets `signal.set(el.value)` |
 | Inbound (select) | Listens to `change` event, sets `signal.set(el.value)` |
 | Inbound (checkbox) | Listens to `change` event, sets `signal.set(el.checked)` |
+| Multiple bindings | Multiple `d-bind-*` directives can coexist on the same element |
 | Cleanup | `dispose()` removes the event listener and stops the effect |
 
 ### Dev-mode warnings
@@ -451,7 +511,9 @@ bind() creates:
        ├── effect() for each [d-text] (reactive values only)
        ├── effect() for each {interpolation} (reactive expressions only)
        ├── effect() for each [d-when]
+       ├── transition state updates for [d-transition]
        ├── effect() for each [d-if] / [d-else]
+       ├── portal relocation effects for [d-portal]
        ├── effect() for each [d-match]
        ├── effect() for each [d-attr-*] (reactive values only)
        ├── effect() for each [d-bind-*] (outbound sync)
@@ -481,6 +543,7 @@ In dev mode, the runtime logs warnings:
 | `{x}` but `ctx.x` undefined | `Text interpolation: "x" not found in context` |
 | `d-when="y"` but `ctx.y` undefined | `d-when: "y" not found in context` |
 | `d-if="y"` but `ctx.y` undefined | `d-if: "y" not found in context` |
+| `d-portal="x"` but `ctx.x` undefined | `d-portal: ... not found in context` |
 | `d-each="list"` but `ctx.list` undefined | `d-each: "list" not found in context` |
 | `d-each="list"` but not array/signal | `d-each: "list" is not an array or signal` |
 | `d-virtual-each="list"` but `ctx.list` undefined | `d-virtual-each: "list" not found in context` |

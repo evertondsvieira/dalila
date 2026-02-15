@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { signal, computed }  from '../dist/core/signal.js';
-import { bind }    from '../dist/runtime/bind.js';
+import { bind, configure, createPortalTarget }    from '../dist/runtime/bind.js';
 
 // ─── shared helpers ─────────────────────────────────────────────────────────
 
@@ -136,6 +136,103 @@ test('root inclusive – d-if on root element', async () => {
     show.set(false);
     await tick(10);
     assert.ok(!doc.body.contains(root), 'removed when false');
+  });
+});
+
+test('d-when + d-transition – delays hide until transition duration', async () => {
+  await withDom(async (doc) => {
+    configure({
+      transitions: [{ name: 'fade', duration: 30 }],
+    });
+
+    const visible = signal(true);
+    const root = el(doc, '<div d-when="visible" d-transition="fade">text</div>');
+    bind(root, { visible });
+    await tick(10);
+    assert.equal(root.style.display, '');
+    assert.equal(root.hasAttribute('data-enter'), true);
+
+    visible.set(false);
+    await tick(5);
+    assert.equal(root.hasAttribute('data-leave'), true);
+    assert.equal(root.style.display, '', 'still visible while leaving');
+
+    await tick(40);
+    assert.equal(root.style.display, 'none', 'hidden after leave duration');
+    configure({});
+  });
+});
+
+test('d-if + d-transition – calls custom enter/leave hooks', async () => {
+  await withDom(async (doc) => {
+    let enters = 0;
+    let leaves = 0;
+
+    configure({
+      transitions: [{
+        name: 'slide-up',
+        enter: () => { enters++; },
+        leave: () => { leaves++; },
+      }],
+    });
+
+    const show = signal(true);
+    const root = el(doc, '<div><p d-if="show" d-transition="slide-up">yes</p></div>');
+    bind(root, { show });
+    await tick(10);
+    assert.equal(enters, 1);
+
+    show.set(false);
+    await tick(10);
+    assert.equal(leaves, 1);
+    assert.equal(root.querySelectorAll('p').length, 0);
+
+    show.set(true);
+    await tick(10);
+    assert.equal(enters, 2);
+    assert.equal(root.querySelectorAll('p').length, 1);
+    configure({});
+  });
+});
+
+test('d-portal – static selector target and conditional expression', async () => {
+  await withDom(async (doc) => {
+    const modalRoot = doc.createElement('div');
+    modalRoot.id = 'modal-root';
+    doc.body.appendChild(modalRoot);
+
+    const showModal = signal(false);
+    const root = el(
+      doc,
+      `<div id="host"><section d-portal="showModal ? '#modal-root' : null">content</section></div>`
+    );
+    bind(root, { showModal });
+    await tick(10);
+
+    const section = root.querySelector('section');
+    assert.equal(section.parentElement?.id, 'host');
+
+    showModal.set(true);
+    await tick(10);
+    assert.equal(section.parentElement?.id, 'modal-root');
+
+    showModal.set(false);
+    await tick(10);
+    assert.equal(section.parentElement?.id, 'host');
+  });
+});
+
+test('createPortalTarget + d-portal identifier target', async () => {
+  await withDom(async (doc) => {
+    const modalTarget = createPortalTarget('overlay-root');
+    const root = el(doc, '<div id="host"><aside d-portal="modalTarget">overlay</aside></div>');
+    bind(root, { modalTarget });
+    await tick(10);
+
+    const aside = doc.querySelector('#overlay-root aside');
+    assert.ok(aside, 'portal content should render inside the created target');
+    assert.equal(aside.parentElement?.id, 'overlay-root');
+    assert.ok(doc.getElementById('overlay-root'), 'portal target should be created');
   });
 });
 

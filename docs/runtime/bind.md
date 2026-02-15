@@ -121,8 +121,24 @@ import { configure } from 'dalila/runtime';
 configure({
   components: [FruitPicker, UserCard],
   onMountError: 'log',
+  transitions: [
+    {
+      name: 'slide-up',
+      duration: 300,
+      enter: (el) => { el.style.opacity = '1'; },
+      leave: (el) => { el.style.opacity = '0'; },
+    },
+  ],
 });
 ```
+
+### createPortalTarget
+
+```ts
+function createPortalTarget(id: string): Signal<Element | null>
+```
+
+Creates (or reuses) an element by `id` in `document.body` and returns it as a signal for use with `d-portal`.
 
 ### mount
 
@@ -336,6 +352,39 @@ Toggles `display` style.  The element stays in the DOM at all times.
 
 Reactive: re-evaluates whenever the bound signal changes.
 
+With transitions:
+
+```html
+<div d-when="isVisible" d-transition="fade">Shown when truthy</div>
+```
+
+---
+
+### Transitions `d-transition`
+
+Adds enter/leave transition state attributes that integrate with `d-when` and `d-if`.
+
+```html
+<div d-transition="fade">...</div>
+<div d-transition="slide">...</div>
+<div d-transition="scale">...</div>
+<div d-transition="fade slide">...</div>
+```
+
+On enter/leave, Dalila toggles:
+- `data-enter` while entering
+- `data-leave` while leaving
+
+You can style transitions with CSS:
+
+```css
+[d-transition~="fade"] { transition: opacity 0.3s; }
+[d-transition~="fade"][data-enter] { opacity: 1; }
+[d-transition~="fade"][data-leave] { opacity: 0; }
+```
+
+Custom transition hooks are registered via `configure({ transitions: [...] })`.
+
 ---
 
 ### Conditional rendering `d-if` / `d-else`
@@ -364,6 +413,32 @@ If the **immediate next sibling** of a `d-if` element has the `d-else` attribute
 - Only the immediate next sibling is checked — no deep search.
 - `d-if` without `d-else` works exactly as before.
 - Both branches are fully bound before the conditional toggle runs (since `d-if` is the last pipeline step).
+
+`d-if` also supports `d-transition` and will delay removal until the transition duration ends.
+
+---
+
+### Portal `d-portal`
+
+Renders an element into another DOM target (teleport behavior).
+
+```html
+<!-- Selector shorthand -->
+<div d-portal="#modal-root">Modal content</div>
+
+<!-- Dynamic expression -->
+<div d-portal="showModal ? '#modal-root' : null">Modal content</div>
+
+<!-- Signal target -->
+<div d-portal="modalTarget">Modal content</div>
+```
+
+Supported expression results:
+- selector string (resolved via `document.querySelector`)
+- `Element`
+- `null` / `false` (restores to original position)
+
+Use `createPortalTarget('modal-root')` to create a target signal programmatically.
 
 ---
 

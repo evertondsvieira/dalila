@@ -6,8 +6,8 @@
  *
  * @module dalila/runtime
  */
-export { bind, autoBind, mount, configure } from './bind.js';
-export type { BindOptions, BindContext, BindData, DisposeFunction, BindHandle } from './bind.js';
+export { bind, autoBind, mount, configure, createPortalTarget } from './bind.js';
+export type { BindOptions, BindContext, BindData, DisposeFunction, BindHandle, TransitionConfig } from './bind.js';
 export { fromHtml } from './fromHtml.js';
 export type { FromHtmlOptions } from './fromHtml.js';
 export { defineComponent } from './component.js';

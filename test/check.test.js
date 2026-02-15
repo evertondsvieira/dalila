@@ -485,6 +485,25 @@ test('Check - d-bind directives participate in identifier checks', async () => {
   });
 });
 
+test('Check - d-portal expressions participate in identifier checks', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { showModal: true }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<div d-portal="showModa ? '#modal-root' : null">Modal</div>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /"showModa" is not defined in template context \(d-portal\)/);
+  });
+});
+
 // 26. non-strict mode skips template var errors when loader shape is not inferable
 test('Check - non-strict ignores template identifiers for non-inferable loader types', async () => {
   await withTempProject(async ({ appDir, write, logs }) => {

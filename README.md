@@ -58,7 +58,7 @@ bind(document.getElementById('app')!, ctx);
 
 ### Runtime
 
-- [Template Binding](./docs/runtime/bind.md) — `bind()`, `mount()`, `configure()`, text interpolation, events
+- [Template Binding](./docs/runtime/bind.md) — `bind()`, `mount()`, `configure()`, transitions, portal, text interpolation, events
 - [Components](./docs/runtime/component.md) — `defineComponent`, typed props/emits/refs, slots
 - [FOUC Prevention](./docs/runtime/fouc-prevention.md) — Automatic token hiding
 
@@ -108,7 +108,7 @@ Firefox extension workflows:
 
 ```
 dalila           → signal, computed, effect, batch, ...
-dalila/runtime   → bind(), mount(), configure(), defineComponent()
+dalila/runtime   → bind(), mount(), configure(), createPortalTarget(), defineComponent()
 dalila/context   → createContext, provide, inject
 dalila/http      → createHttpClient with XSRF protection
 ```
@@ -141,6 +141,23 @@ const dispose = mount('.app', { count: signal(0) });
 
 // Cleanup when done
 dispose();
+```
+
+### Transitions and Portal
+
+```html
+<div d-when="open" d-transition="fade">Panel</div>
+<div d-portal="showModal ? '#modal-root' : null">Modal content</div>
+```
+
+```ts
+import { configure, createPortalTarget } from 'dalila/runtime';
+
+const modalTarget = createPortalTarget('modal-root');
+
+configure({
+  transitions: [{ name: 'fade', duration: 250 }],
+});
 ```
 
 ### Scopes

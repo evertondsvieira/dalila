@@ -46,6 +46,11 @@ export interface BindOptions {
   onMountError?: 'log' | 'throw';
 
   /**
+   * Optional runtime transition registry used by `d-transition`.
+   */
+  transitions?: TransitionConfig[];
+
+  /**
    * Internal flag — set by fromHtml for router/template rendering.
    * Skips HMR context registration but KEEPS d-ready/d-loading lifecycle.
    * @internal
@@ -78,6 +83,13 @@ export interface BindHandle {
   (): void;
   getRef(name: string): Element | null;
   getRefs(): Readonly<Record<string, Element>>;
+}
+
+export interface TransitionConfig {
+  name: string;
+  enter?: (el: HTMLElement) => void;
+  leave?: (el: HTMLElement) => void;
+  duration?: number;
 }
 
 // ============================================================================
@@ -175,6 +187,10 @@ function warn(message: string): void {
 type EvalResult =
   | { ok: true; value: unknown }
   | { ok: false; reason: 'parse' | 'missing_identifier'; message: string; identifier?: string };
+
+type TransitionRegistry = Map<string, TransitionConfig>;
+
+const portalSyncByElement = new WeakMap<HTMLElement, () => void>();
 
 function describeBindRoot(root: Element): string {
   const explicit =
@@ -1397,6 +1413,253 @@ function bindEmit(
   }
 }
 
+function createTransitionRegistry(transitions: TransitionConfig[] | undefined): TransitionRegistry {
+  const registry: TransitionRegistry = new Map();
+  if (!transitions) return registry;
+
+  for (const cfg of transitions) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    const name = typeof cfg.name === 'string' ? cfg.name.trim() : '';
+    if (!name) {
+      warn('configure({ transitions }): each transition must have a non-empty "name"');
+      continue;
+    }
+    registry.set(name, cfg);
+  }
+
+  return registry;
+}
+
+function readTransitionNames(el: Element): string[] {
+  const raw = el.getAttribute('d-transition');
+  if (!raw) return [];
+  return raw
+    .split(/\s+/)
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+function parseCssTimeToMs(value: string): number {
+  const token = value.trim();
+  if (!token) return 0;
+  if (token.endsWith('ms')) {
+    const ms = Number(token.slice(0, -2));
+    return Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  }
+  if (token.endsWith('s')) {
+    const seconds = Number(token.slice(0, -1));
+    return Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : 0;
+  }
+  const fallback = Number(token);
+  return Number.isFinite(fallback) ? Math.max(0, fallback) : 0;
+}
+
+function getTransitionDurationMs(el: HTMLElement, names: string[], registry: TransitionRegistry): number {
+  let durationFromRegistry = 0;
+  for (const name of names) {
+    const cfg = registry.get(name);
+    if (!cfg) continue;
+    if (typeof cfg.duration === 'number' && Number.isFinite(cfg.duration)) {
+      durationFromRegistry = Math.max(durationFromRegistry, Math.max(0, cfg.duration));
+    }
+  }
+
+  let durationFromCss = 0;
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    const style = window.getComputedStyle(el);
+    const durations = style.transitionDuration.split(',');
+    const delays = style.transitionDelay.split(',');
+    const total = Math.max(durations.length, delays.length);
+    for (let i = 0; i < total; i++) {
+      const duration = parseCssTimeToMs(durations[Math.min(i, durations.length - 1)] ?? '0ms');
+      const delay = parseCssTimeToMs(delays[Math.min(i, delays.length - 1)] ?? '0ms');
+      durationFromCss = Math.max(durationFromCss, duration + delay);
+    }
+  }
+
+  return Math.max(durationFromRegistry, durationFromCss);
+}
+
+function runTransitionHook(
+  phase: 'enter' | 'leave',
+  el: HTMLElement,
+  names: string[],
+  registry: TransitionRegistry
+): void {
+  for (const name of names) {
+    const cfg = registry.get(name);
+    const hook = phase === 'enter' ? cfg?.enter : cfg?.leave;
+    if (typeof hook !== 'function') continue;
+    try {
+      hook(el);
+    } catch (err) {
+      warn(`d-transition (${name}): ${phase} hook failed (${(err as Error).message || String(err)})`);
+    }
+  }
+}
+
+function syncPortalElement(el: HTMLElement): void {
+  const sync = portalSyncByElement.get(el);
+  sync?.();
+}
+
+function createTransitionController(
+  el: HTMLElement,
+  registry: TransitionRegistry,
+  cleanups: DisposeFunction[]
+): {
+  hasTransition: boolean;
+  enter: () => void;
+  leave: (onDone: () => void) => void;
+} {
+  const names = readTransitionNames(el);
+  const hasTransition = names.length > 0;
+  let token = 0;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const cancelPending = () => {
+    token++;
+    if (timeoutId != null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+  };
+
+  cleanups.push(cancelPending);
+
+  const enter = () => {
+    cancelPending();
+    if (!hasTransition) return;
+    el.removeAttribute('data-leave');
+    el.setAttribute('data-enter', '');
+    runTransitionHook('enter', el, names, registry);
+  };
+
+  const leave = (onDone: () => void) => {
+    cancelPending();
+    if (!hasTransition) {
+      onDone();
+      return;
+    }
+
+    const current = ++token;
+    el.removeAttribute('data-enter');
+    el.setAttribute('data-leave', '');
+    runTransitionHook('leave', el, names, registry);
+
+    const durationMs = getTransitionDurationMs(el, names, registry);
+    if (durationMs <= 0) {
+      if (current === token) onDone();
+      return;
+    }
+
+    timeoutId = setTimeout(() => {
+      timeoutId = null;
+      if (current !== token) return;
+      onDone();
+    }, durationMs);
+  };
+
+  return { hasTransition, enter, leave };
+}
+
+function bindPortal(
+  root: Element,
+  ctx: BindContext,
+  cleanups: DisposeFunction[]
+): void {
+  const elements = qsaIncludingRoot(root, '[d-portal]');
+
+  for (const el of elements) {
+    const rawExpression = el.getAttribute('d-portal')?.trim();
+    if (!rawExpression) continue;
+
+    let expressionAst: ExprNode | null = null;
+    let fallbackSelector: string | null = null;
+    try {
+      expressionAst = parseExpression(rawExpression);
+    } catch {
+      // Allow selector shorthand: d-portal="#modal-root"
+      fallbackSelector = rawExpression;
+    }
+
+    const htmlEl = el as HTMLElement;
+    const anchor = document.createComment('d-portal');
+    htmlEl.parentNode?.insertBefore(anchor, htmlEl);
+
+    const coerceTarget = (value: unknown): Element | null => {
+      const resolved = resolve(value);
+      if (resolved == null || resolved === false) return null;
+
+      if (typeof resolved === 'string') {
+        const selector = resolved.trim();
+        if (!selector) return null;
+        if (typeof document === 'undefined') return null;
+        const target = document.querySelector(selector);
+        if (!target) {
+          warn(`d-portal: target "${selector}" not found`);
+          return null;
+        }
+        return target;
+      }
+
+      if (typeof Element !== 'undefined' && resolved instanceof Element) {
+        return resolved;
+      }
+
+      warn('d-portal: expression must resolve to selector string, Element, or null');
+      return null;
+    };
+
+    const restoreToAnchor = () => {
+      const hostParent = anchor.parentNode;
+      if (!hostParent) return;
+      if (htmlEl.parentNode === hostParent) return;
+      const next = anchor.nextSibling;
+      if (next) hostParent.insertBefore(htmlEl, next);
+      else hostParent.appendChild(htmlEl);
+    };
+
+    const syncPortal = () => {
+      let target: Element | null = null;
+
+      if (expressionAst) {
+        const result = evalExpressionAst(expressionAst, ctx);
+        if (!result.ok) {
+          if (result.reason === 'missing_identifier') {
+            warn(`d-portal: ${result.message}`);
+          } else {
+            warn(`d-portal: invalid expression "${rawExpression}"`);
+          }
+          target = null;
+        } else {
+          target = coerceTarget(result.value);
+        }
+      } else {
+        target = coerceTarget(fallbackSelector);
+      }
+
+      if (!target) {
+        restoreToAnchor();
+        return;
+      }
+
+      if (htmlEl.parentNode !== target) {
+        target.appendChild(htmlEl);
+      }
+    };
+
+    portalSyncByElement.set(htmlEl, syncPortal);
+    bindEffect(htmlEl, syncPortal);
+
+    cleanups.push(() => {
+      portalSyncByElement.delete(htmlEl);
+      restoreToAnchor();
+      anchor.remove();
+    });
+  }
+}
+
 // ============================================================================
 // d-when Directive
 // ============================================================================
@@ -1407,7 +1670,8 @@ function bindEmit(
 function bindWhen(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  transitionRegistry: TransitionRegistry
 ): void {
   const elements = qsaIncludingRoot(root, '[when], [d-when]');
 
@@ -1424,15 +1688,33 @@ function bindWhen(
     }
 
     const htmlEl = el as HTMLElement;
+    const transitions = createTransitionController(htmlEl, transitionRegistry, cleanups);
 
     // Apply initial state synchronously to avoid FOUC (flash of unstyled content)
     const initialValue = !!resolve(binding);
-    htmlEl.style.display = initialValue ? '' : 'none';
+    if (initialValue) {
+      htmlEl.style.display = '';
+      if (transitions.hasTransition) {
+        htmlEl.removeAttribute('data-leave');
+        htmlEl.setAttribute('data-enter', '');
+      }
+    } else {
+      htmlEl.style.display = 'none';
+      htmlEl.removeAttribute('data-enter');
+      htmlEl.removeAttribute('data-leave');
+    }
 
     // Then create reactive effect to keep it updated
     bindEffect(htmlEl, () => {
       const value = !!resolve(binding);
-      htmlEl.style.display = value ? '' : 'none';
+      if (value) {
+        htmlEl.style.display = '';
+        transitions.enter();
+        return;
+      }
+      transitions.leave(() => {
+        htmlEl.style.display = 'none';
+      });
     });
   }
 }
@@ -2219,7 +2501,8 @@ function bindEach(
 function bindIf(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  transitionRegistry: TransitionRegistry
 ): void {
   const elements = qsaIncludingRoot(root, '[d-if]');
   const processedElse = new Set<Element>();
@@ -2242,24 +2525,37 @@ function bindIf(
     el.removeAttribute('d-if');
 
     const htmlEl = el as HTMLElement;
+    const transitions = createTransitionController(htmlEl, transitionRegistry, cleanups);
 
     // Handle d-else branch
     let elseHtmlEl: HTMLElement | null = null;
     let elseComment: Comment | null = null;
+    let elseTransitions: ReturnType<typeof createTransitionController> | null = null;
     if (elseEl) {
       processedElse.add(elseEl);
       elseComment = document.createComment('d-else');
       elseEl.parentNode?.replaceChild(elseComment, elseEl);
       elseEl.removeAttribute('d-else');
       elseHtmlEl = elseEl as HTMLElement;
+      elseTransitions = createTransitionController(elseHtmlEl, transitionRegistry, cleanups);
     }
 
     // Apply initial state synchronously to avoid FOUC
     const initialValue = !!resolve(binding);
     if (initialValue) {
       comment.parentNode?.insertBefore(htmlEl, comment);
+      syncPortalElement(htmlEl);
+      if (transitions.hasTransition) {
+        htmlEl.removeAttribute('data-leave');
+        htmlEl.setAttribute('data-enter', '');
+      }
     } else if (elseHtmlEl && elseComment) {
       elseComment.parentNode?.insertBefore(elseHtmlEl, elseComment);
+      syncPortalElement(elseHtmlEl);
+      if (elseTransitions?.hasTransition) {
+        elseHtmlEl.removeAttribute('data-leave');
+        elseHtmlEl.setAttribute('data-enter', '');
+      }
     }
 
     // Then create reactive effect to keep it updated
@@ -2271,17 +2567,25 @@ function bindIf(
         if (value) {
           if (!htmlEl.parentNode) {
             comment.parentNode?.insertBefore(htmlEl, comment);
+            syncPortalElement(htmlEl);
           }
-          if (capturedElseEl.parentNode) {
-            capturedElseEl.parentNode.removeChild(capturedElseEl);
-          }
+          transitions.enter();
+          elseTransitions?.leave(() => {
+            if (capturedElseEl.parentNode) {
+              capturedElseEl.parentNode.removeChild(capturedElseEl);
+            }
+          });
         } else {
-          if (htmlEl.parentNode) {
-            htmlEl.parentNode.removeChild(htmlEl);
-          }
+          transitions.leave(() => {
+            if (htmlEl.parentNode) {
+              htmlEl.parentNode.removeChild(htmlEl);
+            }
+          });
           if (!capturedElseEl.parentNode) {
             capturedElseComment.parentNode?.insertBefore(capturedElseEl, capturedElseComment);
+            syncPortalElement(capturedElseEl);
           }
+          elseTransitions?.enter();
         }
       });
     } else {
@@ -2290,11 +2594,15 @@ function bindIf(
         if (value) {
           if (!htmlEl.parentNode) {
             comment.parentNode?.insertBefore(htmlEl, comment);
+            syncPortalElement(htmlEl);
           }
+          transitions.enter();
         } else {
-          if (htmlEl.parentNode) {
-            htmlEl.parentNode.removeChild(htmlEl);
-          }
+          transitions.leave(() => {
+            if (htmlEl.parentNode) {
+              htmlEl.parentNode.removeChild(htmlEl);
+            }
+          });
         }
       });
     }
@@ -3635,6 +3943,24 @@ function bindComponents(
 
 let globalConfig: BindOptions = {};
 
+export function createPortalTarget(id: string): Signal<Element | null> {
+  const targetSignal = signal<Element | null>(null);
+
+  if (typeof document === 'undefined') {
+    return targetSignal;
+  }
+
+  let target = document.getElementById(id);
+  if (!target) {
+    target = document.createElement('div');
+    target.id = id;
+    document.body.appendChild(target);
+  }
+
+  targetSignal.set(target);
+  return targetSignal;
+}
+
 /**
  * Set global defaults for all `bind()` / `mount()` calls.
  *
@@ -3693,8 +4019,8 @@ export function bind<T extends Record<string, unknown> = BindContext>(
 ): BindHandle {
   // ── Merge global config with per-call options ──
   if (Object.keys(globalConfig).length > 0) {
-    const { components: globalComponents, ...globalRest } = globalConfig;
-    const { components: localComponents, ...localRest } = options;
+    const { components: globalComponents, transitions: globalTransitions, ...globalRest } = globalConfig;
+    const { components: localComponents, transitions: localTransitions, ...localRest } = options;
     const mergedOpts: BindOptions = { ...globalRest, ...localRest };
 
     // Combine component registries: local takes precedence over global
@@ -3717,6 +4043,19 @@ export function bind<T extends Record<string, unknown> = BindContext>(
       mergeComponents(globalComponents);
       mergeComponents(localComponents); // local wins
       mergedOpts.components = combined;
+    }
+
+    if (globalTransitions || localTransitions) {
+      const byName = new Map<string, TransitionConfig>();
+      for (const item of globalTransitions ?? []) {
+        if (!item || typeof item.name !== 'string') continue;
+        byName.set(item.name, item);
+      }
+      for (const item of localTransitions ?? []) {
+        if (!item || typeof item.name !== 'string') continue;
+        byName.set(item.name, item);
+      }
+      mergedOpts.transitions = Array.from(byName.values());
     }
 
     options = mergedOpts;
@@ -3764,6 +4103,7 @@ export function bind<T extends Record<string, unknown> = BindContext>(
   const onMountError = options.onMountError ?? 'log';
   const rawTextSelectors = options.rawTextSelectors ?? DEFAULT_RAW_TEXT_SELECTORS;
   const templatePlanCacheConfig = resolveTemplatePlanCacheConfig(options);
+  const transitionRegistry = createTransitionRegistry(options.transitions);
   const benchSession = createBindBenchSession();
 
   const htmlRoot = root as HTMLElement;
@@ -3825,7 +4165,7 @@ export function bind<T extends Record<string, unknown> = BindContext>(
     bindEmit(root, ctx, cleanups);
 
     // 14. d-when directive
-    bindWhen(root, ctx, cleanups);
+    bindWhen(root, ctx, cleanups, transitionRegistry);
 
     // 15. d-match directive
     bindMatch(root, ctx, cleanups);
@@ -3834,8 +4174,11 @@ export function bind<T extends Record<string, unknown> = BindContext>(
     bindError(root, ctx, cleanups);
     bindFormError(root, ctx, cleanups);
 
-    // 17. d-if — must run last: elements are fully bound before conditional removal
-    bindIf(root, ctx, cleanups);
+    // 17. d-portal — move already-bound elements to external targets
+    bindPortal(root, ctx, cleanups);
+
+    // 18. d-if — must run last: elements are fully bound before conditional removal
+    bindIf(root, ctx, cleanups, transitionRegistry);
   });
 
   // Bindings complete: remove loading state and mark as ready.
