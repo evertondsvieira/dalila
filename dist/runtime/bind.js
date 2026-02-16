@@ -1498,6 +1498,47 @@ function readVirtualHeightOption(raw, ctx) {
     }
     return trimmed;
 }
+function readVirtualMeasureOption(raw, ctx) {
+    if (!raw)
+        return false;
+    const trimmed = raw.trim();
+    if (!trimmed)
+        return false;
+    if (trimmed.toLowerCase() === 'auto')
+        return true;
+    const fromCtx = ctx[trimmed];
+    if (fromCtx === undefined)
+        return false;
+    const resolved = resolve(fromCtx);
+    if (resolved === true)
+        return true;
+    if (typeof resolved === 'string' && resolved.trim().toLowerCase() === 'auto')
+        return true;
+    return false;
+}
+function readVirtualCallbackOption(raw, ctx, label) {
+    if (!raw)
+        return null;
+    const trimmed = raw.trim();
+    if (!trimmed)
+        return null;
+    const fromCtx = ctx[trimmed];
+    if (fromCtx === undefined) {
+        warn(`${label}: "${trimmed}" not found in context`);
+        return null;
+    }
+    if (typeof fromCtx === 'function' && !isSignal(fromCtx)) {
+        return fromCtx;
+    }
+    if (isSignal(fromCtx)) {
+        const resolved = fromCtx();
+        if (typeof resolved === 'function') {
+            return resolved;
+        }
+    }
+    warn(`${label}: "${trimmed}" must resolve to a function`);
+    return null;
+}
 function createVirtualSpacer(template, kind) {
     const spacer = template.cloneNode(false);
     spacer.removeAttribute('id');
@@ -1519,13 +1560,199 @@ function createVirtualSpacer(template, kind) {
     spacer.style.listStyle = 'none';
     return spacer;
 }
+const virtualScrollRestoreCache = new Map();
+const VIRTUAL_SCROLL_RESTORE_CACHE_MAX_ENTRIES = 256;
+function getVirtualScrollRestoreValue(key) {
+    const value = virtualScrollRestoreCache.get(key);
+    if (value === undefined)
+        return undefined;
+    // Touch entry to keep LRU ordering.
+    virtualScrollRestoreCache.delete(key);
+    virtualScrollRestoreCache.set(key, value);
+    return value;
+}
+function setVirtualScrollRestoreValue(key, value) {
+    virtualScrollRestoreCache.delete(key);
+    virtualScrollRestoreCache.set(key, value);
+    while (virtualScrollRestoreCache.size > VIRTUAL_SCROLL_RESTORE_CACHE_MAX_ENTRIES) {
+        const oldestKey = virtualScrollRestoreCache.keys().next().value;
+        if (!oldestKey)
+            break;
+        virtualScrollRestoreCache.delete(oldestKey);
+    }
+}
+function clampVirtual(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+function getElementPositionPath(el) {
+    const parts = [];
+    let current = el;
+    while (current) {
+        const tag = current.tagName.toLowerCase();
+        const parentEl = current.parentElement;
+        if (!parentEl) {
+            parts.push(tag);
+            break;
+        }
+        let index = 1;
+        let sib = current.previousElementSibling;
+        while (sib) {
+            index++;
+            sib = sib.previousElementSibling;
+        }
+        parts.push(`${tag}:${index}`);
+        current = parentEl;
+    }
+    return parts.reverse().join('>');
+}
+const virtualRestoreDocumentIds = new WeakMap();
+let nextVirtualRestoreDocumentId = 0;
+function getVirtualRestoreDocumentId(doc) {
+    const existing = virtualRestoreDocumentIds.get(doc);
+    if (existing !== undefined)
+        return existing;
+    const next = ++nextVirtualRestoreDocumentId;
+    virtualRestoreDocumentIds.set(doc, next);
+    return next;
+}
+function getVirtualRestoreKey(doc, templatePath, scrollContainer, bindingName, keyBinding) {
+    const locationPath = typeof window !== 'undefined'
+        ? `${window.location.pathname}${window.location.search}`
+        : '';
+    const containerIdentity = scrollContainer?.id
+        ? `#${scrollContainer.id}`
+        : (scrollContainer ? getElementPositionPath(scrollContainer) : '');
+    const docId = getVirtualRestoreDocumentId(doc);
+    return `${docId}|${locationPath}|${bindingName}|${keyBinding ?? ''}|${containerIdentity}|${templatePath}`;
+}
+class VirtualHeightsIndex {
+    constructor(itemCount, estimatedHeight) {
+        this.itemCount = 0;
+        this.estimatedHeight = 1;
+        this.tree = [0];
+        this.overrides = new Map();
+        this.reset(itemCount, estimatedHeight);
+    }
+    get count() {
+        return this.itemCount;
+    }
+    snapshotOverrides() {
+        return new Map(this.overrides);
+    }
+    reset(itemCount, estimatedHeight, seed) {
+        this.itemCount = Number.isFinite(itemCount) ? Math.max(0, Math.floor(itemCount)) : 0;
+        this.estimatedHeight = Number.isFinite(estimatedHeight) ? Math.max(1, estimatedHeight) : 1;
+        this.tree = new Array(this.itemCount + 1).fill(0);
+        this.overrides.clear();
+        for (let i = 0; i < this.itemCount; i++) {
+            this.addAt(i + 1, this.estimatedHeight);
+        }
+        if (!seed)
+            return;
+        for (const [index, height] of seed.entries()) {
+            if (index < 0 || index >= this.itemCount)
+                continue;
+            this.set(index, height);
+        }
+    }
+    set(index, height) {
+        if (!Number.isFinite(height) || height <= 0)
+            return false;
+        if (index < 0 || index >= this.itemCount)
+            return false;
+        const next = Math.max(1, height);
+        const current = this.get(index);
+        if (Math.abs(next - current) < 0.5)
+            return false;
+        this.addAt(index + 1, next - current);
+        if (Math.abs(next - this.estimatedHeight) < 0.5) {
+            this.overrides.delete(index);
+        }
+        else {
+            this.overrides.set(index, next);
+        }
+        return true;
+    }
+    get(index) {
+        if (index < 0 || index >= this.itemCount)
+            return this.estimatedHeight;
+        return this.overrides.get(index) ?? this.estimatedHeight;
+    }
+    prefix(endExclusive) {
+        if (endExclusive <= 0)
+            return 0;
+        const clampedEnd = Math.min(this.itemCount, Math.max(0, Math.floor(endExclusive)));
+        let i = clampedEnd;
+        let sum = 0;
+        while (i > 0) {
+            sum += this.tree[i];
+            i -= i & -i;
+        }
+        return sum;
+    }
+    total() {
+        return this.prefix(this.itemCount);
+    }
+    lowerBound(target) {
+        if (this.itemCount === 0 || target <= 0)
+            return 0;
+        let idx = 0;
+        let bit = 1;
+        while ((bit << 1) <= this.itemCount)
+            bit <<= 1;
+        let sum = 0;
+        while (bit > 0) {
+            const next = idx + bit;
+            if (next <= this.itemCount && sum + this.tree[next] < target) {
+                idx = next;
+                sum += this.tree[next];
+            }
+            bit >>= 1;
+        }
+        return Math.min(this.itemCount, idx);
+    }
+    indexAtOffset(offset) {
+        if (this.itemCount === 0)
+            return 0;
+        if (!Number.isFinite(offset) || offset <= 0)
+            return 0;
+        const totalHeight = this.total();
+        if (offset >= totalHeight)
+            return this.itemCount - 1;
+        const idx = this.lowerBound(offset + 0.0001);
+        return clampVirtual(idx, 0, this.itemCount - 1);
+    }
+    addAt(treeIndex, delta) {
+        let i = treeIndex;
+        while (i <= this.itemCount) {
+            this.tree[i] += delta;
+            i += i & -i;
+        }
+    }
+}
+function readVirtualListApi(target) {
+    if (!target)
+        return null;
+    return target.__dalilaVirtualList ?? null;
+}
+export function getVirtualListController(target) {
+    return readVirtualListApi(target);
+}
+export function scrollToVirtualIndex(target, index, options) {
+    const controller = readVirtualListApi(target);
+    if (!controller)
+        return false;
+    controller.scrollToIndex(index, options);
+    return true;
+}
 /**
  * Bind all [d-virtual-each] directives within root.
  *
- * V1 constraints:
- * - Fixed item height (required via d-virtual-item-height)
- * - Vertical virtualization only
- * - Parent element is the scroll container
+ * Supports:
+ * - Fixed item height (`d-virtual-item-height`)
+ * - Dynamic item height (`d-virtual-measure="auto"`)
+ * - Infinite scroll callback (`d-virtual-infinite`)
+ * - Parent element as vertical scroll container
  */
 function bindVirtualEach(root, ctx, cleanups) {
     const elements = qsaIncludingRoot(root, '[d-virtual-each]')
@@ -1537,16 +1764,28 @@ function bindVirtualEach(root, ctx, cleanups) {
         const itemHeightBinding = normalizeBinding(el.getAttribute('d-virtual-item-height'));
         const itemHeightRaw = itemHeightBinding ?? el.getAttribute('d-virtual-item-height');
         const itemHeightValue = readVirtualNumberOption(itemHeightRaw, ctx, 'd-virtual-item-height');
-        const itemHeight = itemHeightValue == null ? NaN : itemHeightValue;
-        if (!Number.isFinite(itemHeight) || itemHeight <= 0) {
+        const fixedItemHeight = Number.isFinite(itemHeightValue) && itemHeightValue > 0
+            ? itemHeightValue
+            : NaN;
+        const dynamicHeight = readVirtualMeasureOption(normalizeBinding(el.getAttribute('d-virtual-measure')) ?? el.getAttribute('d-virtual-measure'), ctx);
+        if (!dynamicHeight && (!Number.isFinite(fixedItemHeight) || fixedItemHeight <= 0)) {
             warn(`d-virtual-each: invalid item height on "${bindingName}". Falling back to d-each.`);
             el.setAttribute('d-each', bindingName);
             el.removeAttribute('d-virtual-each');
             el.removeAttribute('d-virtual-item-height');
+            el.removeAttribute('d-virtual-estimated-height');
+            el.removeAttribute('d-virtual-measure');
+            el.removeAttribute('d-virtual-infinite');
             el.removeAttribute('d-virtual-overscan');
             el.removeAttribute('d-virtual-height');
             continue;
         }
+        const estimatedHeightBinding = normalizeBinding(el.getAttribute('d-virtual-estimated-height'));
+        const estimatedHeightRaw = estimatedHeightBinding ?? el.getAttribute('d-virtual-estimated-height');
+        const estimatedHeightValue = readVirtualNumberOption(estimatedHeightRaw, ctx, 'd-virtual-estimated-height');
+        const estimatedItemHeight = Number.isFinite(estimatedHeightValue) && estimatedHeightValue > 0
+            ? estimatedHeightValue
+            : (Number.isFinite(fixedItemHeight) ? fixedItemHeight : 48);
         const overscanBinding = normalizeBinding(el.getAttribute('d-virtual-overscan'));
         const overscanRaw = overscanBinding ?? el.getAttribute('d-virtual-overscan');
         const overscanValue = readVirtualNumberOption(overscanRaw, ctx, 'd-virtual-overscan');
@@ -1554,15 +1793,20 @@ function bindVirtualEach(root, ctx, cleanups) {
             ? Math.max(0, Math.floor(overscanValue))
             : 6;
         const viewportHeight = readVirtualHeightOption(normalizeBinding(el.getAttribute('d-virtual-height')) ?? el.getAttribute('d-virtual-height'), ctx);
+        const onEndReached = readVirtualCallbackOption(normalizeBinding(el.getAttribute('d-virtual-infinite')) ?? el.getAttribute('d-virtual-infinite'), ctx, 'd-virtual-infinite');
         let binding = ctx[bindingName];
         if (binding === undefined) {
             warn(`d-virtual-each: "${bindingName}" not found in context`);
             binding = [];
         }
+        const templatePathBeforeDetach = getElementPositionPath(el);
         const comment = document.createComment('d-virtual-each');
         el.parentNode?.replaceChild(comment, el);
         el.removeAttribute('d-virtual-each');
         el.removeAttribute('d-virtual-item-height');
+        el.removeAttribute('d-virtual-estimated-height');
+        el.removeAttribute('d-virtual-measure');
+        el.removeAttribute('d-virtual-infinite');
         el.removeAttribute('d-virtual-overscan');
         el.removeAttribute('d-virtual-height');
         const keyBinding = normalizeBinding(el.getAttribute('d-key'));
@@ -1579,8 +1823,14 @@ function bindVirtualEach(root, ctx, cleanups) {
             if (!scrollContainer.style.overflowY)
                 scrollContainer.style.overflowY = 'auto';
         }
+        const restoreKey = getVirtualRestoreKey(el.ownerDocument, templatePathBeforeDetach, scrollContainer, bindingName, keyBinding);
+        const savedScrollTop = getVirtualScrollRestoreValue(restoreKey);
+        if (scrollContainer && Number.isFinite(savedScrollTop)) {
+            scrollContainer.scrollTop = Math.max(0, savedScrollTop);
+        }
         const clonesByKey = new Map();
         const disposesByKey = new Map();
+        const observedElements = new Set();
         const metadataByKey = new Map();
         const itemsByKey = new Map();
         const objectKeyIds = new WeakMap();
@@ -1590,6 +1840,7 @@ function bindVirtualEach(root, ctx, cleanups) {
         const missingKeyWarned = new Set();
         let warnedNonArray = false;
         let warnedViewportFallback = false;
+        let heightsIndex = dynamicHeight ? new VirtualHeightsIndex(0, estimatedItemHeight) : null;
         const getObjectKeyId = (value) => {
             const existing = objectKeyIds.get(value);
             if (existing !== undefined)
@@ -1644,6 +1895,7 @@ function bindVirtualEach(root, ctx, cleanups) {
             }
             return index;
         };
+        let rowResizeObserver = null;
         function createClone(key, item, index, count) {
             const clone = template.cloneNode(true);
             const itemCtx = Object.create(ctx);
@@ -1669,6 +1921,7 @@ function bindVirtualEach(root, ctx, cleanups) {
             itemCtx.$odd = metadata.$odd;
             itemCtx.$even = metadata.$even;
             clone.setAttribute('data-dalila-internal-bound', '');
+            clone.setAttribute('data-dalila-virtual-index', String(index));
             const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
             disposesByKey.set(key, dispose);
             clonesByKey.set(key, clone);
@@ -1684,9 +1937,17 @@ function bindVirtualEach(root, ctx, cleanups) {
                 metadata.$odd.set(index % 2 !== 0);
                 metadata.$even.set(index % 2 === 0);
             }
+            const clone = clonesByKey.get(key);
+            if (clone) {
+                clone.setAttribute('data-dalila-virtual-index', String(index));
+            }
         }
         function removeKey(key) {
             const clone = clonesByKey.get(key);
+            if (clone && rowResizeObserver && observedElements.has(clone)) {
+                rowResizeObserver.unobserve(clone);
+                observedElements.delete(clone);
+            }
             clone?.remove();
             clonesByKey.delete(key);
             metadataByKey.delete(key);
@@ -1698,31 +1959,106 @@ function bindVirtualEach(root, ctx, cleanups) {
             }
         }
         let currentItems = [];
+        let lastEndReachedCount = -1;
+        let endReachedPending = false;
+        const remapDynamicHeights = (prevItems, nextItems) => {
+            if (!dynamicHeight || !heightsIndex)
+                return;
+            const heightsByKey = new Map();
+            for (let i = 0; i < prevItems.length; i++) {
+                const key = keyValueToString(readKeyValue(prevItems[i], i), i);
+                if (!heightsByKey.has(key)) {
+                    heightsByKey.set(key, heightsIndex.get(i));
+                }
+            }
+            heightsIndex.reset(nextItems.length, estimatedItemHeight);
+            for (let i = 0; i < nextItems.length; i++) {
+                const key = keyValueToString(readKeyValue(nextItems[i], i), i);
+                const height = heightsByKey.get(key);
+                if (height !== undefined) {
+                    heightsIndex.set(i, height);
+                }
+            }
+        };
+        const replaceItems = (nextItems) => {
+            remapDynamicHeights(currentItems, nextItems);
+            currentItems = nextItems;
+        };
+        const maybeTriggerEndReached = (visibleEnd, totalCount) => {
+            if (!onEndReached || totalCount === 0)
+                return;
+            if (visibleEnd < totalCount)
+                return;
+            if (lastEndReachedCount === totalCount || endReachedPending)
+                return;
+            lastEndReachedCount = totalCount;
+            const result = onEndReached();
+            if (result && typeof result.then === 'function') {
+                endReachedPending = true;
+                Promise.resolve(result)
+                    .catch(() => { })
+                    .finally(() => {
+                    endReachedPending = false;
+                });
+            }
+        };
         function renderVirtualList(items) {
             const parent = comment.parentNode;
             if (!parent)
                 return;
+            if (dynamicHeight && heightsIndex && heightsIndex.count !== items.length) {
+                heightsIndex.reset(items.length, estimatedItemHeight);
+            }
             const viewportHeightValue = scrollContainer?.clientHeight ?? 0;
-            const effectiveViewportHeight = viewportHeightValue > 0 ? viewportHeightValue : itemHeight * 10;
+            const effectiveViewportHeight = viewportHeightValue > 0
+                ? viewportHeightValue
+                : (dynamicHeight ? estimatedItemHeight * 10 : fixedItemHeight * 10);
             const scrollTop = scrollContainer?.scrollTop ?? 0;
             if (viewportHeightValue <= 0 && !warnedViewportFallback) {
                 warnedViewportFallback = true;
                 warn('d-virtual-each: scroll container has no measurable height. Using fallback viewport size.');
             }
-            const range = computeVirtualRange({
-                itemCount: items.length,
-                itemHeight,
-                scrollTop,
-                viewportHeight: effectiveViewportHeight,
-                overscan,
-            });
-            topSpacer.style.height = `${range.topOffset}px`;
-            bottomSpacer.style.height = `${range.bottomOffset}px`;
+            let start = 0;
+            let end = 0;
+            let topOffset = 0;
+            let bottomOffset = 0;
+            let totalHeight = 0;
+            let visibleEndForEndReached = 0;
+            if (dynamicHeight && heightsIndex) {
+                totalHeight = heightsIndex.total();
+                if (items.length > 0) {
+                    const visibleStart = heightsIndex.indexAtOffset(scrollTop);
+                    const visibleEnd = clampVirtual(heightsIndex.lowerBound(scrollTop + effectiveViewportHeight) + 1, visibleStart + 1, items.length);
+                    visibleEndForEndReached = visibleEnd;
+                    start = clampVirtual(visibleStart - overscan, 0, items.length);
+                    end = clampVirtual(visibleEnd + overscan, start, items.length);
+                    topOffset = heightsIndex.prefix(start);
+                    bottomOffset = Math.max(0, totalHeight - heightsIndex.prefix(end));
+                }
+            }
+            else {
+                const range = computeVirtualRange({
+                    itemCount: items.length,
+                    itemHeight: fixedItemHeight,
+                    scrollTop,
+                    viewportHeight: effectiveViewportHeight,
+                    overscan,
+                });
+                start = range.start;
+                end = range.end;
+                topOffset = range.topOffset;
+                bottomOffset = range.bottomOffset;
+                totalHeight = range.totalHeight;
+                visibleEndForEndReached = clampVirtual(Math.ceil((scrollTop + effectiveViewportHeight) / fixedItemHeight), 0, items.length);
+            }
+            topSpacer.style.height = `${topOffset}px`;
+            bottomSpacer.style.height = `${bottomOffset}px`;
+            topSpacer.setAttribute('data-dalila-virtual-total', String(totalHeight));
             const orderedClones = [];
             const orderedKeys = [];
             const nextKeys = new Set();
             const changedKeys = new Set();
-            for (let i = range.start; i < range.end; i++) {
+            for (let i = start; i < end; i++) {
                 const item = items[i];
                 let key = keyValueToString(readKeyValue(item, i), i);
                 if (nextKeys.has(key)) {
@@ -1748,7 +2084,7 @@ function bindVirtualEach(root, ctx, cleanups) {
                 if (!changedKeys.has(key))
                     continue;
                 removeKey(key);
-                orderedClones[i] = createClone(key, items[range.start + i], range.start + i, items.length);
+                orderedClones[i] = createClone(key, items[start + i], start + i, items.length);
             }
             for (const key of Array.from(clonesByKey.keys())) {
                 if (nextKeys.has(key))
@@ -1763,6 +2099,22 @@ function bindVirtualEach(root, ctx, cleanups) {
                 }
                 referenceNode = clone;
             }
+            if (dynamicHeight && rowResizeObserver) {
+                const nextObserved = new Set(orderedClones);
+                for (const clone of Array.from(observedElements)) {
+                    if (nextObserved.has(clone))
+                        continue;
+                    rowResizeObserver.unobserve(clone);
+                    observedElements.delete(clone);
+                }
+                for (const clone of orderedClones) {
+                    if (observedElements.has(clone))
+                        continue;
+                    rowResizeObserver.observe(clone);
+                    observedElements.add(clone);
+                }
+            }
+            maybeTriggerEndReached(visibleEndForEndReached, items.length);
         }
         let framePending = false;
         let pendingRaf = null;
@@ -1790,28 +2142,89 @@ function bindVirtualEach(root, ctx, cleanups) {
         const onScroll = () => scheduleRender();
         const onResize = () => scheduleRender();
         scrollContainer?.addEventListener('scroll', onScroll, { passive: true });
-        if (typeof window !== 'undefined') {
+        let containerResizeObserver = null;
+        if (typeof ResizeObserver !== 'undefined' && scrollContainer) {
+            containerResizeObserver = new ResizeObserver(() => scheduleRender());
+            containerResizeObserver.observe(scrollContainer);
+        }
+        else if (typeof window !== 'undefined') {
             window.addEventListener('resize', onResize);
+        }
+        if (dynamicHeight && typeof ResizeObserver !== 'undefined' && heightsIndex) {
+            rowResizeObserver = new ResizeObserver((entries) => {
+                let changed = false;
+                for (const entry of entries) {
+                    const target = entry.target;
+                    const indexRaw = target.getAttribute('data-dalila-virtual-index');
+                    if (!indexRaw)
+                        continue;
+                    const index = Number(indexRaw);
+                    if (!Number.isFinite(index))
+                        continue;
+                    const measured = entry.contentRect?.height;
+                    if (!Number.isFinite(measured) || measured <= 0)
+                        continue;
+                    changed = heightsIndex.set(index, measured) || changed;
+                }
+                if (changed)
+                    scheduleRender();
+            });
+        }
+        const scrollToIndex = (index, options) => {
+            if (!scrollContainer || currentItems.length === 0)
+                return;
+            const safeIndex = clampVirtual(Math.floor(index), 0, currentItems.length - 1);
+            const viewportSize = scrollContainer.clientHeight > 0
+                ? scrollContainer.clientHeight
+                : (dynamicHeight ? estimatedItemHeight * 10 : fixedItemHeight * 10);
+            const align = options?.align ?? 'start';
+            let top = dynamicHeight && heightsIndex
+                ? heightsIndex.prefix(safeIndex)
+                : safeIndex * fixedItemHeight;
+            const itemSize = dynamicHeight && heightsIndex
+                ? heightsIndex.get(safeIndex)
+                : fixedItemHeight;
+            if (align === 'center') {
+                top = top - (viewportSize / 2) + (itemSize / 2);
+            }
+            else if (align === 'end') {
+                top = top - viewportSize + itemSize;
+            }
+            top = Math.max(0, top);
+            if (options?.behavior && typeof scrollContainer.scrollTo === 'function') {
+                scrollContainer.scrollTo({ top, behavior: options.behavior });
+            }
+            else {
+                scrollContainer.scrollTop = top;
+            }
+            scheduleRender();
+        };
+        const virtualApi = {
+            scrollToIndex,
+            refresh: scheduleRender,
+        };
+        if (scrollContainer) {
+            scrollContainer.__dalilaVirtualList = virtualApi;
         }
         if (isSignal(binding)) {
             bindEffect(scrollContainer ?? el, () => {
                 const value = binding();
                 if (Array.isArray(value)) {
                     warnedNonArray = false;
-                    currentItems = value;
+                    replaceItems(value);
                 }
                 else {
                     if (!warnedNonArray) {
                         warnedNonArray = true;
                         warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
                     }
-                    currentItems = [];
+                    replaceItems([]);
                 }
                 renderVirtualList(currentItems);
             });
         }
         else if (Array.isArray(binding)) {
-            currentItems = binding;
+            replaceItems(binding);
             renderVirtualList(currentItems);
         }
         else {
@@ -1819,7 +2232,10 @@ function bindVirtualEach(root, ctx, cleanups) {
         }
         cleanups.push(() => {
             scrollContainer?.removeEventListener('scroll', onScroll);
-            if (typeof window !== 'undefined') {
+            if (containerResizeObserver) {
+                containerResizeObserver.disconnect();
+            }
+            else if (typeof window !== 'undefined') {
                 window.removeEventListener('resize', onResize);
             }
             if (pendingRaf != null && typeof cancelAnimationFrame === 'function') {
@@ -1829,6 +2245,17 @@ function bindVirtualEach(root, ctx, cleanups) {
             if (pendingTimeout != null)
                 clearTimeout(pendingTimeout);
             pendingTimeout = null;
+            if (rowResizeObserver) {
+                rowResizeObserver.disconnect();
+            }
+            observedElements.clear();
+            if (scrollContainer) {
+                setVirtualScrollRestoreValue(restoreKey, scrollContainer.scrollTop);
+                const host = scrollContainer;
+                if (host.__dalilaVirtualList === virtualApi) {
+                    delete host.__dalilaVirtualList;
+                }
+            }
             for (const key of Array.from(clonesByKey.keys()))
                 removeKey(key);
             topSpacer.remove();

@@ -309,14 +309,16 @@ Behavior:
 
 | Rule | Description |
 |------|-------------|
-| `d-virtual-item-height` | Required. Fixed row height in pixels (number or numeric context value). |
+| Sizing mode | Use either `d-virtual-item-height` (fixed rows) or `d-virtual-measure="auto"` (dynamic rows). |
+| `d-virtual-estimated-height` | Optional. Fallback row height used before dynamic rows are measured. |
 | `d-virtual-overscan` | Optional. Extra rows before/after viewport (default: `6`). |
 | `d-virtual-height` | Optional. Sets parent scroll container height. |
+| `d-virtual-infinite` | Optional. Callback name called when visible window reaches list end. |
 | Windowing | Only visible rows + overscan are mounted in DOM. |
 | Context | Exposes same loop helpers as `d-each` (`item`, `$index`, `$count`, `$first`, `$last`, `$odd`, `$even`). |
-| Fallback | Invalid `d-virtual-item-height` falls back to `d-each`. |
+| Fallback | If fixed mode has invalid `d-virtual-item-height`, runtime falls back to `d-each`. |
 
-V1 is fixed-height and vertical-only.
+Virtual mode is vertical-only.
 
 ## 9. `d-html` Directive
 

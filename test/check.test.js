@@ -446,15 +446,15 @@ test('Check - interpolation with brace in string still validates identifiers', a
 });
 
 // 25. virtual-each sizing directives are validated
-test('Check - virtual sizing directives participate in identifier checks', async () => {
+test('Check - virtual directives participate in identifier checks', async () => {
   await withTempProject(async ({ appDir, write, logs }) => {
     write(
       'src/app/page.ts',
-      `export async function loader() { return { items: [], height: 240 }; }`
+      `export async function loader() { return { items: [], height: 240, loadMore: () => {} }; }`
     );
     write(
       'src/app/page.html',
-      `<ul d-virtual-each="items" d-virtual-height="heigt"><li>{item}</li></ul>`
+      `<ul d-virtual-each="items" d-virtual-height="heigt" d-virtual-infinite="lodMore"><li>{item}</li></ul>`
     );
 
     const exitCode = await runCheck(appDir);
@@ -462,6 +462,23 @@ test('Check - virtual sizing directives participate in identifier checks', async
 
     const output = logs.join('\n');
     assert.match(output, /"heigt" is not defined in template context \(d-virtual-height\)/);
+    assert.match(output, /"lodMore" is not defined in template context \(d-virtual-infinite\)/);
+  });
+});
+
+test('Check - d-virtual-measure="auto" is treated as valid literal', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { items: [] }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<ul d-virtual-each="items" d-virtual-measure="auto"><li>{item}</li></ul>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
   });
 });
 

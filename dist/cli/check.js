@@ -520,13 +520,15 @@ function extractTemplateIdentifiers(html) {
         i++;
     }
     // --- 2. Directive scanning (supports single and double quotes) ---
-    const DIRECTIVE_RE = /\b(d-each|d-virtual-each|d-virtual-height|d-virtual-item-height|d-virtual-overscan|d-if|d-when|d-match|d-portal|d-html|d-attr-[a-zA-Z][\w-]*|d-bind-[a-zA-Z][\w-]*|d-on-[a-zA-Z][\w-]*|d-form-error|d-form|d-array)\s*=\s*(['"])([\s\S]*?)\2/g;
+    const DIRECTIVE_RE = /\b(d-each|d-virtual-each|d-virtual-height|d-virtual-item-height|d-virtual-estimated-height|d-virtual-measure|d-virtual-infinite|d-virtual-overscan|d-if|d-when|d-match|d-portal|d-html|d-attr-[a-zA-Z][\w-]*|d-bind-[a-zA-Z][\w-]*|d-on-[a-zA-Z][\w-]*|d-form-error|d-form|d-array)\s*=\s*(['"])([\s\S]*?)\2/g;
     DIRECTIVE_RE.lastIndex = 0;
     let match;
     while ((match = DIRECTIVE_RE.exec(html))) {
         const directive = match[1];
         const value = match[3].trim();
         if (!value)
+            continue;
+        if (directive === 'd-virtual-measure' && value.toLowerCase() === 'auto')
             continue;
         const roots = extractRootIdentifiers(value);
         const loc = offsetToLineCol(match.index);
@@ -691,6 +693,9 @@ const LOOP_FORCED_CHECK_SOURCES = new Set([
     'd-virtual-each',
     'd-virtual-height',
     'd-virtual-item-height',
+    'd-virtual-estimated-height',
+    'd-virtual-measure',
+    'd-virtual-infinite',
     'd-virtual-overscan',
 ]);
 function checkHtmlContent(html, filePath, validIdentifiers, diagnostics) {

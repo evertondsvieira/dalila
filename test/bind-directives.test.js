@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { signal, computed }  from '../dist/core/signal.js';
-import { bind, configure, createPortalTarget }    from '../dist/runtime/bind.js';
+import { bind, configure, createPortalTarget, scrollToVirtualIndex }    from '../dist/runtime/bind.js';
 
 // ─── shared helpers ─────────────────────────────────────────────────────────
 
@@ -709,6 +709,425 @@ test('d-virtual-each – renders only the visible window and updates on scroll',
     assert.equal(secondWindow.length, 5);
     assert.equal(secondWindow[0].textContent.trim(), 'Item 20');
     assert.equal(secondWindow[4].textContent.trim(), 'Item 24');
+  });
+});
+
+test('d-virtual-each – supports dynamic measured heights via d-virtual-measure="auto"', async () => {
+  await withDom(async (doc) => {
+    const OriginalResizeObserver = globalThis.ResizeObserver;
+
+    class TestResizeObserver {
+      constructor(callback) {
+        this.callback = callback;
+      }
+      observe(target) {
+        const index = Number(target.getAttribute('data-dalila-virtual-index') ?? '0');
+        const height = index === 0 ? 60 : 20;
+        this.callback([{ target, contentRect: { height } }]);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+
+    globalThis.ResizeObserver = TestResizeObserver;
+
+    try {
+      const items = signal(
+        Array.from({ length: 50 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+      );
+
+      const root = el(doc, `
+        <div id="viewport">
+          <div
+            class="row"
+            d-virtual-each="items"
+            d-key="id"
+            d-virtual-measure="auto"
+            d-virtual-estimated-height="20"
+            d-virtual-overscan="0"
+          >
+            {label}
+          </div>
+        </div>
+      `);
+
+      Object.defineProperty(root, 'clientHeight', {
+        configurable: true,
+        value: 60,
+      });
+
+      bind(root, { items });
+      await tick(20);
+
+      root.scrollTop = 60;
+      root.dispatchEvent(new window.Event('scroll'));
+      await tick(20);
+
+      const windowRows = root.querySelectorAll('.row[data-dalila-internal-bound]');
+      assert.equal(windowRows[0].textContent.trim(), 'Item 1');
+    } finally {
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+});
+
+test('d-virtual-each – dynamic heights are reset/remapped when dataset changes with same length', async () => {
+  await withDom(async (doc) => {
+    const OriginalResizeObserver = globalThis.ResizeObserver;
+    let emitMeasurements = true;
+
+    class TestResizeObserver {
+      constructor(callback) {
+        this.callback = callback;
+      }
+      observe(target) {
+        if (!emitMeasurements) return;
+        const index = Number(target.getAttribute('data-dalila-virtual-index') ?? '0');
+        const height = index === 0 ? 80 : 20;
+        this.callback([{ target, contentRect: { height } }]);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+
+    globalThis.ResizeObserver = TestResizeObserver;
+
+    try {
+      const items = signal([
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ]);
+
+      const root = el(doc, `
+        <div id="viewport">
+          <div
+            class="row"
+            d-virtual-each="items"
+            d-key="id"
+            d-virtual-measure="auto"
+            d-virtual-estimated-height="20"
+            d-virtual-overscan="0"
+          >
+            {label}
+          </div>
+        </div>
+      `);
+
+      Object.defineProperty(root, 'clientHeight', {
+        configurable: true,
+        value: 120,
+      });
+
+      bind(root, { items });
+      await tick(20);
+
+      const topSpacer = root.querySelector('[data-dalila-virtual-spacer="top"]');
+      assert.equal(topSpacer.getAttribute('data-dalila-virtual-total'), '100');
+
+      emitMeasurements = false;
+      items.set([
+        { id: 'x', label: 'X' },
+        { id: 'y', label: 'Y' },
+      ]);
+      await tick(20);
+
+      assert.equal(topSpacer.getAttribute('data-dalila-virtual-total'), '40');
+    } finally {
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+});
+
+test('d-virtual-each – exposes __dalilaVirtualList.scrollToIndex()', async () => {
+  await withDom(async (doc) => {
+    const items = signal(
+      Array.from({ length: 200 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+    );
+
+    const root = el(doc, `
+      <div id="viewport">
+        <div
+          class="row"
+          d-virtual-each="items"
+          d-key="id"
+          d-virtual-item-height="20"
+          d-virtual-overscan="0"
+        >
+          {label}
+        </div>
+      </div>
+    `);
+
+    Object.defineProperty(root, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    });
+
+    bind(root, { items });
+    await tick(20);
+
+    const api = root.__dalilaVirtualList;
+    assert.ok(api && typeof api.scrollToIndex === 'function');
+
+    api.scrollToIndex(10);
+    await tick(20);
+
+    assert.equal(root.scrollTop, 200);
+  });
+});
+
+test('d-virtual-each – public scrollToVirtualIndex() scrolls to target index', async () => {
+  await withDom(async (doc) => {
+    const items = signal(
+      Array.from({ length: 200 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+    );
+
+    const root = el(doc, `
+      <div id="viewport">
+        <div
+          class="row"
+          d-virtual-each="items"
+          d-key="id"
+          d-virtual-item-height="20"
+          d-virtual-overscan="0"
+        >
+          {label}
+        </div>
+      </div>
+    `);
+
+    Object.defineProperty(root, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    });
+
+    bind(root, { items });
+    await tick(20);
+
+    const ok = scrollToVirtualIndex(root, 30, { align: 'start' });
+    await tick(20);
+
+    assert.equal(ok, true);
+    assert.equal(root.scrollTop, 600);
+  });
+});
+
+test('d-virtual-each – triggers d-virtual-infinite once per item count at list end', async () => {
+  await withDom(async (doc) => {
+    const items = signal(
+      Array.from({ length: 20 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+    );
+    let calls = 0;
+    const loadMore = () => {
+      calls += 1;
+    };
+
+    const root = el(doc, `
+      <div id="viewport">
+        <div
+          class="row"
+          d-virtual-each="items"
+          d-key="id"
+          d-virtual-item-height="20"
+          d-virtual-overscan="0"
+          d-virtual-infinite="loadMore"
+        >
+          {label}
+        </div>
+      </div>
+    `);
+
+    Object.defineProperty(root, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    });
+
+    bind(root, { items, loadMore });
+    await tick(20);
+
+    root.scrollTop = 300;
+    root.dispatchEvent(new window.Event('scroll'));
+    root.dispatchEvent(new window.Event('scroll'));
+    await tick(20);
+
+    assert.equal(calls, 1);
+  });
+});
+
+test('d-virtual-each – d-virtual-infinite uses visible end (ignores overscan)', async () => {
+  await withDom(async (doc) => {
+    const items = signal(
+      Array.from({ length: 20 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+    );
+    let calls = 0;
+    const loadMore = () => {
+      calls += 1;
+    };
+
+    const root = el(doc, `
+      <div id="viewport">
+        <div
+          class="row"
+          d-virtual-each="items"
+          d-key="id"
+          d-virtual-item-height="20"
+          d-virtual-overscan="5"
+          d-virtual-infinite="loadMore"
+        >
+          {label}
+        </div>
+      </div>
+    `);
+
+    Object.defineProperty(root, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    });
+
+    bind(root, { items, loadMore });
+    await tick(20);
+
+    // Visible end = 15 (< 20). Overscan end may already reach 20, but must not trigger yet.
+    root.scrollTop = 200;
+    root.dispatchEvent(new window.Event('scroll'));
+    await tick(20);
+    assert.equal(calls, 0);
+
+    // Visible end reaches list end here.
+    root.scrollTop = 300;
+    root.dispatchEvent(new window.Event('scroll'));
+    await tick(20);
+    assert.equal(calls, 1);
+  });
+});
+
+test('d-virtual-each – dynamic mode does not trigger infinite at exact viewport boundary', async () => {
+  await withDom(async (doc) => {
+    const OriginalResizeObserver = globalThis.ResizeObserver;
+
+    class TestResizeObserver {
+      constructor(callback) {
+        this.callback = callback;
+      }
+      observe(target) {
+        this.callback([{ target, contentRect: { height: 20 } }]);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+
+    globalThis.ResizeObserver = TestResizeObserver;
+
+    try {
+      const items = signal(
+        Array.from({ length: 20 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+      );
+      let calls = 0;
+      const loadMore = () => {
+        calls += 1;
+      };
+
+      const root = el(doc, `
+        <div id="viewport">
+          <div
+            class="row"
+            d-virtual-each="items"
+            d-key="id"
+            d-virtual-measure="auto"
+            d-virtual-estimated-height="20"
+            d-virtual-overscan="0"
+            d-virtual-infinite="loadMore"
+          >
+            {label}
+          </div>
+        </div>
+      `);
+
+      Object.defineProperty(root, 'clientHeight', {
+        configurable: true,
+        value: 100,
+      });
+
+      bind(root, { items, loadMore });
+      await tick(20);
+
+      // Bottom at 380; last row starts at 380, so it is still not visible.
+      root.scrollTop = 280;
+      root.dispatchEvent(new window.Event('scroll'));
+      await tick(20);
+      assert.equal(calls, 0);
+
+      // Bottom at 400; last row is now visible.
+      root.scrollTop = 300;
+      root.dispatchEvent(new window.Event('scroll'));
+      await tick(20);
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+});
+
+test('d-virtual-each – scroll restoration cache is scoped per list instance', async () => {
+  await withDom(async (doc) => {
+    const items = signal(
+      Array.from({ length: 100 }, (_, i) => ({ id: i, label: `Item ${i}` }))
+    );
+
+    const rootA = el(doc, `
+      <section>
+        <div id="viewport-a">
+          <div
+            class="row"
+            d-virtual-each="items"
+            d-key="id"
+            d-virtual-item-height="20"
+            d-virtual-overscan="0"
+          >
+            {label}
+          </div>
+        </div>
+      </section>
+    `).querySelector('#viewport-a');
+
+    Object.defineProperty(rootA, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    });
+
+    const disposeA = bind(rootA, { items });
+    await tick(20);
+
+    rootA.scrollTop = 300;
+    rootA.dispatchEvent(new window.Event('scroll'));
+    await tick(20);
+    disposeA();
+
+    const rootB = el(doc, `
+      <main>
+        <div id="viewport-b">
+          <div
+            class="row"
+            d-virtual-each="items"
+            d-key="id"
+            d-virtual-item-height="20"
+            d-virtual-overscan="0"
+          >
+            {label}
+          </div>
+        </div>
+      </main>
+    `).querySelector('#viewport-b');
+
+    Object.defineProperty(rootB, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    });
+
+    bind(rootB, { items });
+    await tick(20);
+
+    assert.equal(rootB.scrollTop, 0);
   });
 });
 

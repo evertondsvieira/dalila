@@ -545,7 +545,7 @@ Each clone's context **inherits from the parent** via the prototype chain.  Hand
 
 ### Virtual list rendering `d-virtual-each`
 
-Renders only a visible window of a large list (plus overscan) using fixed item height.
+Renders only a visible window of a large list (plus overscan).
 
 ```html
 <div class="viewport">
@@ -560,15 +560,35 @@ Renders only a visible window of a large list (plus overscan) using fixed item h
 </div>
 ```
 
+Dynamic height mode:
+
+```html
+<div class="viewport">
+  <div
+    d-virtual-each="items"
+    d-virtual-measure="auto"
+    d-virtual-estimated-height="48"
+    d-virtual-overscan="4"
+    d-key="id"
+  >
+    {title}
+  </div>
+</div>
+```
+
 #### Required attributes
 
 - `d-virtual-each`: array or signal-of-array in context
-- `d-virtual-item-height`: fixed row height in pixels
+- Choose one sizing mode:
+- `d-virtual-item-height` for fixed row height
+- `d-virtual-measure="auto"` for dynamic row measurement
 
 #### Optional attributes
 
 - `d-virtual-overscan`: extra rows before and after visible range (default `6`)
 - `d-virtual-height`: sets parent scroll container height (`"480px"`, `"60vh"`, or context value)
+- `d-virtual-estimated-height`: fallback item height while dynamic rows are still unmeasured
+- `d-virtual-infinite`: callback name called when the list reaches the end
 - `d-key`: stable key field (recommended)
 
 #### Behavior
@@ -576,7 +596,20 @@ Renders only a visible window of a large list (plus overscan) using fixed item h
 - Parent element is treated as the scroll container.
 - Dalila updates the rendered window on scroll and data changes.
 - `item`, `$index`, `$count`, `$first`, `$last`, `$odd`, `$even` are available in each visible clone.
-- If `d-virtual-item-height` is invalid, runtime falls back to `d-each`.
+- In dynamic mode, item heights are measured with `ResizeObserver`.
+- If fixed mode has invalid `d-virtual-item-height`, runtime falls back to `d-each`.
+
+#### Programmatic API
+
+```ts
+import { scrollToVirtualIndex, getVirtualListController } from "dalila/runtime";
+
+scrollToVirtualIndex(viewportEl, 50, { align: "start" });
+
+const virtual = getVirtualListController(viewportEl);
+virtual?.scrollToIndex(50, { align: "center" });
+virtual?.refresh();
+```
 
 ---
 

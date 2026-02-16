@@ -6,6 +6,6 @@
  *
  * @module dalila/runtime
  */
-export { bind, autoBind, mount, configure, createPortalTarget } from './bind.js';
+export { bind, autoBind, mount, configure, createPortalTarget, getVirtualListController, scrollToVirtualIndex } from './bind.js';
 export { fromHtml } from './fromHtml.js';
 export { defineComponent } from './component.js';

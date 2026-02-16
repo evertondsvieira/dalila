@@ -76,7 +76,7 @@ bind(document.getElementById('app')!, ctx);
 - [when](./docs/core/when.md) — Conditional visibility
 - [match](./docs/core/match.md) — Switch-style rendering
 - [for](./docs/core/for.md) — List rendering with keyed diffing
-- [Virtual Lists](./docs/core/virtual.md) — Fixed-height windowed rendering for large datasets
+- [Virtual Lists](./docs/core/virtual.md) — Fixed and dynamic-height windowed rendering with infinite-scroll hooks
 
 ### Data
 

@@ -70,6 +70,17 @@ export interface TransitionConfig {
     leave?: (el: HTMLElement) => void;
     duration?: number;
 }
+export type VirtualListAlign = 'start' | 'center' | 'end';
+export interface VirtualScrollToIndexOptions {
+    align?: VirtualListAlign;
+    behavior?: ScrollBehavior;
+}
+export interface VirtualListController {
+    scrollToIndex: (index: number, options?: VirtualScrollToIndexOptions) => void;
+    refresh: () => void;
+}
+export declare function getVirtualListController(target: Element | null): VirtualListController | null;
+export declare function scrollToVirtualIndex(target: Element | null, index: number, options?: VirtualScrollToIndexOptions): boolean;
 export declare function createPortalTarget(id: string): Signal<Element | null>;
 /**
  * Set global defaults for all `bind()` / `mount()` calls.
