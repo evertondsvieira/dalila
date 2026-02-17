@@ -10,6 +10,8 @@ import { effect, createScope, withScope, isInDevMode, signal, computeVirtualRang
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
 import { isComponent, normalizePropDef, coercePropValue, kebabToCamel, camelToKebab } from './component.js';
+import { observeLazyElement, getLazyComponent } from './lazy.js';
+import { bindBoundary } from './boundary.js';
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -1351,6 +1353,161 @@ function bindPortal(root, ctx, cleanups) {
             portalSyncByElement.delete(htmlEl);
             restoreToAnchor();
             anchor.remove();
+        });
+    }
+}
+// ============================================================================
+// d-lazy Directive
+// ============================================================================
+/**
+ * Bind all [d-lazy] directives within root.
+ * Loads a lazy component when it enters the viewport.
+ */
+function bindLazy(root, ctx, cleanups, refs, events) {
+    const elements = qsaIncludingRoot(root, '[d-lazy]');
+    for (const el of elements) {
+        const lazyComponentName = normalizeBinding(el.getAttribute('d-lazy'));
+        if (!lazyComponentName)
+            continue;
+        const lazyResult = getLazyComponent(lazyComponentName);
+        if (!lazyResult) {
+            warn(`d-lazy: component "${lazyComponentName}" not found. Use createLazyComponent() to create it.`);
+            continue;
+        }
+        const { state } = lazyResult;
+        const htmlEl = el;
+        // Get loading and error templates from attributes
+        const loadingTemplate = el.getAttribute('d-lazy-loading') ?? state.loadingTemplate ?? '';
+        const errorTemplate = el.getAttribute('d-lazy-error') ?? state.errorTemplate ?? '';
+        // Remove the d-lazy attribute to prevent reprocessing
+        el.removeAttribute('d-lazy');
+        el.removeAttribute('d-lazy-loading');
+        el.removeAttribute('d-lazy-error');
+        // Track the current rendered node (starts as the original placeholder element)
+        let currentNode = htmlEl;
+        let componentMounted = false;
+        let componentDispose = null;
+        let componentEl = null;
+        let hasIntersected = false;
+        const refName = normalizeBinding(htmlEl.getAttribute('d-ref'));
+        const syncRef = (node) => {
+            if (!refName)
+                return;
+            if (node instanceof Element) {
+                refs.set(refName, node);
+            }
+        };
+        const replaceCurrentNode = (nextNode) => {
+            const parent = currentNode.parentNode;
+            if (!parent)
+                return;
+            parent.replaceChild(nextNode, currentNode);
+            currentNode = nextNode;
+            syncRef(nextNode);
+        };
+        const unmountComponent = () => {
+            if (componentDispose) {
+                componentDispose();
+                componentDispose = null;
+            }
+            componentMounted = false;
+            componentEl = null;
+        };
+        // Function to render the loaded component
+        const renderComponent = () => {
+            const comp = state.component();
+            if (!comp)
+                return;
+            // Create component element
+            const compDef = comp.definition;
+            const compEl = document.createElement(compDef.tag);
+            // Copy attributes from placeholder to component
+            for (const attr of Array.from(htmlEl.attributes)) {
+                if (!attr.name.startsWith('d-')) {
+                    compEl.setAttribute(attr.name, attr.value);
+                }
+            }
+            if (componentMounted && componentEl === compEl)
+                return;
+            replaceCurrentNode(compEl);
+            componentEl = compEl;
+            // Bind the component
+            const parentCtx = Object.create(ctx);
+            const parent = compEl.parentNode;
+            const nextSibling = compEl.nextSibling;
+            componentDispose = bind(compEl, parentCtx, {
+                components: { [compDef.tag]: comp },
+                events,
+                _skipLifecycle: true,
+            });
+            // bind() may replace the component host node; keep currentNode/ref pointing to the connected node.
+            if (!compEl.isConnected && parent) {
+                const renderedNode = nextSibling ? nextSibling.previousSibling : parent.lastChild;
+                if (renderedNode instanceof Node) {
+                    currentNode = renderedNode;
+                    syncRef(renderedNode);
+                }
+            }
+            componentMounted = true;
+        };
+        // Function to show loading state
+        const showLoading = () => {
+            if (loadingTemplate) {
+                if (componentMounted) {
+                    unmountComponent();
+                }
+                const loadingEl = document.createElement('div');
+                loadingEl.innerHTML = loadingTemplate;
+                replaceCurrentNode(loadingEl);
+            }
+        };
+        // Function to show error state
+        const showError = (err) => {
+            if (componentMounted) {
+                unmountComponent();
+            }
+            if (errorTemplate) {
+                const errorEl = document.createElement('div');
+                errorEl.innerHTML = errorTemplate;
+                replaceCurrentNode(errorEl);
+            }
+            else {
+                warn(`d-lazy: failed to load "${lazyComponentName}": ${err.message}`);
+            }
+        };
+        const syncFromState = () => {
+            // Always read reactive state so this effect stays subscribed even before visibility.
+            const loading = state.loading();
+            const error = state.error();
+            const comp = state.component();
+            if (!hasIntersected)
+                return;
+            if (error) {
+                showError(error);
+                return;
+            }
+            if (loading && !comp) {
+                showLoading();
+                return;
+            }
+            if (comp && !componentMounted) {
+                renderComponent();
+            }
+        };
+        // React to loading state changes
+        bindEffect(htmlEl, () => {
+            syncFromState();
+        });
+        // Observe element for viewport visibility
+        const cleanupObserver = observeLazyElement(htmlEl, () => {
+            hasIntersected = true;
+            syncFromState();
+            state.load();
+        }, 0 // Trigger when element enters viewport
+        );
+        cleanups.push(() => {
+            cleanupObserver();
+            unmountComponent();
         });
     }
 }
@@ -3927,11 +4084,14 @@ export function bind(root, ctx, options = {}) {
         bindVirtualEach(root, ctx, cleanups);
         // 4. d-each — must run early: removes templates before TreeWalker visits them
         bindEach(root, ctx, cleanups);
-        // 5. Components — must run after d-each but before d-ref / text interpolation
+        // 5. d-boundary — must run before child directive/component passes
+        // to avoid binding boundary children twice (original + cloned subtree).
+        bindBoundary(root, ctx, cleanups);
+        // 6. Components — must run after d-each but before d-ref / text interpolation
         bindComponents(root, ctx, events, cleanups, onMountError);
-        // 6. d-ref — collect element references (after d-each removes templates)
+        // 7. d-ref — collect element references (after d-each removes templates)
         bindRef(root, refs);
-        // 6.5. d-text — safe textContent binding (before text interpolation)
+        // 7.5. d-text — safe textContent binding (before text interpolation)
         bindText(root, ctx, cleanups);
         // 7. Text interpolation (template plan cache + lazy parser fallback)
         bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
@@ -3955,6 +4115,8 @@ export function bind(root, ctx, options = {}) {
         bindError(root, ctx, cleanups);
         bindFormError(root, ctx, cleanups);
         // 17. d-portal — move already-bound elements to external targets
+        // d-lazy directive - loads component when it enters viewport
+        bindLazy(root, ctx, cleanups, refs, events);
         bindPortal(root, ctx, cleanups);
         // 18. d-if — must run last: elements are fully bound before conditional removal
         bindIf(root, ctx, cleanups, transitionRegistry);

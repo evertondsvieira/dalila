@@ -60,6 +60,8 @@ bind(document.getElementById('app')!, ctx);
 
 - [Template Binding](./docs/runtime/bind.md) — `bind()`, `mount()`, `configure()`, transitions, portal, text interpolation, events
 - [Components](./docs/runtime/component.md) — `defineComponent`, typed props/emits/refs, slots
+- [Lazy Loading](./docs/runtime/lazy.md) — `createLazyComponent`, `d-lazy`, `createSuspense` wrapper, code splitting
+- [Error Boundary](./docs/runtime/boundary.md) — `createErrorBoundary`, `createErrorBoundaryState`, `withErrorBoundary`, `d-boundary`
 - [FOUC Prevention](./docs/runtime/fouc-prevention.md) — Automatic token hiding
 
 ### Routing

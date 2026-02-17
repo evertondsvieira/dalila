@@ -59,43 +59,52 @@ npm install dalila
 
 ## Documentation
 
-### Fundamentals (read first)
+### Phase 1 — Fundamentals
 
-1. [Signals](./core/signals.md) — Reactive primitives: `signal`, `effect`, `computed`
+1. [Signals](./core/signals.md) — Reactive primitives (`signal`, `computed`, `effect`)
 2. [Scopes](./core/scope.md) — Lifecycle management and cleanup
-3. [Context](./context.md) — Dependency injection
+3. [Template Binding](./runtime/bind.md) — `bind()`, `mount()`, directives and transitions
 
-### Rendering
+### Phase 2 — Building UI
 
-4. [when](./core/when.md) — Boolean conditional rendering
-5. [match](./core/match.md) — Value-based conditional rendering (switch-style)
-6. [for](./core/for.md) — List rendering with keyed diffing
-7. [Virtual Lists](./core/virtual.md) — Virtualized rendering for large datasets
+4. [Template Spec](./template-spec.md) — Binding syntax and directive model
+5. [when](./core/when.md) — Boolean conditional rendering
+6. [match](./core/match.md) — Value-based conditional rendering (switch-style)
+7. [for](./core/for.md) — List rendering with keyed diffing
+8. [Components](./runtime/component.md) — `defineComponent`, props/emits/refs/slots
 
-### DOM Integration
+### Phase 3 — Data and State
 
-8. [Watch](./core/watch.md) — DOM lifecycle helpers (`watch`, `onMount`, `useEvent`)
+9. [Resources](./core/resource.md) — Async state with loading/error
+10. [Forms](./forms.md) — DOM-first form management and validation
+11. [Persist](./core/persist.md) — Storage sync for signals
 
-### Data Fetching
+### Phase 4 — Advanced Data
 
-9. [Resources](./core/resource.md) — Async data with loading/error states
-10. [Query Client](./core/query.md) — Cached queries with React Query-like API
-11. [Mutations](./core/mutation.md) — Write operations with optimistic updates
-12. [Keys](./core/key.md) — Cache key encoding
+12. [Query](./core/query.md) — Cached queries
+13. [Mutations](./core/mutation.md) — Write operations
+14. [Keys](./core/key.md) — Cache key encoding
 
-### State Persistence
+### Phase 5 — Routing
 
-13. [Persist](./core/persist.md) — Automatic storage sync for signals
+15. [Router](./router.md) — Client-side routing and route generation
 
-### Utilities
+### Phase 6 — Advanced Runtime
 
-14. [Scheduler](./core/scheduler.md) — Batching and DOM read/write coordination
-15. [Dev Mode](./core/dev.md) — Development helpers and warnings
-16. [Devtools Extension](../devtools-extension/README.md) — Browser panel to inspect signals/effects/scopes graph
+16. [Lazy Loading](./runtime/lazy.md) — `createLazyComponent`, `d-lazy`, `createSuspense`
+17. [Error Boundary](./runtime/boundary.md) — `createErrorBoundary`, `withErrorBoundary`, `d-boundary`
+18. [Context](./context.md) — Dependency injection and lookup rules
+19. [Virtual Lists](./core/virtual.md) — Windowed rendering for large datasets
+20. [FOUC Prevention](./runtime/fouc-prevention.md) — Loading token behavior
 
-### CLI
+### Tooling and Ecosystem
 
-17. [Template Check CLI](./cli/check.md) — `dalila check` static analysis for template/context consistency
+21. [Scheduler](./core/scheduler.md) — Batching and read/write coordination
+22. [Dev Mode](./core/dev.md) — Development helpers and warnings
+23. [HTTP](./http.md) — Fetch client, interceptors and XSRF helpers
+24. [UI Components](./ui.md) — Built-in UI component library
+25. [Template Check CLI](./cli/check.md) — `dalila check` static analysis
+26. [Devtools Extension](../devtools-extension/README.md) — Inspect signals/effects/scopes
 
 ## Comparison with Other Frameworks
 

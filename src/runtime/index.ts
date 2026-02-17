@@ -36,3 +36,32 @@ export type {
   Component, ComponentDefinition, PropsSchema, PropSignals, SetupContext,
   TypedPropSignals, TypedSetupContext, EmitsSchema, RefsSchema, TypedEmit, TypedRef,
 } from './component.js';
+
+export {
+  createLazyComponent,
+  createSuspense,
+  getLazyComponent,
+  preloadLazyComponent,
+  isLazyComponentLoaded,
+  getLazyComponentState,
+  observeLazyElement,
+} from './lazy.js';
+export type {
+  LazyComponentOptions,
+  LazyComponentState,
+  LazyComponentLoader,
+  LazyComponentResult,
+} from './lazy.js';
+
+export {
+  createErrorBoundary,
+  bindBoundary,
+  withErrorBoundary,
+  createErrorBoundaryState,
+} from './boundary.js';
+export type {
+  ErrorBoundaryOptions,
+  ErrorBoundaryState,
+  ErrorBoundaryResult,
+} from './boundary.js';
+

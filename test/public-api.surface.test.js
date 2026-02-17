@@ -11,6 +11,13 @@ test("core public surface does not expose watch test internals", () => {
   assert.equal("__resetWarningsForTests" in core, false);
 });
 
+test("core public surface keeps lifecycle helper aliases", () => {
+  assert.equal(typeof core.useEvent, "function");
+  assert.equal(typeof core.useInterval, "function");
+  assert.equal(typeof core.useTimeout, "function");
+  assert.equal(typeof core.useFetch, "function");
+});
+
 test("form public surface does not expose WRAPPED_HANDLER", () => {
   assert.equal("WRAPPED_HANDLER" in form, false);
 });
