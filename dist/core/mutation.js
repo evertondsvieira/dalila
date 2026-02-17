@@ -3,39 +3,47 @@ import { getCurrentScope } from "./scope.js";
 import { encodeKey } from "./key.js";
 import { invalidateResourceCache, invalidateResourceTags } from "./resource.js";
 /**
- * Mutation primitive (scope-safe).
+ * Creates a mutation - a write operation that executes side effects
+ * and can invalidate related queries to maintain cache consistency.
  *
- * Design goals:
- * - DOM-first friendly: mutations are just async actions with reactive state.
- * - Scope-safe: abort on scope disposal (best-effort cleanup).
- * - Dedupe-by-default: concurrent `run()` calls share the same in-flight promise.
- * - Force re-run: abort the current request and start a new one.
- * - React Query-like behavior: keep the last successful `data()` until overwritten or reset.
+ * Follows the Mutation pattern from React Query/TanStack Query:
+ * - Provides lifecycle callbacks (onMutate, onSuccess, onError, onSettled)
+ * - Supports automatic cache invalidation by tags or keys
+ * - Automatically manages cancellation via AbortSignal
  *
- * Semantics:
- * - Each run uses its own AbortController.
- * - If a run is aborted:
- *   - it returns null,
- *   - it MUST NOT call onSuccess/onError/onSettled,
- *   - and it MUST NOT overwrite state from a newer run.
+ * @template TInput - Type of input data
+ * @template TResult - Type of expected result
+ * @template TContext - Type of context for communication between callbacks
+ * @param cfg - Mutation configuration
+ * @returns Mutation state with methods to execute and control
  *
- * Invalidation:
- * - Runs only after a successful, non-aborted mutation.
- * - invalidateTags: revalidates all cached resources registered for those tags.
- * - invalidateKeys: revalidates specific cached resources by encoded key.
+ * @example
+ * ```ts
+ * const mutation = createMutation({
+ *   mutationFn: async (signal, data) => {
+ *     const response = await fetch('/api/items', {
+ *       method: 'POST',
+ *       body: JSON.stringify(data),
+ *       signal
+ *     });
+ *     return response.json();
+ *   },
+ *   invalidateTags: ['items'],
+ *   onSuccess: (result) => {
+ *     console.log('Item created:', result);
+ *   }
+ * });
+ *
+ * // Execute the mutation
+ * mutation.run({ name: 'New Item' });
+ * ```
  */
 export function createMutation(cfg) {
     const data = signal(null);
     const loading = signal(false);
     const error = signal(null);
-    /** In-flight promise for dedupe (represents the latest started run). */
     let inFlight = null;
-    /** AbortController for the latest started run (used for force + scope cleanup). */
     let controller = null;
-    /**
-     * If created inside a scope, abort the active run when the scope is disposed.
-     * This prevents orphan network work and avoids updating dead UI.
-     */
     const scope = getCurrentScope();
     if (scope) {
         scope.onCleanup(() => {
@@ -44,22 +52,15 @@ export function createMutation(cfg) {
             inFlight = null;
         });
     }
+    const mutationFn = cfg.mutationFn ?? cfg.mutate;
+    if (!mutationFn) {
+        throw new Error("createMutation requires mutationFn or mutate");
+    }
     async function run(input, opts = {}) {
-        /**
-         * Dedupe:
-         * - If a run is already loading and we're not forcing, await the current promise.
-         * - Snapshot `inFlight` to avoid races if a forced run starts mid-await.
-         */
         if (loading() && !opts.force) {
-            const p0 = inFlight;
-            return (await (p0 ?? Promise.resolve(null)));
+            const pending = inFlight;
+            return (await (pending ?? Promise.resolve(null)));
         }
-        /**
-         * Start a new run:
-         * - Abort previous run (if any).
-         * - Create a fresh controller/signal for this run.
-         * - Capture controller identity so older runs cannot clobber newer state.
-         */
         controller?.abort();
         controller = new AbortController();
         const sig = controller.signal;
@@ -67,14 +68,35 @@ export function createMutation(cfg) {
         loading.set(true);
         error.set(null);
         inFlight = (async () => {
+            let context = undefined;
             try {
-                const result = await cfg.mutate(sig, input);
-                // Aborted runs never commit state or call callbacks.
+                if (cfg.onMutate) {
+                    context = await cfg.onMutate(input);
+                }
+            }
+            catch (e) {
+                if (sig.aborted)
+                    return null;
+                const err = e instanceof Error ? e : new Error(String(e));
+                error.set(err);
+                if (controller === localController)
+                    loading.set(false);
+                try {
+                    cfg.onError?.(err, input, context);
+                    cfg.onSettled?.(null, err, input, context);
+                }
+                catch {
+                }
+                return null;
+            }
+            if (sig.aborted)
+                return null;
+            try {
+                const result = await mutationFn(sig, input);
                 if (sig.aborted)
                     return null;
                 data.set(result);
-                cfg.onSuccess?.(result, input);
-                // Invalidate only after a successful, non-aborted mutation.
+                cfg.onSuccess?.(result, input, context);
                 if (cfg.invalidateTags && cfg.invalidateTags.length > 0) {
                     invalidateResourceTags(cfg.invalidateTags, { revalidate: true, force: true });
                 }
@@ -83,39 +105,25 @@ export function createMutation(cfg) {
                         invalidateResourceCache(encodeKey(k), { revalidate: true, force: true });
                     }
                 }
+                cfg.onSettled?.(result, null, input, context);
                 return result;
             }
             catch (e) {
-                // Aborted runs are treated as null (no error state, no callbacks).
                 if (sig.aborted)
                     return null;
                 const err = e instanceof Error ? e : new Error(String(e));
                 error.set(err);
-                cfg.onError?.(err, input);
+                cfg.onError?.(err, input, context);
+                cfg.onSettled?.(null, err, input, context);
                 return null;
             }
             finally {
-                /**
-                 * Only the latest run is allowed to update `loading`.
-                 *
-                 * Why?
-                 * - If run A is aborted because run B starts, A's finally will still execute.
-                 * - Without this guard, A could flip loading(false) while B is still running.
-                 */
-                const stillCurrent = controller === localController;
-                if (stillCurrent)
+                if (controller === localController)
                     loading.set(false);
-                // Keep onSettled consistent with onSuccess/onError: never run it for aborted runs.
-                if (!sig.aborted)
-                    cfg.onSettled?.(input);
             }
         })();
         return await inFlight;
     }
-    /**
-     * Resets local state and aborts any active run.
-     * Does not touch the resource/query cache.
-     */
     function reset() {
         controller?.abort();
         controller = null;

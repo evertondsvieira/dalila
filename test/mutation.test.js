@@ -100,3 +100,138 @@ test("mutation deduplicates concurrent runs unless force is used", async () => {
 
   scope.dispose();
 });
+
+test("mutation supports optimistic update with rollback context", async () => {
+  clearResourceCache();
+  const scope = createScope();
+  const q = createQueryClient();
+
+  let todos;
+  let save;
+  withScope(scope, () => {
+    todos = q.query({
+      key: () => q.key("todos"),
+      fetch: async () => [{ id: 1, title: "A" }],
+    });
+
+    save = q.mutation({
+      mutationFn: async () => {
+        await sleep(10);
+        throw new Error("boom");
+      },
+      onMutate: async (newTodo) => {
+        const previous = q.getQueryData(["todos"]);
+        q.setQueryData(["todos"], (old) => [...(old ?? []), newTodo]);
+        return { previous };
+      },
+      onError: (_err, _input, ctx) => {
+        q.setQueryData(["todos"], ctx?.previous ?? []);
+      },
+    });
+  });
+
+  await flush();
+  await sleep(10);
+
+  const runPromise = save.run({ id: 2, title: "B" });
+  await flush();
+  const optimistic = todos.data();
+  assert.equal(optimistic.length, 2);
+
+  await runPromise;
+  await sleep(10);
+  assert.equal(todos.data().length, 1);
+  scope.dispose();
+});
+
+test("mutation clears loading when onMutate throws", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  let starts = 0;
+  let mutateCalls = 0;
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async () => {
+        starts++;
+        return { ok: true };
+      },
+      onMutate: () => {
+        mutateCalls++;
+        if (mutateCalls === 1) {
+          throw new Error("optimistic failed");
+        }
+      },
+    });
+  });
+
+  const first = await m.run({ id: 1 });
+  assert.equal(first, null);
+  assert.equal(m.loading(), false);
+
+  const second = await m.run({ id: 2 });
+  assert.deepEqual(second, { ok: true });
+  assert.equal(starts, 1);
+  scope.dispose();
+});
+
+test("mutation does not run mutationFn for aborted run after onMutate resolves", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  let starts = 0;
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async () => {
+        starts++;
+        return { ok: true };
+      },
+      onMutate: async () => {
+        await sleep(20);
+      },
+    });
+  });
+
+  const first = m.run({ id: 1 });
+  await sleep(5);
+  const second = m.run({ id: 2 }, { force: true });
+
+  await first;
+  await second;
+  assert.equal(starts, 1);
+  scope.dispose();
+});
+
+test("mutation clears loading when onMutate error hooks throw", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  let starts = 0;
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async () => {
+        starts++;
+        return { ok: true };
+      },
+      onMutate: () => {
+        throw new Error("onMutate failed");
+      },
+      onError: () => {
+        throw new Error("onError failed");
+      },
+    });
+  });
+
+  const first = await m.run({ id: 1 });
+  assert.equal(first, null);
+  assert.equal(m.loading(), false);
+
+  const second = await m.run({ id: 2 });
+  assert.equal(second, null);
+  assert.equal(m.loading(), false);
+  assert.equal(starts, 0);
+  scope.dispose();
+});

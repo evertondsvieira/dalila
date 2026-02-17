@@ -1,14 +1,30 @@
 # Query Client
 
-The query client builds a React Query-like experience on top of cached resources,
-while staying signal-driven and scope-safe.
+Query Client provides a cache-first, key-driven orchestration layer built on top of Resources.
+It centralizes reads, invalidation, optimistic cache updates, prefetching, and infinite pagination.
 
 ## Core Concepts
 
-- Queries are cached resources keyed by `QueryKey`.
-- `query()` caches only inside a scope (safe-by-default).
-- `queryGlobal()` enables explicit global caching.
-- `staleTime` schedules revalidation after success.
+```txt
+┌─────────────────────────────────────────────────────────────┐
+│                    Query Client Layer                       │
+│                                                             │
+│   query(key, fetch)  ─┐                                     │
+│   queryGlobal(...)    ├── cached by encoded key             │
+│   prefetchQuery(...)  ┘                                     │
+│                                                             │
+│   setQueryData/getQueryData   -> manual cache patching      │
+│   invalidateKey/Tag/Queries   -> targeted revalidation      │
+│   cancelQueries               -> abort in-flight reads      │
+│                                                             │
+│   infiniteQuery               -> pages + fetchNextPage      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Modes:**
+1. `query()` for scope-safe caching (default).
+2. `queryGlobal()` for explicit cross-scope persistence.
+3. `infiniteQuery()` for append-based pagination.
 
 ## API Reference
 
@@ -17,19 +33,48 @@ function createQueryClient(): QueryClient
 
 interface QueryClient {
   key: typeof key
+
   query<TK extends QueryKey, TR>(cfg: QueryConfig<TK, TR>): QueryState<TR>
   queryGlobal<TK extends QueryKey, TR>(cfg: QueryConfig<TK, TR>): QueryState<TR>
-  mutation<TInput, TResult>(cfg: MutationConfig<TInput, TResult>): MutationState<TInput, TResult>
+
+  infiniteQuery<TK extends QueryKey, TP, TParam>(cfg: InfiniteQueryConfig<TK, TP, TParam>): InfiniteQueryState<TP, TParam>
+
+  prefetchQuery<TK extends QueryKey, TR>(cfg: PrefetchQueryConfig<TK, TR>): Promise<TR | null>
+
+  getQueryData<TR>(key: QueryKey): TR | null | undefined
+  setQueryData<TR>(
+    key: QueryKey,
+    updater: TR | null | ((current: TR | null | undefined) => TR | null)
+  ): TR | null
+  findQueries(filters?: QueryFilters | QueryKey): QueryInfo[]
+  cancelQueries(filters?: QueryFilters | QueryKey): void
+  refetchQueries(filters?: QueryFilters | QueryKey, opts?: { force?: boolean }): void
+  observeQuery<TR>(
+    state: QueryState<TR>,
+    listener: (snapshot: QueryObserverSnapshot<TR>) => void,
+    opts?: { immediate?: boolean }
+  ): () => void
+
+  mutation<TInput, TResult, TContext = unknown>(cfg: MutationConfig<TInput, TResult, TContext>): MutationState<TInput, TResult>
+
   invalidateKey(key: QueryKey, opts?: { revalidate?: boolean; force?: boolean }): void
   invalidateTag(tag: string, opts?: { revalidate?: boolean; force?: boolean }): void
   invalidateTags(tags: readonly string[], opts?: { revalidate?: boolean; force?: boolean }): void
+  invalidateQueries(filters: QueryFilters | QueryKey, opts?: { force?: boolean }): void
 }
+```
 
+### Query config/state
+
+```ts
 interface QueryConfig<TKey, TResult> {
   key: () => TKey
   fetch: (signal: AbortSignal, key: TKey) => Promise<TResult>
   tags?: readonly string[]
   staleTime?: number
+  staleWhileRevalidate?: boolean
+  retry?: number | ((failureCount: number, error: Error, key: TKey) => boolean)
+  retryDelay?: number | ((failureCount: number, error: Error, key: TKey) => number)
   initialValue?: TResult
   onSuccess?: (data: TResult) => void
   onError?: (error: Error) => void
@@ -38,6 +83,7 @@ interface QueryConfig<TKey, TResult> {
 interface QueryState<TResult> {
   data(): TResult | null
   loading(): boolean
+  fetching(): boolean
   error(): Error | null
   refresh(opts?: { force?: boolean }): Promise<void>
   status(): "loading" | "error" | "success"
@@ -45,75 +91,160 @@ interface QueryState<TResult> {
 }
 ```
 
-## Basic query
+### Infinite query config/state
 
 ```ts
-import { createQueryClient, signal } from "dalila";
+interface InfiniteQueryConfig<TKey, TPage, TPageParam> {
+  queryKey: TKey | (() => TKey)
+  queryFn: (input: { signal: AbortSignal; queryKey: TKey; pageParam: TPageParam }) => Promise<TPage>
+  initialPageParam: TPageParam
+  getNextPageParam: (lastPage: TPage, pages: readonly TPage[], pageParams: readonly TPageParam[]) => TPageParam | null | undefined
+  retry?: number | ((failureCount: number, error: Error, key: TKey) => boolean)
+  retryDelay?: number | ((failureCount: number, error: Error, key: TKey) => number)
+}
 
+interface InfiniteQueryState<TPage, TPageParam> {
+  pages(): TPage[]
+  pageParams(): TPageParam[]
+  loading(): boolean
+  fetching(): boolean
+  error(): Error | null
+  hasNextPage(): boolean
+  fetchNextPage(): Promise<TPage | null>
+  loadMore(): Promise<TPage | null>
+  refresh(): Promise<void>
+}
+```
+
+## Basic Query
+
+```ts
 const q = createQueryClient();
 const userId = signal("1");
 
 const user = q.query({
-  key: () => ["user", userId()],
-  fetch: async (signal, key) => {
-    const res = await fetch(`/api/user/${key[1]}`, { signal });
+  key: () => q.key("user", userId()),
+  fetch: async (signal, [_type, id]) => {
+    const res = await fetch(`/api/users/${id}`, { signal });
+    if (!res.ok) throw new Error("failed");
     return res.json();
   },
-  staleTime: 10_000,
-});
-
-user.data();
-user.loading();
-user.error();
-```
-
-## Global cache
-
-```ts
-const user = q.queryGlobal({
-  key: () => ["user", "me"],
-  fetch: async (signal) => (await fetch("/api/me", { signal })).json(),
+  staleTime: 30_000,
+  staleWhileRevalidate: true,
 });
 ```
 
-## Invalidate
+## Prefetch
 
 ```ts
-q.invalidateKey(["user", "me"], { revalidate: true });
-q.invalidateTag("user");
+await q.prefetchQuery({
+  key: ["todo", 42],
+  fetch: async (signal, [_type, id]) => {
+    const res = await fetch(`/api/todos/${id}`, { signal });
+    return res.json();
+  },
+});
 ```
 
-## Comparison: Query vs Resource
+## Manual Cache Patching
 
-| Use | Best choice |
-|-----|-------------|
-| Simple async state | `createResource` |
-| Shared cached data | `createResource` with `cache` option |
-| Full query client (keys, invalidation, mutations) | `createQueryClient` |
+```ts
+const key = ["todos"] as const;
+const previous = q.getQueryData<{ id: number; title: string }[]>(key);
+
+q.setQueryData(key, (old) => [...(old ?? []), { id: 99, title: "optimistic" }]);
+
+// rollback
+q.setQueryData(key, previous ?? []);
+```
+
+## Infinite Query
+
+```ts
+const todos = q.infiniteQuery({
+  queryKey: ["todos"],
+  initialPageParam: 1,
+  queryFn: async ({ signal, pageParam }) => {
+    const res = await fetch(`/api/todos?page=${pageParam}`, { signal });
+    return res.json();
+  },
+  getNextPageParam: (lastPage) => lastPage.nextPage,
+});
+
+await todos.fetchNextPage();
+```
+
+## Retry
+
+```ts
+const user = q.query({
+  key: () => q.key("user", 1),
+  retry: 3,
+  retryDelay: (attempt) => attempt * 200,
+  fetch: async (signal) => {
+    const res = await fetch("/api/user/1", { signal });
+    if (!res.ok) throw new Error("request failed");
+    return res.json();
+  },
+});
+```
+
+## Query Filters
+
+```ts
+const activeTodos = q.findQueries({
+  keyPrefix: ["todos"],
+  predicate: (entry) => entry.fetching,
+});
+
+q.refetchQueries({ keyPrefix: ["todos"] });
+q.cancelQueries({ keyPrefix: ["todos"] });
+```
+
+## Query Observer
+
+```ts
+const stop = q.observeQuery(user, (snapshot) => {
+  console.log(snapshot.status, snapshot.data);
+});
+
+stop();
+```
+
+## Invalidation and Cancellation
+
+```ts
+q.invalidateKey(["user", 1], { revalidate: true, force: true });
+q.invalidateTag("users", { revalidate: true });
+q.invalidateQueries(["todos"]);
+
+q.cancelQueries(["todos"]);
+```
 
 ## Best Practices
 
-- Use `key()` helper to build stable keys.
-- Prefer `query()` inside component scopes.
-- Use `queryGlobal()` only when you want cross-scope persistence.
-- Use `staleTime` for background refresh on static-ish data.
+1. Use `q.key(...)` or stable primitive arrays for keys.
+2. Prefer `query()` inside scopes; use `queryGlobal()` explicitly.
+3. Use `fetching()` for background indicators and `loading()` for first load only.
+4. Use `prefetchQuery` before navigation for perceived speed.
+5. Use `invalidateQueries(prefix)` for collection-level refresh.
 
 ## Common Pitfalls
 
-1) **Expecting cache outside scopes**
+1. **Unstable keys**
 
-`query()` outside a scope does not cache. Use `queryGlobal()` or run inside a scope.
+Object keys create cache misses. Keep keys primitive and deterministic.
 
-2) **Unstable keys**
+2. **Ignoring cancellation**
 
-Avoid objects in keys. Prefer primitive parts and `key()` helper.
+Always pass the provided signal to network calls.
 
-3) **staleTime without scope**
+3. **Assuming query() caches everywhere**
 
-`staleTime` requires a scope for cleanup; it warns and skips scheduling if none.
+`query()` is scope-safe; use `queryGlobal()` for explicit global persistence.
 
 ## Performance Notes
 
-- Queries are cached by encoded keys (O(1) lookup).
-- `staleTime` uses timers; avoid tiny stale times across many queries.
-- Key changes recreate the underlying resource; keep key functions stable.
+- Key lookup and cache patching are O(1) by encoded key.
+- Prefix invalidation/cancelation iterate active query registry; keep keys coarse enough.
+- Infinite query appends pages incrementally; add app-level pruning if pages grow very large.

@@ -295,6 +295,237 @@ test("createResource with static cache+deps does not enter refresh feedback loop
   scope.dispose();
 });
 
+test("createResource staleWhileRevalidate keeps data while refetching", async () => {
+  const scope = createScope();
+  let run = 0;
+  let resource;
+
+  withScope(scope, () => {
+    resource = createResource(async () => {
+      run++;
+      await sleep(10);
+      return { run };
+    }, {
+      staleWhileRevalidate: true,
+    });
+  });
+
+  await flush();
+  await sleep(20);
+  assert.equal(resource.data()?.run, 1);
+
+  const refreshing = resource.refresh();
+  await flush();
+  assert.equal(resource.fetching(), true);
+  assert.equal(resource.loading(), false);
+  assert.equal(resource.data()?.run, 1);
+
+  await refreshing;
+  await sleep(20);
+  assert.equal(resource.data()?.run, 2);
+  scope.dispose();
+});
+
+test("createResource dynamic cache key preserves SWR loading semantics on refresh", async () => {
+  clearResourceCache();
+  const scope = createScope();
+  const id = signal("1");
+  let runs = 0;
+  let resource;
+
+  withScope(scope, () => {
+    resource = createResource(async () => {
+      runs++;
+      await sleep(10);
+      return { id: id(), runs };
+    }, {
+      deps: () => id(),
+      cache: { key: () => `dynamic:swr:${id()}` },
+      staleWhileRevalidate: true,
+    });
+  });
+
+  await flush();
+  await sleep(20);
+  assert.equal(resource.data()?.runs, 1);
+
+  const p = resource.refresh();
+  await flush();
+  assert.equal(resource.fetching(), true);
+  assert.equal(resource.loading(), false);
+  assert.equal(resource.data()?.runs, 1);
+  await p;
+  await sleep(20);
+  assert.equal(resource.data()?.runs, 2);
+  scope.dispose();
+});
+
+test("createResource SWR keeps loading false when settled value is null", async () => {
+  const scope = createScope();
+  let runs = 0;
+  let resource;
+
+  withScope(scope, () => {
+    resource = createResource(async () => {
+      runs++;
+      await sleep(10);
+      return null;
+    }, {
+      staleWhileRevalidate: true,
+    });
+  });
+
+  await flush();
+  await sleep(20);
+  assert.equal(runs, 1);
+  assert.equal(resource.data(), null);
+
+  const p = resource.refresh();
+  await flush();
+  assert.equal(resource.fetching(), true);
+  assert.equal(resource.loading(), false);
+  await p;
+  await sleep(20);
+  assert.equal(runs, 2);
+  scope.dispose();
+});
+
+test("createResource dynamic cache key applies staleTime scheduling", async () => {
+  clearResourceCache();
+
+  const scope = createScope();
+  const id = signal("1");
+  let runs = 0;
+  let resource;
+
+  withScope(scope, () => {
+    resource = createResource(async () => {
+      runs++;
+      return { id: id(), runs };
+    }, {
+      deps: () => id(),
+      cache: { key: () => `dynamic:stale:${id()}` },
+      staleTime: 20,
+      staleWhileRevalidate: true,
+    });
+  });
+
+  await flush();
+  await sleep(10);
+  assert.equal(runs, 1);
+
+  await sleep(50);
+  await flush();
+  await sleep(10);
+
+  assert.ok(runs >= 2);
+  assert.equal(resource.data()?.id, "1");
+  scope.dispose();
+});
+
+test("createResource deps+key does not resolve refresh early while fetching in SWR mode", async () => {
+  const scope = createScope();
+  const id = signal("u1");
+  const noisy = signal(0);
+  let runs = 0;
+  let resource;
+
+  withScope(scope, () => {
+    resource = createResource(async () => {
+      runs++;
+      await sleep(30);
+      return { id: id(), runs };
+    }, {
+      deps: {
+        get: () => ({ id: id(), noisy: noisy() }),
+        key: () => id(),
+      },
+      staleWhileRevalidate: true,
+    });
+  });
+
+  await flush();
+  await sleep(40);
+  assert.equal(resource.data()?.runs, 1);
+
+  let settled = false;
+  const refreshPromise = resource.refresh().then(() => {
+    settled = true;
+  });
+
+  await flush();
+  await sleep(5);
+  assert.equal(resource.fetching(), true);
+  assert.equal(resource.loading(), false);
+
+  noisy.set(1);
+  await flush();
+  await sleep(5);
+  assert.equal(settled, false);
+  assert.equal(resource.fetching(), true);
+
+  await refreshPromise;
+  await sleep(20);
+  assert.equal(resource.data()?.runs >= 1, true);
+  assert.equal(resource.fetching(), false);
+  assert.equal(resource.loading(), false);
+  scope.dispose();
+});
+
+test("createResource without scope does not auto-loop staleTime refresh", async () => {
+  clearResourceCache();
+  let runs = 0;
+
+  createResource(async () => {
+    runs++;
+    return { runs };
+  }, {
+    staleTime: 20,
+  });
+
+  await flush();
+  await sleep(80);
+  assert.equal(runs, 1);
+});
+
+test("createResource dynamic stale timer does not refresh after key switch", async () => {
+  clearResourceCache();
+  const scope = createScope();
+  const id = signal("1");
+  const runsById = new Map();
+
+  withScope(scope, () => {
+    createResource(async () => {
+      const key = id();
+      runsById.set(key, (runsById.get(key) ?? 0) + 1);
+      if (key === "2") {
+        throw new Error("id2 fails");
+      }
+      return { key };
+    }, {
+      deps: () => id(),
+      cache: { key: () => `dynamic:timer:${id()}` },
+      staleTime: 20,
+      staleWhileRevalidate: true,
+    });
+  });
+
+  await flush();
+  await sleep(10);
+  assert.equal(runsById.get("1"), 1);
+
+  id.set("2");
+  await flush();
+  await sleep(10);
+  assert.equal(runsById.get("2"), 1);
+
+  await sleep(60);
+  await flush();
+  await sleep(10);
+  assert.equal(runsById.get("2"), 1);
+  scope.dispose();
+});
+
 test("createResource with static cache+deps does not duplicate fetch when fetchFn reads deps synchronously", async () => {
   clearResourceCache();
 

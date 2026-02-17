@@ -1,35 +1,35 @@
 # Resources
 
-Resources manage async data with AbortSignal, reactive state, dependency-driven refresh, and optional cache.
+Resources are Dalila's async state primitive for data fetching and other asynchronous flows.
+They provide cancellation, refresh semantics, optional cache, and stale-while-revalidate behavior.
 
-## Decision Tree
+## Core Concepts
 
 ```txt
-Need reactivity?
-├── No  -> fetch/http directly
-└── Yes -> Need lifecycle helpers (interval/timeout/event)?
-    ├── Yes -> useInterval / useTimeout / useEvent
-    └── No  -> Is it data fetching?
-        ├── Yes -> Simple/prototype flow?
-        │   ├── Yes -> useFetch
-        │   └── No  -> Need invalidation by key/tag?
-        │       ├── Yes -> createQueryClient
-        │       └── No  -> createResource / resourceFromUrl
-        └── No  -> createResource (generic async state)
+┌─────────────────────────────────────────────────────────────┐
+│                     Resource Lifecycle                      │
+│                                                             │
+│  createResource(fetchFn, options)                           │
+│        │                                                    │
+│        ├── data(): T | null                                 │
+│        ├── loading(): boolean   (initial load only)         │
+│        ├── fetching(): boolean  (any in-flight fetch)       │
+│        ├── error(): Error | null                            │
+│        └── refresh()/cancel()/setData()/setError()          │
+│                                                             │
+│  refresh(force) -> abort previous (if needed) + revalidate  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Comparison
+**Key behaviors:**
+1. **Abort-aware**: in-flight requests are aborted on rerun/scope cleanup.
+2. **Refresh correctness**: `await refresh()` resolves when the requested run finishes.
+3. **SWR**: with `staleWhileRevalidate`, old data stays visible while refetching.
+4. **Optional cache**: keyed cache with TTL/tags/persist.
 
-| API | Reactive state | Manual refresh | Cache | Invalidation |
-|---|---|---|---|---|
-| `fetch` / `http` | No | No | No | No |
-| `useFetch` | Yes | No | No | No |
-| `resourceFromUrl` | Yes | Yes | Optional | No |
-| `createResource` | Yes | Yes | Optional | No |
-| `createResourceCache` | Yes | Yes | Yes (isolated) | Yes (local key/tag) |
-| `createQueryClient` (`query`) | Yes | Yes | Yes | Yes (key/tag) |
+## API Reference
 
-## API (Consolidated)
+### `createResource`
 
 ```ts
 function createResource<T>(
@@ -37,7 +37,8 @@ function createResource<T>(
   options?: {
     initialValue?: T | null;
     onSuccess?: (data: T) => void;
-    onError?: (err: Error) => void;
+    onError?: (error: Error) => void;
+
     deps?: () => unknown;
     cache?: string | {
       key: string | (() => string);
@@ -45,69 +46,79 @@ function createResource<T>(
       tags?: readonly string[];
       persist?: boolean;
     };
+
     refreshInterval?: number;
+    staleTime?: number;
+    staleWhileRevalidate?: boolean;
+
     fetchOptions?: RequestInit;
   }
 ): ResourceState<T>
+```
 
+### `resourceFromUrl`
+
+```ts
 function resourceFromUrl<T>(
   url: string | (() => string),
-  options?: {
-    initialValue?: T | null;
-    onSuccess?: (data: T) => void;
-    onError?: (err: Error) => void;
-    deps?: () => unknown;
-    cache?: string | {
-      key: string | (() => string);
-      ttlMs?: number;
-      tags?: readonly string[];
-      persist?: boolean;
-    };
-    refreshInterval?: number;
-    fetchOptions?: RequestInit;
-  }
+  options?: CreateResourceOptions<T>
 ): ResourceState<T>
+```
 
-function createResourceCache(config?: {
-  maxEntries?: number;
-  warnOnEviction?: boolean;
-}): {
-  create: <T>(key: string, fetchFn: (signal: AbortSignal) => Promise<T>, options?: CachedResourceOptions<T>) => ResourceState<T>;
-  clear: (key?: string) => void;
-  invalidate: (key: string, opts?: { revalidate?: boolean; force?: boolean }) => void;
-  invalidateTag: (tag: string, opts?: { revalidate?: boolean; force?: boolean }) => void;
-  invalidateTags: (tags: readonly string[], opts?: { revalidate?: boolean; force?: boolean }) => void;
-  keys: () => string[];
-  configure: (config: { maxEntries?: number; warnOnEviction?: boolean }) => void;
-}
+### `ResourceState`
 
-function configureResourceCache(config: {
-  maxEntries?: number;
-  warnOnEviction?: boolean;
-}): void
-
+```ts
 interface ResourceState<T> {
   data(): T | null;
   loading(): boolean;
+  fetching(): boolean;
   error(): Error | null;
+
   refresh(opts?: { force?: boolean }): Promise<void>;
+  cancel(): void;
+
+  setData(value: T | null): void;
+  setError(value: Error | null): void;
 }
 ```
 
-## Examples
+### Cache invalidation/introspection helpers
 
-### Basic
+```ts
+function invalidateResourceCache(key: string, opts?: { revalidate?: boolean; force?: boolean }): void
+function invalidateResourceTag(tag: string, opts?: { revalidate?: boolean; force?: boolean }): void
+function invalidateResourceTags(tags: readonly string[], opts?: { revalidate?: boolean; force?: boolean }): void
+
+function getResourceCacheData<T>(key: string): T | null | undefined
+function setResourceCacheData<T>(key: string, value: T | null): boolean
+function cancelResourceCache(key: string): void
+```
+
+## Basic Usage
 
 ```ts
 import { createResource } from "dalila";
 
 const user = createResource(async (signal) => {
   const res = await fetch("/api/me", { signal });
+  if (!res.ok) throw new Error("failed");
   return res.json();
 });
 ```
 
-### With deps
+## SWR + staleTime
+
+```ts
+const user = createResource(fetchUser, {
+  staleWhileRevalidate: true,
+  staleTime: 5 * 60 * 1000,
+});
+
+// loading(): true only when there is no data yet
+// fetching(): true during initial load and refetches
+```
+
+## With deps
 
 ```ts
 const userId = signal("1");
@@ -120,89 +131,78 @@ const user = createResource(async (signal) => {
 });
 ```
 
-### With cache
+## With cache (key/tags/ttl)
 
 ```ts
-const user = createResource(async (signal) => {
-  const res = await fetch("/api/me", { signal });
+const todos = createResource(async (signal) => {
+  const res = await fetch("/api/todos", { signal });
   return res.json();
 }, {
   cache: {
-    key: "user:me",
+    key: "todos:list",
+    tags: ["todos"],
     ttlMs: 60_000,
-    tags: ["user"],
   },
 });
+
+invalidateResourceTag("todos", { revalidate: true, force: true });
 ```
 
-### With dynamic cache key
+## Manual cache patch
 
 ```ts
-const userId = signal("1");
-
-const user = createResource(async (signal) => {
-  const res = await fetch(`/api/users/${userId()}`, { signal });
-  return res.json();
-}, {
-  deps: () => userId(),
-  cache: {
-    key: () => `user:${userId()}`,
-    tags: ["user"],
-  },
-});
+const key = "todos:list";
+const current = getResourceCacheData<{ id: number; title: string }[]>(key) ?? [];
+setResourceCacheData(key, [...current, { id: 99, title: "Optimistic" }]);
 ```
 
-### URL helper
+## Related Features in Query/Mutation
 
-```ts
-import { resourceFromUrl } from "dalila";
+`createResource` is the base async primitive.
 
-const todos = resourceFromUrl("/api/todos", {
-  cache: "todos:list",
-  fetchOptions: { credentials: "include" },
-});
-```
+For higher-level orchestration:
 
-### With createHttpClient
+- **Prefetch**: `queryClient.prefetchQuery(...)`
+- **Infinite pagination**: `queryClient.infiniteQuery(...)`
+- **Optimistic lifecycle**: `mutation.onMutate/onError/onSettled` with `getQueryData/setQueryData`
 
-```ts
-import { createHttpClient } from "dalila/http";
-import { createResource, signal } from "dalila";
+See:
+- `docs/core/query.md`
+- `docs/core/mutation.md`
 
-const http = createHttpClient({
-  baseURL: "https://api.example.com",
-});
+## `loading()` vs `fetching()`
 
-const userId = signal("1");
+| State | Meaning |
+|---|---|
+| `loading()` | First load without data |
+| `fetching()` | Any network run in progress |
 
-const user = createResource(async (signal) => {
-  return http.get(`/users/${userId()}`, { signal });
-}, {
-  deps: () => userId(),
-  cache: {
-    key: () => `users:${userId()}`,
-    tags: ["users"],
-  },
-});
-```
+Use `loading()` for skeletons and `fetching()` for background refresh indicators.
 
-### Isolated cache
+## Best Practices
 
-```ts
-import { createResourceCache } from "dalila";
+1. Pass `AbortSignal` to all network calls.
+2. Use `deps` to control revalidation ownership explicitly.
+3. Prefer cache keys with stable primitive identity.
+4. Use tags for cross-resource invalidation.
+5. Use `staleTime` on resources that can be revalidated in background.
 
-const cache = createResourceCache({ maxEntries: 100 });
+## Common Pitfalls
 
-const me = cache.create("user:me", async (signal) => {
-  const res = await fetch("/api/me", { signal });
-  return res.json();
-});
+1. **No scope + no persist**
 
-cache.invalidateTag("user");
-cache.clear();
-```
+Caching is safe-by-default: outside scope, cache is disabled unless `persist: true`.
 
-## Notes
+2. **Using `loading()` as global spinner**
 
-- Outside a scope, cache is disabled by default unless `persist: true`.
-- `refreshInterval` requires a scope for automatic cleanup.
+For refetches under SWR, use `fetching()`, not `loading()`.
+
+3. **Forcing every refresh**
+
+`refresh({ force: true })` aborts in-flight work; use only when needed.
+
+## Performance Notes
+
+- Resource cache supports TTL and LRU-cap by config (`configureResourceCache`).
+- Prefer tag invalidation over many key invalidations when possible.
+- Use SWR to avoid UI flicker on frequent refetch.

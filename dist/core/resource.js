@@ -1,42 +1,49 @@
 import { signal, effect, effectAsync } from "./signal.js";
 import { isInDevMode } from "./dev.js";
 import { getCurrentScope, createScope, isScopeDisposed, withScope } from "./scope.js";
+/**
+ * Creates a Deferred object - a promise that can be resolved externally.
+ * Used internally by the waiter system for correct refresh.
+ */
 function createDeferred() {
     let resolve;
     const promise = new Promise((r) => (resolve = r));
     return { promise, resolve };
 }
 /**
- * Async data primitive with cancellation + refresh correctness.
+ * Async data primitive with cancellation and refresh correctness.
  *
  * Design goals:
- * - Scope-first: if created inside a scope, abort + cleanup on scope disposal.
- * - Abort-safe callbacks: do not call onSuccess/onError for aborted runs.
- * - Correct refresh: `await refresh()` must wait for the *new* fetch, not a stale inFlight.
+ * - Scope-first: if created inside a scope, aborts and cleans up when scope is disposed.
+ * - Abort-safe callbacks: does not call onSuccess/onError for aborted runs.
+ * - Correct refresh: `await refresh()` must wait for the new fetch, not an outdated inFlight.
  *
  * Semantics:
  * - A driver `effectAsync` runs `fetchFn(signal)` whenever `refreshTick` changes.
- * - Each run gets a fresh AbortController.
+ * - Each run gets a new AbortController.
  * - Reruns abort the previous controller.
  *
  * Why a waiter system?
- * - Without it, refresh() can accidentally await an older promise and resolve early.
+ * - Without it, refresh() can accidentally await an old promise and resolve prematurely.
  * - We map each refresh request to a runId and resolve its waiter when that run finishes.
  *
  * Safety:
  * - If the driver reruns during a fetch, an aborted run must NOT resolve the latest waiter.
- *   Guard: only resolve if `lastRunController === controller` for that run.
+ *   Guard: only resolves if `lastRunController === controller` for that run.
  *
  * Lifetime:
  * - On parent scope cleanup:
- *   - abort current request
- *   - dispose the driver
- *   - resolve all pending waiters (avoid hanging Promises)
+ *   - aborts current request
+ *   - disposes the driver
+ *   - resolves all pending waiters (avoids hanging Promises)
  */
 function createResourceBase(fetchFn, options = {}) {
     const data = signal(options.initialValue ?? null);
     const loading = signal(false);
+    const fetching = signal(false);
     const error = signal(null);
+    const staleWhileRevalidate = options.staleWhileRevalidate === true;
+    let hasSettledValue = Object.prototype.hasOwnProperty.call(options, "initialValue");
     /**
      * Reactive "kick" signal: bumping this triggers the driver.
      * We store runId here so the driver can resolve the correct waiter.
@@ -85,7 +92,8 @@ function createResourceBase(fetchFn, options = {}) {
         const onAbort = () => controller.abort();
         runSignal.addEventListener("abort", onAbort, { once: true });
         const requestSignal = controller.signal;
-        loading.set(true);
+        fetching.set(true);
+        loading.set(!(staleWhileRevalidate && hasSettledValue));
         error.set(null);
         inFlight = (async () => {
             try {
@@ -96,6 +104,7 @@ function createResourceBase(fetchFn, options = {}) {
                 if (requestSignal.aborted)
                     return;
                 data.set(result);
+                hasSettledValue = true;
                 options.onSuccess?.(result);
             }
             catch (err) {
@@ -108,6 +117,7 @@ function createResourceBase(fetchFn, options = {}) {
             finally {
                 // Only flip loading off for non-aborted runs.
                 if (!requestSignal.aborted) {
+                    fetching.set(false);
                     loading.set(false);
                 }
             }
@@ -132,6 +142,7 @@ function createResourceBase(fetchFn, options = {}) {
             lastRunController = null;
             disposeDriver();
             loading.set(false);
+            fetching.set(false);
             for (const [, deferred] of waiters) {
                 deferred.deferred.resolve();
             }
@@ -140,7 +151,7 @@ function createResourceBase(fetchFn, options = {}) {
     }
     async function refresh(opts = {}) {
         // Dedupe: if already loading and not forced, just await the active run.
-        if (loading() && !opts.force) {
+        if (fetching() && !opts.force) {
             await Promise.resolve();
             await (inFlight ?? Promise.resolve());
             return;
@@ -152,7 +163,20 @@ function createResourceBase(fetchFn, options = {}) {
         const waiter = requestRun();
         await waiter;
     }
-    return { data, loading, error, refresh };
+    function cancel() {
+        lastRunController?.abort();
+        lastRunController = null;
+        loading.set(false);
+        fetching.set(false);
+    }
+    function setData(value) {
+        data.set(value);
+        hasSettledValue = true;
+    }
+    function setError(value) {
+        error.set(value);
+    }
+    return { data, loading, fetching, error, refresh, cancel, setData, setError };
 }
 function normalizeResourceCachePolicy(cache) {
     if (!cache)
@@ -193,6 +217,7 @@ function createDynamicCachedResource(fetchFn, cachePolicy, options) {
         initialValue: options.initialValue,
         onError: options.onError,
         onSuccess: options.onSuccess,
+        staleWhileRevalidate: options.staleWhileRevalidate,
         ttlMs: cachePolicy.ttlMs,
         tags: cachePolicy.tags,
         persist: cachePolicy.persist,
@@ -243,13 +268,20 @@ function createDynamicCachedResource(fetchFn, cachePolicy, options) {
     return {
         data: () => activeResourceSignal()?.data() ?? null,
         loading: () => activeResourceSignal()?.loading() ?? false,
+        fetching: () => activeResourceSignal()?.fetching() ?? false,
         error: () => activeResourceSignal()?.error() ?? null,
         refresh: (opts) => activeResourceSignal()?.refresh(opts) ?? Promise.resolve(),
+        cancel: () => activeResourceSignal()?.cancel(),
+        setData: (value) => activeResourceSignal()?.setData(value),
+        setError: (value) => activeResourceSignal()?.setError(value),
     };
 }
 export function createResource(fetchFn, options = {}) {
-    const { deps, refreshInterval } = options;
+    const { deps, refreshInterval, staleTime } = options;
     const cachePolicy = normalizeResourceCachePolicy(options.cache);
+    const dynamicCacheKeyGetter = cachePolicy && typeof cachePolicy.key === "function"
+        ? cachePolicy.key
+        : null;
     const fetchFnForCached = deps
         ? async (signal) => {
             // Keep deps ownership explicit (via options.deps) when cache is enabled.
@@ -258,16 +290,43 @@ export function createResource(fetchFn, options = {}) {
             return fetchFn(signal);
         }
         : fetchFn;
+    const ownerScope = getCurrentScope();
+    let staleTimer = null;
+    const scheduleStaleRefresh = (expectedDynamicKey) => {
+        if (!ownerScope)
+            return;
+        if (!staleTime || staleTime <= 0)
+            return;
+        if (staleTimer)
+            clearTimeout(staleTimer);
+        staleTimer = setTimeout(() => {
+            if (dynamicCacheKeyGetter) {
+                if (expectedDynamicKey == null)
+                    return;
+                if (dynamicCacheKeyGetter() !== expectedDynamicKey)
+                    return;
+            }
+            resource.refresh({ force: false }).catch(() => { });
+        }, staleTime);
+    };
     const baseOptions = {
         initialValue: options.initialValue,
         onError: options.onError,
-        onSuccess: options.onSuccess,
+        onSuccess: (value) => {
+            options.onSuccess?.(value);
+            const expectedDynamicKey = dynamicCacheKeyGetter ? dynamicCacheKeyGetter() : undefined;
+            scheduleStaleRefresh(expectedDynamicKey);
+        },
+        staleWhileRevalidate: options.staleWhileRevalidate,
     };
     let resource;
     if (cachePolicy) {
         const key = cachePolicy.key;
         if (typeof key === "function") {
-            resource = createDynamicCachedResource(fetchFnForCached, cachePolicy, options);
+            resource = createDynamicCachedResource(fetchFnForCached, cachePolicy, {
+                ...options,
+                ...baseOptions,
+            });
         }
         else {
             resource = createCachedResource(key, fetchFnForCached, {
@@ -297,6 +356,13 @@ export function createResource(fetchFn, options = {}) {
     }
     if (refreshInterval != null && refreshInterval > 0) {
         attachResourceRefreshInterval(resource, refreshInterval);
+    }
+    if (ownerScope && staleTime && staleTime > 0) {
+        ownerScope.onCleanup(() => {
+            if (staleTimer)
+                clearTimeout(staleTimer);
+            staleTimer = null;
+        });
     }
     return resource;
 }
@@ -344,12 +410,15 @@ export function resourceFromUrl(url, options = {}) {
  * Important edge-case:
  * - If the effect reruns while a fetch is still in flight and deps are unchanged,
  *   we must not resolve refresh waiters prematurely.
- *   Guard: early-return resolves only if `!loading()`.
+ *   Guard: early-return resolves only if `!fetching()`.
  */
 function createDependentResource(fetchFn, deps, options = {}) {
     const data = signal(options.initialValue ?? null);
     const loading = signal(false);
+    const fetching = signal(false);
     const error = signal(null);
+    const staleWhileRevalidate = options.staleWhileRevalidate === true;
+    let hasSettledValue = Object.prototype.hasOwnProperty.call(options, "initialValue");
     const refreshTick = signal(0);
     /** Last-seen deps snapshots for cheap "changed" detection. */
     let lastKey = Symbol("init");
@@ -375,7 +444,7 @@ function createDependentResource(fetchFn, deps, options = {}) {
         if (!changed) {
             // Only resolve the waiter if no fetch is in flight.
             // (refresh forces changed=true, so this path only occurs on normal reruns)
-            if (!loading()) {
+            if (!fetching()) {
                 if (waiter) {
                     waiter.deferred.resolve();
                     waiters.delete(id);
@@ -391,7 +460,8 @@ function createDependentResource(fetchFn, deps, options = {}) {
         const onAbort = () => controller.abort();
         runSignal.addEventListener("abort", onAbort, { once: true });
         const requestSignal = controller.signal;
-        loading.set(true);
+        fetching.set(true);
+        loading.set(!(staleWhileRevalidate && hasSettledValue));
         error.set(null);
         inFlight = (async () => {
             try {
@@ -401,6 +471,7 @@ function createDependentResource(fetchFn, deps, options = {}) {
                 if (requestSignal.aborted)
                     return;
                 data.set(result);
+                hasSettledValue = true;
                 options.onSuccess?.(result);
             }
             catch (err) {
@@ -411,7 +482,9 @@ function createDependentResource(fetchFn, deps, options = {}) {
                 options.onError?.(errorObj);
             }
             finally {
-                if (!requestSignal.aborted) {
+                if (lastRunController === controller) {
+                    lastRunController = null;
+                    fetching.set(false);
                     loading.set(false);
                 }
             }
@@ -430,6 +503,7 @@ function createDependentResource(fetchFn, deps, options = {}) {
             lastRunController = null;
             disposeDriver();
             loading.set(false);
+            fetching.set(false);
             for (const [, deferred] of waiters) {
                 deferred.deferred.resolve();
             }
@@ -462,7 +536,7 @@ function createDependentResource(fetchFn, deps, options = {}) {
      *   so the next driver run always fetches even if deps are unchanged.
      */
     async function refresh(opts = {}) {
-        if (loading() && !opts.force) {
+        if (fetching() && !opts.force) {
             await Promise.resolve();
             await (inFlight ?? Promise.resolve());
             return;
@@ -476,7 +550,20 @@ function createDependentResource(fetchFn, deps, options = {}) {
         const waiter = requestRun();
         await waiter;
     }
-    return { data, loading, error, refresh };
+    function cancel() {
+        lastRunController?.abort();
+        lastRunController = null;
+        loading.set(false);
+        fetching.set(false);
+    }
+    function setData(value) {
+        data.set(value);
+        hasSettledValue = true;
+    }
+    function setError(value) {
+        error.set(value);
+    }
+    return { data, loading, fetching, error, refresh, cancel, setData, setError };
 }
 function isSignalArray(value) {
     return Array.isArray(value);
@@ -735,6 +822,31 @@ export function invalidateResourceTag(tag, opts = {}) {
 export function invalidateResourceTags(tags, opts = {}) {
     for (const t of tags)
         invalidateResourceTag(t, opts);
+}
+export function getResourceCacheData(key) {
+    const entry = resourceCache.get(key);
+    if (!entry)
+        return undefined;
+    return entry.resource.data();
+}
+export function setResourceCacheData(key, value) {
+    const entry = resourceCache.get(key);
+    if (!entry)
+        return false;
+    entry.resource.setData(value);
+    entry.resource.setError(null);
+    entry.stale = false;
+    entry.createdAt = Date.now();
+    return true;
+}
+export function cancelResourceCache(key) {
+    const entry = resourceCache.get(key);
+    if (!entry)
+        return;
+    entry.resource.cancel();
+}
+export function getResourceCacheKeys() {
+    return Array.from(resourceCache.keys());
 }
 /**
  * Introspection helper: returns cache keys registered for a tag.

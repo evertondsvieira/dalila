@@ -3,80 +3,160 @@ import { getCurrentScope } from "./scope.js";
 import { encodeKey, type QueryKey } from "./key.js";
 import { invalidateResourceCache, invalidateResourceTags } from "./resource.js";
 
-export interface MutationConfig<TInput, TResult> {
-  mutate: (signal: AbortSignal, input: TInput) => Promise<TResult>;
-
+/**
+ * Configuration for creating a mutation (write operation).
+ * 
+ * @template TInput - Type of input data passed to the mutation
+ * @template TResult - Type of result returned by the mutation
+ * @template TContext - Type of optional context kept between callbacks
+ */
+export interface MutationConfig<TInput, TResult, TContext = unknown> {
   /**
-   * Optional invalidation (runs on success).
-   * - Tags revalidate all cached resources that registered those tags.
-   * - Keys revalidate a specific cached resource by key.
+   * Main function that executes the mutation.
+   * Receives an AbortSignal for cancellation and the input data.
+   * Alias: can also use the 'mutate' property.
+   */
+  mutationFn?: (signal: AbortSignal, input: TInput) => Promise<TResult>;
+  
+  /**
+   * Alias for mutationFn. Useful for API compatibility.
+   */
+  mutate?: (signal: AbortSignal, input: TInput) => Promise<TResult>;
+  
+  /**
+   * Cache tags to automatically invalidate after success.
+   * Useful for updating related queries after mutation.
    */
   invalidateTags?: readonly string[];
+  
+  /**
+   * Query keys to automatically invalidate after success.
+   */
   invalidateKeys?: readonly QueryKey[];
-
-  onSuccess?: (result: TResult, input: TInput) => void;
-  onError?: (error: Error, input: TInput) => void;
-  onSettled?: (input: TInput) => void;
+  
+  /**
+   * Callback executed before the mutation.
+   * Useful for optimistically updating UI state.
+   * Returns a context that will be passed to subsequent callbacks.
+   */
+  onMutate?: (input: TInput) => Promise<TContext> | TContext;
+  
+  /**
+   * Callback executed when mutation succeeds.
+   * @param result - The result returned by the mutation
+   * @param input - The original input data
+   * @param context - The context returned by onMutate (or undefined)
+   */
+  onSuccess?: (result: TResult, input: TInput, context: TContext | undefined) => void;
+  
+  /**
+   * Callback executed when mutation fails.
+   * @param error - The error that occurred
+   * @param input - The original input data
+   * @param context - The context returned by onMutate (or undefined)
+   */
+  onError?: (error: Error, input: TInput, context: TContext | undefined) => void;
+  
+  /**
+   * Callback executed after mutation completes (success or error).
+   * Always executed, regardless of outcome.
+   * @param result - The result (or null if error)
+   * @param error - The error (or null if success)
+   * @param input - The original input data
+   * @param context - The context returned by onMutate (or undefined)
+   */
+  onSettled?: (
+    result: TResult | null,
+    error: Error | null,
+    input: TInput,
+    context: TContext | undefined
+  ) => void;
 }
 
+/**
+ * Mutation state, exposing functions to control and access data.
+ * 
+ * @template TInput - Type of input data
+ * @template TResult - Type of result
+ */
 export interface MutationState<TInput, TResult> {
-  data: () => TResult | null;
-  loading: () => boolean;
-  error: () => Error | null;
-
   /**
-   * Runs the mutation.
-   * - Dedupe: if already loading and not forced, it awaits the current run.
-   * - Force: aborts the current run and starts a new request.
+   * Signal accessor for data returned by the mutation.
+   * Returns null if mutation hasn't run yet or failed.
+   */
+  data: () => TResult | null;
+  
+  /**
+   * Signal accessor indicating if mutation is in progress.
+   */
+  loading: () => boolean;
+  
+  /**
+   * Signal accessor for the last mutation error (if any).
+   */
+  error: () => Error | null;
+  
+  /**
+   * Executes the mutation with the provided input data.
+   * @param input - Input data for the mutation
+   * @param opts.force - If true, aborts any in-flight mutation and starts a new one
+   * @returns Promise that resolves with the result or null on error
    */
   run: (input: TInput, opts?: { force?: boolean }) => Promise<TResult | null>;
-
+  
   /**
-   * Resets local mutation state.
-   * Does not affect the query cache.
+   * Resets the mutation state to initial state.
+   * Aborts any in-flight mutation and clears data, loading, and error.
    */
   reset: () => void;
 }
 
 /**
- * Mutation primitive (scope-safe).
- *
- * Design goals:
- * - DOM-first friendly: mutations are just async actions with reactive state.
- * - Scope-safe: abort on scope disposal (best-effort cleanup).
- * - Dedupe-by-default: concurrent `run()` calls share the same in-flight promise.
- * - Force re-run: abort the current request and start a new one.
- * - React Query-like behavior: keep the last successful `data()` until overwritten or reset.
- *
- * Semantics:
- * - Each run uses its own AbortController.
- * - If a run is aborted:
- *   - it returns null,
- *   - it MUST NOT call onSuccess/onError/onSettled,
- *   - and it MUST NOT overwrite state from a newer run.
- *
- * Invalidation:
- * - Runs only after a successful, non-aborted mutation.
- * - invalidateTags: revalidates all cached resources registered for those tags.
- * - invalidateKeys: revalidates specific cached resources by encoded key.
+ * Creates a mutation - a write operation that executes side effects
+ * and can invalidate related queries to maintain cache consistency.
+ * 
+ * Follows the Mutation pattern from React Query/TanStack Query:
+ * - Provides lifecycle callbacks (onMutate, onSuccess, onError, onSettled)
+ * - Supports automatic cache invalidation by tags or keys
+ * - Automatically manages cancellation via AbortSignal
+ * 
+ * @template TInput - Type of input data
+ * @template TResult - Type of expected result
+ * @template TContext - Type of context for communication between callbacks
+ * @param cfg - Mutation configuration
+ * @returns Mutation state with methods to execute and control
+ * 
+ * @example
+ * ```ts
+ * const mutation = createMutation({
+ *   mutationFn: async (signal, data) => {
+ *     const response = await fetch('/api/items', {
+ *       method: 'POST',
+ *       body: JSON.stringify(data),
+ *       signal
+ *     });
+ *     return response.json();
+ *   },
+ *   invalidateTags: ['items'],
+ *   onSuccess: (result) => {
+ *     console.log('Item created:', result);
+ *   }
+ * });
+ * 
+ * // Execute the mutation
+ * mutation.run({ name: 'New Item' });
+ * ```
  */
-export function createMutation<TInput, TResult>(
-  cfg: MutationConfig<TInput, TResult>
+export function createMutation<TInput, TResult, TContext = unknown>(
+  cfg: MutationConfig<TInput, TResult, TContext>
 ): MutationState<TInput, TResult> {
   const data = signal<TResult | null>(null);
   const loading = signal<boolean>(false);
   const error = signal<Error | null>(null);
 
-  /** In-flight promise for dedupe (represents the latest started run). */
   let inFlight: Promise<TResult | null> | null = null;
-
-  /** AbortController for the latest started run (used for force + scope cleanup). */
   let controller: AbortController | null = null;
 
-  /**
-   * If created inside a scope, abort the active run when the scope is disposed.
-   * This prevents orphan network work and avoids updating dead UI.
-   */
   const scope = getCurrentScope();
   if (scope) {
     scope.onCleanup(() => {
@@ -86,23 +166,17 @@ export function createMutation<TInput, TResult>(
     });
   }
 
+  const mutationFn = cfg.mutationFn ?? cfg.mutate;
+  if (!mutationFn) {
+    throw new Error("createMutation requires mutationFn or mutate");
+  }
+
   async function run(input: TInput, opts: { force?: boolean } = {}): Promise<TResult | null> {
-    /**
-     * Dedupe:
-     * - If a run is already loading and we're not forcing, await the current promise.
-     * - Snapshot `inFlight` to avoid races if a forced run starts mid-await.
-     */
     if (loading() && !opts.force) {
-      const p0 = inFlight;
-      return (await (p0 ?? Promise.resolve(null))) as TResult | null;
+      const pending = inFlight;
+      return (await (pending ?? Promise.resolve(null))) as TResult | null;
     }
 
-    /**
-     * Start a new run:
-     * - Abort previous run (if any).
-     * - Create a fresh controller/signal for this run.
-     * - Capture controller identity so older runs cannot clobber newer state.
-     */
     controller?.abort();
     controller = new AbortController();
     const sig = controller.signal;
@@ -112,16 +186,34 @@ export function createMutation<TInput, TResult>(
     error.set(null);
 
     inFlight = (async () => {
-      try {
-        const result = await cfg.mutate(sig, input);
+      let context: TContext | undefined = undefined;
 
-        // Aborted runs never commit state or call callbacks.
+      try {
+        if (cfg.onMutate) {
+          context = await cfg.onMutate(input);
+        }
+      } catch (e) {
+        if (sig.aborted) return null;
+        const err = e instanceof Error ? e : new Error(String(e));
+        error.set(err);
+        if (controller === localController) loading.set(false);
+        try {
+          cfg.onError?.(err, input, context);
+          cfg.onSettled?.(null, err, input, context);
+        } catch {
+        }
+        return null;
+      }
+
+      if (sig.aborted) return null;
+
+      try {
+        const result = await (mutationFn as (signal: AbortSignal, input: TInput) => Promise<TResult>)(sig, input);
         if (sig.aborted) return null;
 
         data.set(result);
-        cfg.onSuccess?.(result, input);
+        cfg.onSuccess?.(result, input, context);
 
-        // Invalidate only after a successful, non-aborted mutation.
         if (cfg.invalidateTags && cfg.invalidateTags.length > 0) {
           invalidateResourceTags(cfg.invalidateTags, { revalidate: true, force: true });
         }
@@ -132,38 +224,24 @@ export function createMutation<TInput, TResult>(
           }
         }
 
+        cfg.onSettled?.(result, null, input, context);
         return result;
       } catch (e) {
-        // Aborted runs are treated as null (no error state, no callbacks).
         if (sig.aborted) return null;
 
         const err = e instanceof Error ? e : new Error(String(e));
         error.set(err);
-        cfg.onError?.(err, input);
+        cfg.onError?.(err, input, context);
+        cfg.onSettled?.(null, err, input, context);
         return null;
       } finally {
-        /**
-         * Only the latest run is allowed to update `loading`.
-         *
-         * Why?
-         * - If run A is aborted because run B starts, A's finally will still execute.
-         * - Without this guard, A could flip loading(false) while B is still running.
-         */
-        const stillCurrent = controller === localController;
-        if (stillCurrent) loading.set(false);
-
-        // Keep onSettled consistent with onSuccess/onError: never run it for aborted runs.
-        if (!sig.aborted) cfg.onSettled?.(input);
+        if (controller === localController) loading.set(false);
       }
     })();
 
     return await inFlight;
   }
 
-  /**
-   * Resets local state and aborts any active run.
-   * Does not touch the resource/query cache.
-   */
   function reset(): void {
     controller?.abort();
     controller = null;

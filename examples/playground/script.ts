@@ -221,6 +221,15 @@ export async function createController() {
     const queryClient = createQueryClient();
     const postId = signal(1);
 
+    void queryClient.prefetchQuery({
+      key: key('post', 1),
+      fetch: async (signal, [_name, id]) => {
+        const res = await fetch(`https://jsonplaceholder.typicode.com/posts/${id}`, { signal });
+        if (!res.ok) throw new Error('Failed to prefetch post');
+        return res.json();
+      },
+    });
+
     const postQuery = queryClient.query({
       key: () => key('post', postId()),
       fetch: async (signal) => {
@@ -232,6 +241,7 @@ export async function createController() {
         return res.json();
       },
       staleTime: 5000,
+      staleWhileRevalidate: true,
     });
 
     const postTitle = computed(() => {
@@ -251,17 +261,29 @@ export async function createController() {
     const mutationCount = signal(0);
 
     const mutation = createMutation({
-      mutate: async (signal, _input: void) => {
+      mutationFn: async (signal, _input: void) => {
         await new Promise(r => setTimeout(r, 800));
         if (signal.aborted) throw new Error('Aborted');
         return { success: true };
       },
-      onSuccess: () => {
+      onMutate: () => {
+        const previous = queryClient.getQueryData<{ title: string }>(key('post', postId()));
+        queryClient.setQueryData<{ title: string }>(key('post', postId()), (old) => ({
+          ...(old ?? { title: '' }),
+          title: `${old?.title ?? ''} (saving...)`.trim(),
+        }));
+        return { previous };
+      },
+      onSuccess: (_result, _input, _ctx) => {
         mutationCount.update(n => n + 1);
         mutationResult.set(`Saved! (${mutationCount()} times)`);
       },
-      onError: (err) => {
+      onError: (err, _input, ctx) => {
+        queryClient.setQueryData<{ title: string }>(key('post', postId()), ctx?.previous ?? null);
         mutationResult.set(`Error: ${err.message}`);
+      },
+      onSettled: () => {
+        queryClient.invalidateQueries(key('post'));
       },
     });
 

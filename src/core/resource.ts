@@ -3,58 +3,156 @@ import { isInDevMode } from "./dev.js";
 import { getCurrentScope, createScope, isScopeDisposed, withScope, type Scope } from "./scope.js";
 
 /**
- * ResourceOptions:
- * - initialValue: optional initial data (null is allowed by design)
- * - onSuccess/onError: run only for non-aborted runs
+ * Options for configuring a resource.
+ * 
+ * A resource is an async primitive with support for:
+ * - Cancellation via AbortSignal
+ * - Lifecycle callbacks (onSuccess, onError)
+ * - Initial data for SSR/hydration
+ * - staleWhileRevalidate strategy
  */
 export interface ResourceOptions<T> {
   /**
    * Optional initial data for the resource.
-   * We allow null because ResourceState.data() is T | null by design.
+   * Null is allowed because ResourceState.data() returns T | null by design.
    */
   initialValue?: T | null;
 
+  /**
+   * Callback executed when fetch succeeds.
+   * Not called for aborted requests.
+   */
   onError?: (error: Error) => void;
+  
+  /**
+   * Callback executed when fetch fails.
+   * Not called for aborted requests.
+   */
   onSuccess?: (data: T) => void;
+  
+  /**
+   * If true, keeps old data while fetching new data in background.
+   * Default: false
+   */
+  staleWhileRevalidate?: boolean;
 }
 
+/**
+ * Cache policy for cached resources.
+ * Defines key, TTL, tags, and persistence.
+ */
 export interface ResourceCachePolicy {
+  /** Cache key (static or dynamic). */
   key: string | (() => string);
+  
+  /** Time to live in milliseconds. */
   ttlMs?: number;
+  
+  /** Tags for group invalidation. */
   tags?: readonly string[];
+  
+  /** If true, persists in global cache. */
   persist?: boolean;
 }
 
+/**
+ * Complete options for creating a resource.
+ * Extends ResourceOptions with cache, dependencies, and refresh options.
+ */
 export interface CreateResourceOptions<T> extends ResourceOptions<T> {
+  /**
+   * Reactive function that returns dependencies.
+   * The resource will be re-created when these dependencies change.
+   */
   deps?: () => unknown;
+  
+  /** Cache configuration (key or policy object). */
   cache?: string | ResourceCachePolicy;
+  
+  /** Interval in ms for continuous auto-refresh. */
   refreshInterval?: number;
+  
+  /** Time in ms until data is considered stale. */
+  staleTime?: number;
+  
+  /** Additional fetch options (headers, credentials, etc). */
   fetchOptions?: RequestInit;
 }
 
+/**
+ * Options for resource refresh/revalidation.
+ */
 export interface ResourceRefreshOptions {
-  /** If true, abort any in-flight request and revalidate now. */
+  /**
+   * If true, aborts any in-flight request and starts a new one.
+   * If false (default), waits for the current request (deduplication).
+   */
   force?: boolean;
 }
 
+/**
+ * Resource state - exposing signals and methods for control.
+ * 
+ * @template T - Type of data returned by the resource
+ */
 export interface ResourceState<T> {
+  /**
+   * Signal accessor for resource data.
+   * Returns null if not loaded yet or on error.
+   */
   data: () => T | null;
+  
+  /**
+   * Signal indicating first load (no previous data).
+   */
   loading: () => boolean;
+  
+  /**
+   * Signal indicating if fetching (even with cached data).
+   */
+  fetching: () => boolean;
+  
+  /**
+   * Signal for current error (if any).
+   */
   error: () => Error | null;
 
   /**
-   * Triggers a revalidation.
-   *
+   * Triggers data revalidation.
+   * 
    * Semantics:
-   * - If already loading and not forced, it awaits the current run (dedupe).
-   * - If forced, it aborts the current run and starts a new request.
-   * - `await refresh()` resolves only when the requested run completes (waiter semantics).
+   * - If already loading and not forced, waits for current request (dedupe).
+   * - If forced, aborts current request and starts new.
+   * - `await refresh()` resolves only when the requested request completes.
+   * 
+   * @param options - Refresh options (force)
    */
   refresh: (options?: ResourceRefreshOptions) => Promise<void>;
+  
+  /**
+   * Cancels the current in-flight request.
+   */
+  cancel: () => void;
+  
+  /**
+   * Manually sets resource data.
+   * Useful for optimistic updates or data from other sources.
+   */
+  setData: (value: T | null) => void;
+  
+  /**
+   * Manually sets resource error.
+   */
+  setError: (value: Error | null) => void;
 }
 
+/** Helper type for deferred promise with synchronous resolve. */
 type Deferred = { promise: Promise<void>; resolve: () => void };
 
+/**
+ * Creates a Deferred object - a promise that can be resolved externally.
+ * Used internally by the waiter system for correct refresh.
+ */
 function createDeferred(): Deferred {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => (resolve = r));
@@ -62,31 +160,31 @@ function createDeferred(): Deferred {
 }
 
 /**
- * Async data primitive with cancellation + refresh correctness.
- *
+ * Async data primitive with cancellation and refresh correctness.
+ * 
  * Design goals:
- * - Scope-first: if created inside a scope, abort + cleanup on scope disposal.
- * - Abort-safe callbacks: do not call onSuccess/onError for aborted runs.
- * - Correct refresh: `await refresh()` must wait for the *new* fetch, not a stale inFlight.
- *
+ * - Scope-first: if created inside a scope, aborts and cleans up when scope is disposed.
+ * - Abort-safe callbacks: does not call onSuccess/onError for aborted runs.
+ * - Correct refresh: `await refresh()` must wait for the new fetch, not an outdated inFlight.
+ * 
  * Semantics:
  * - A driver `effectAsync` runs `fetchFn(signal)` whenever `refreshTick` changes.
- * - Each run gets a fresh AbortController.
+ * - Each run gets a new AbortController.
  * - Reruns abort the previous controller.
- *
+ * 
  * Why a waiter system?
- * - Without it, refresh() can accidentally await an older promise and resolve early.
+ * - Without it, refresh() can accidentally await an old promise and resolve prematurely.
  * - We map each refresh request to a runId and resolve its waiter when that run finishes.
- *
+ * 
  * Safety:
  * - If the driver reruns during a fetch, an aborted run must NOT resolve the latest waiter.
- *   Guard: only resolve if `lastRunController === controller` for that run.
- *
+ *   Guard: only resolves if `lastRunController === controller` for that run.
+ * 
  * Lifetime:
  * - On parent scope cleanup:
- *   - abort current request
- *   - dispose the driver
- *   - resolve all pending waiters (avoid hanging Promises)
+ *   - aborts current request
+ *   - disposes the driver
+ *   - resolves all pending waiters (avoids hanging Promises)
  */
 function createResourceBase<T>(
   fetchFn: (signal: AbortSignal) => Promise<T>,
@@ -94,7 +192,10 @@ function createResourceBase<T>(
 ): ResourceState<T> {
   const data = signal<T | null>(options.initialValue ?? null);
   const loading = signal<boolean>(false);
+  const fetching = signal<boolean>(false);
   const error = signal<Error | null>(null);
+  const staleWhileRevalidate = options.staleWhileRevalidate === true;
+  let hasSettledValue = Object.prototype.hasOwnProperty.call(options, "initialValue");
 
   /**
    * Reactive "kick" signal: bumping this triggers the driver.
@@ -156,7 +257,8 @@ function createResourceBase<T>(
 
     const requestSignal = controller.signal;
 
-    loading.set(true);
+    fetching.set(true);
+    loading.set(!(staleWhileRevalidate && hasSettledValue));
     error.set(null);
 
     inFlight = (async () => {
@@ -168,6 +270,7 @@ function createResourceBase<T>(
         if (requestSignal.aborted) return;
 
         data.set(result);
+        hasSettledValue = true;
         options.onSuccess?.(result);
       } catch (err) {
         if (requestSignal.aborted) return;
@@ -178,6 +281,7 @@ function createResourceBase<T>(
       } finally {
         // Only flip loading off for non-aborted runs.
         if (!requestSignal.aborted) {
+          fetching.set(false);
           loading.set(false);
         }
       }
@@ -205,6 +309,7 @@ function createResourceBase<T>(
       disposeDriver();
 
       loading.set(false);
+      fetching.set(false);
 
       for (const [, deferred] of waiters) {
         deferred.deferred.resolve();
@@ -215,7 +320,7 @@ function createResourceBase<T>(
 
   async function refresh(opts: ResourceRefreshOptions = {}): Promise<void> {
     // Dedupe: if already loading and not forced, just await the active run.
-    if (loading() && !opts.force) {
+    if (fetching() && !opts.force) {
       await Promise.resolve();
       await (inFlight ?? Promise.resolve());
       return;
@@ -230,7 +335,23 @@ function createResourceBase<T>(
     await waiter;
   }
 
-  return { data, loading, error, refresh };
+  function cancel(): void {
+    lastRunController?.abort();
+    lastRunController = null;
+    loading.set(false);
+    fetching.set(false);
+  }
+
+  function setData(value: T | null): void {
+    data.set(value);
+    hasSettledValue = true;
+  }
+
+  function setError(value: Error | null): void {
+    error.set(value);
+  }
+
+  return { data, loading, fetching, error, refresh, cancel, setData, setError };
 }
 
 function normalizeResourceCachePolicy(cache: CreateResourceOptions<unknown>["cache"]): ResourceCachePolicy | null {
@@ -260,7 +381,7 @@ function attachResourceRefreshInterval<T>(resource: ResourceState<T>, refreshInt
   });
 }
 
-function enqueueForcedRefresh(resource: ResourceState<unknown>): void {
+function enqueueForcedRefresh(resource: ResourceState<any>): void {
   queueMicrotask(() => {
     resource.refresh({ force: true }).catch(() => {});
   });
@@ -282,6 +403,7 @@ function createDynamicCachedResource<T>(
     initialValue: options.initialValue,
     onError: options.onError,
     onSuccess: options.onSuccess,
+    staleWhileRevalidate: options.staleWhileRevalidate,
     ttlMs: cachePolicy.ttlMs,
     tags: cachePolicy.tags,
     persist: cachePolicy.persist,
@@ -338,8 +460,12 @@ function createDynamicCachedResource<T>(
   return {
     data: () => activeResourceSignal()?.data() ?? null,
     loading: () => activeResourceSignal()?.loading() ?? false,
+    fetching: () => activeResourceSignal()?.fetching() ?? false,
     error: () => activeResourceSignal()?.error() ?? null,
     refresh: (opts?: ResourceRefreshOptions) => activeResourceSignal()?.refresh(opts) ?? Promise.resolve(),
+    cancel: () => activeResourceSignal()?.cancel(),
+    setData: (value: T | null) => activeResourceSignal()?.setData(value),
+    setError: (value: Error | null) => activeResourceSignal()?.setError(value),
   };
 }
 
@@ -347,8 +473,11 @@ export function createResource<T>(
   fetchFn: (signal: AbortSignal) => Promise<T>,
   options: CreateResourceOptions<T> = {}
 ): ResourceState<T> {
-  const { deps, refreshInterval } = options;
+  const { deps, refreshInterval, staleTime } = options;
   const cachePolicy = normalizeResourceCachePolicy(options.cache);
+  const dynamicCacheKeyGetter = cachePolicy && typeof cachePolicy.key === "function"
+    ? cachePolicy.key
+    : null;
   const fetchFnForCached = deps
     ? async (signal: AbortSignal) => {
       // Keep deps ownership explicit (via options.deps) when cache is enabled.
@@ -358,10 +487,30 @@ export function createResource<T>(
     }
     : fetchFn;
 
+  const ownerScope = getCurrentScope();
+  let staleTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleStaleRefresh = (expectedDynamicKey?: string) => {
+    if (!ownerScope) return;
+    if (!staleTime || staleTime <= 0) return;
+    if (staleTimer) clearTimeout(staleTimer);
+    staleTimer = setTimeout(() => {
+      if (dynamicCacheKeyGetter) {
+        if (expectedDynamicKey == null) return;
+        if (dynamicCacheKeyGetter() !== expectedDynamicKey) return;
+      }
+      resource.refresh({ force: false }).catch(() => {});
+    }, staleTime);
+  };
+
   const baseOptions: ResourceOptions<T> = {
     initialValue: options.initialValue,
     onError: options.onError,
-    onSuccess: options.onSuccess,
+    onSuccess: (value) => {
+      options.onSuccess?.(value);
+      const expectedDynamicKey = dynamicCacheKeyGetter ? dynamicCacheKeyGetter() : undefined;
+      scheduleStaleRefresh(expectedDynamicKey);
+    },
+    staleWhileRevalidate: options.staleWhileRevalidate,
   };
 
   let resource: ResourceState<T>;
@@ -370,7 +519,10 @@ export function createResource<T>(
     const key = cachePolicy.key;
 
     if (typeof key === "function") {
-      resource = createDynamicCachedResource(fetchFnForCached, cachePolicy, options);
+      resource = createDynamicCachedResource(fetchFnForCached, cachePolicy, {
+        ...options,
+        ...baseOptions,
+      });
     } else {
       resource = createCachedResource<T>(key, fetchFnForCached, {
         ...baseOptions,
@@ -403,6 +555,13 @@ export function createResource<T>(
 
   if (refreshInterval != null && refreshInterval > 0) {
     attachResourceRefreshInterval(resource, refreshInterval);
+  }
+
+  if (ownerScope && staleTime && staleTime > 0) {
+    ownerScope.onCleanup(() => {
+      if (staleTimer) clearTimeout(staleTimer);
+      staleTimer = null;
+    });
   }
 
   return resource;
@@ -468,7 +627,7 @@ export type DepSource<D> =
  * Important edge-case:
  * - If the effect reruns while a fetch is still in flight and deps are unchanged,
  *   we must not resolve refresh waiters prematurely.
- *   Guard: early-return resolves only if `!loading()`.
+ *   Guard: early-return resolves only if `!fetching()`.
  */
 function createDependentResource<T, D>(
   fetchFn: (signal: AbortSignal, deps: D) => Promise<T>,
@@ -477,7 +636,10 @@ function createDependentResource<T, D>(
 ): ResourceState<T> {
   const data = signal<T | null>(options.initialValue ?? null);
   const loading = signal<boolean>(false);
+  const fetching = signal<boolean>(false);
   const error = signal<Error | null>(null);
+  const staleWhileRevalidate = options.staleWhileRevalidate === true;
+  let hasSettledValue = Object.prototype.hasOwnProperty.call(options, "initialValue");
 
   const refreshTick = signal<number>(0);
 
@@ -513,7 +675,7 @@ function createDependentResource<T, D>(
     if (!changed) {
       // Only resolve the waiter if no fetch is in flight.
       // (refresh forces changed=true, so this path only occurs on normal reruns)
-      if (!loading()) {
+      if (!fetching()) {
         if (waiter) {
           waiter.deferred.resolve();
           waiters.delete(id);
@@ -533,7 +695,8 @@ function createDependentResource<T, D>(
 
     const requestSignal = controller.signal;
 
-    loading.set(true);
+    fetching.set(true);
+    loading.set(!(staleWhileRevalidate && hasSettledValue));
     error.set(null);
 
     inFlight = (async () => {
@@ -544,6 +707,7 @@ function createDependentResource<T, D>(
         if (requestSignal.aborted) return;
 
         data.set(result);
+        hasSettledValue = true;
         options.onSuccess?.(result);
       } catch (err) {
         if (requestSignal.aborted) return;
@@ -552,7 +716,9 @@ function createDependentResource<T, D>(
         error.set(errorObj);
         options.onError?.(errorObj);
       } finally {
-        if (!requestSignal.aborted) {
+        if (lastRunController === controller) {
+          lastRunController = null;
+          fetching.set(false);
           loading.set(false);
         }
       }
@@ -574,6 +740,7 @@ function createDependentResource<T, D>(
       disposeDriver();
 
       loading.set(false);
+      fetching.set(false);
 
       for (const [, deferred] of waiters) {
         deferred.deferred.resolve();
@@ -608,7 +775,7 @@ function createDependentResource<T, D>(
    *   so the next driver run always fetches even if deps are unchanged.
    */
   async function refresh(opts: ResourceRefreshOptions = {}): Promise<void> {
-    if (loading() && !opts.force) {
+    if (fetching() && !opts.force) {
       await Promise.resolve();
       await (inFlight ?? Promise.resolve());
       return;
@@ -626,7 +793,23 @@ function createDependentResource<T, D>(
     await waiter;
   }
 
-  return { data, loading, error, refresh };
+  function cancel(): void {
+    lastRunController?.abort();
+    lastRunController = null;
+    loading.set(false);
+    fetching.set(false);
+  }
+
+  function setData(value: T | null): void {
+    data.set(value);
+    hasSettledValue = true;
+  }
+
+  function setError(value: Error | null): void {
+    error.set(value);
+  }
+
+  return { data, loading, fetching, error, refresh, cancel, setData, setError };
 }
 
 type ResolvedDeps<D> =
@@ -1029,6 +1212,32 @@ export function invalidateResourceTags(
   opts: { revalidate?: boolean; force?: boolean } = {}
 ): void {
   for (const t of tags) invalidateResourceTag(t, opts);
+}
+
+export function getResourceCacheData<T>(key: string): T | null | undefined {
+  const entry = resourceCache.get(key);
+  if (!entry) return undefined;
+  return entry.resource.data() as T | null;
+}
+
+export function setResourceCacheData<T>(key: string, value: T | null): boolean {
+  const entry = resourceCache.get(key);
+  if (!entry) return false;
+  entry.resource.setData(value);
+  entry.resource.setError(null);
+  entry.stale = false;
+  entry.createdAt = Date.now();
+  return true;
+}
+
+export function cancelResourceCache(key: string): void {
+  const entry = resourceCache.get(key);
+  if (!entry) return;
+  entry.resource.cancel();
+}
+
+export function getResourceCacheKeys(): string[] {
+  return Array.from(resourceCache.keys());
 }
 
 /**
