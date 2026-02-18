@@ -108,5 +108,7 @@ If created without a scope, call `fragment.dispose()` when removing from DOM.
 
 - Keyed diffing minimizes DOM changes.
 - Item scopes are disposed on removal, preventing effect leaks.
+- Removed-item detection now reuses keyed maps and removes stale entries directly, avoiding extra set materialization per update.
+- Index signals are only updated when an item's index actually changes.
 - Prefer one list per container instead of many small lists.
 - For very large datasets, prefer [Virtual Lists](./virtual.md).

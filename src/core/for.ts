@@ -10,6 +10,7 @@ interface KeyedItem<T> {
   end: Comment;
   scope: ReturnType<typeof createScope> | null;
   indexSignal: Signal<number>;
+  dirty?: boolean;
 }
 
 interface DisposableFragment extends DocumentFragment {
@@ -242,6 +243,8 @@ export function forEach<T>(
   };
 
   let hasValidatedOnce = false;
+  const reusableOldMap = new Map<string, KeyedItem<T>>();
+  const reusableSeenNextKeys = new Set<string>();
 
   const throwDuplicateKey = (key: string, scheduleFatal: boolean) => {
     const error = new Error(
@@ -309,45 +312,45 @@ export function forEach<T>(
     // Validate again on updates (will be caught by effect error handler)
     validateNoDuplicateKeys(newItems);
 
-    const oldMap = new Map<string, KeyedItem<T>>();
-    currentItems.forEach(item => oldMap.set(item.key, item));
+    reusableOldMap.clear();
+    currentItems.forEach(item => reusableOldMap.set(item.key, item));
 
     const nextItems: KeyedItem<T>[] = [];
-    const itemsToUpdate = new Set<string>();
-    const seenNextKeys = new Set<string>();
+    reusableSeenNextKeys.clear();
 
     // Phase 1: Build next list + detect updates/new
     newItems.forEach((item, index) => {
       const key = getKey(item, index);
 
-      if (seenNextKeys.has(key)) return; // prod-mode: ignore dup keys silently
-      seenNextKeys.add(key);
+      if (reusableSeenNextKeys.has(key)) return; // prod-mode: ignore dup keys silently
+      reusableSeenNextKeys.add(key);
 
-      const existing = oldMap.get(key);
+      const existing = reusableOldMap.get(key);
       if (existing) {
+        reusableOldMap.delete(key);
         if (existing.value !== item) {
-          itemsToUpdate.add(key);
           existing.value = item;
+          existing.dirty = true;
         }
         nextItems.push(existing);
       } else {
-        itemsToUpdate.add(key);
-        nextItems.push({
+        const created: KeyedItem<T> = {
           key,
           value: item,
           start: document.createComment(`for:${key}:start`),
           end: document.createComment(`for:${key}:end`),
           scope: null,
-          indexSignal: signal(index)
-        });
+          indexSignal: signal(index),
+          dirty: true,
+        };
+        nextItems.push(created);
       }
     });
 
     // Phase 2: Remove items no longer present
-    const nextKeys = new Set(nextItems.map(i => i.key));
-    currentItems.forEach(item => {
-      if (!nextKeys.has(item.key)) removeRange(item);
-    });
+    for (const staleItem of reusableOldMap.values()) {
+      removeRange(staleItem);
+    }
 
     // Phase 3: Move/insert items to correct positions
     const parent = end.parentNode;
@@ -365,35 +368,37 @@ export function forEach<T>(
           const referenceNode = nextSibling || end;
           moveRangeBefore(item.start, item.end, referenceNode);
         }
-
         cursor = item.end;
       });
     }
 
     // Phase 4: Dispose scopes and clear content for changed items
     nextItems.forEach(item => {
-      if (!itemsToUpdate.has(item.key)) return;
+      if (!item.dirty) return;
       disposeItemScope(item);
       clearBetween(item.start, item.end);
     });
 
-    // Phase 5: Update reactive indices for ALL items
+    // Phase 5: Update reactive indices only when index actually changes
     nextItems.forEach((item, index) => {
-      item.indexSignal.set(index);
+      if (item.indexSignal.peek() !== index) {
+        item.indexSignal.set(index);
+      }
     });
 
     // Phase 6: Render changed items
     nextItems.forEach(item => {
-      if (!itemsToUpdate.has(item.key)) return;
+      if (!item.dirty) return;
 
       item.scope = createScope();
-
       withScope(item.scope, () => {
         const indexGetter = () => item.indexSignal();
         const templateResult = template(item.value, indexGetter);
         const nodes = Array.isArray(templateResult) ? templateResult : [templateResult];
         item.end.before(...nodes);
       });
+
+      item.dirty = false;
     });
 
     currentItems = nextItems;

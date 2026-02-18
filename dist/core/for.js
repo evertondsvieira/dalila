@@ -178,6 +178,8 @@ export function forEach(items, template, keyFn) {
         }
     };
     let hasValidatedOnce = false;
+    const reusableOldMap = new Map();
+    const reusableSeenNextKeys = new Set();
     const throwDuplicateKey = (key, scheduleFatal) => {
         const error = new Error(`[Dalila] Duplicate key "${key}" detected in forEach. ` +
             `Keys must be unique within the same list. Check your keyFn implementation.`);
@@ -231,43 +233,42 @@ export function forEach(items, template, keyFn) {
         const newItems = items();
         // Validate again on updates (will be caught by effect error handler)
         validateNoDuplicateKeys(newItems);
-        const oldMap = new Map();
-        currentItems.forEach(item => oldMap.set(item.key, item));
+        reusableOldMap.clear();
+        currentItems.forEach(item => reusableOldMap.set(item.key, item));
         const nextItems = [];
-        const itemsToUpdate = new Set();
-        const seenNextKeys = new Set();
+        reusableSeenNextKeys.clear();
         // Phase 1: Build next list + detect updates/new
         newItems.forEach((item, index) => {
             const key = getKey(item, index);
-            if (seenNextKeys.has(key))
+            if (reusableSeenNextKeys.has(key))
                 return; // prod-mode: ignore dup keys silently
-            seenNextKeys.add(key);
-            const existing = oldMap.get(key);
+            reusableSeenNextKeys.add(key);
+            const existing = reusableOldMap.get(key);
             if (existing) {
+                reusableOldMap.delete(key);
                 if (existing.value !== item) {
-                    itemsToUpdate.add(key);
                     existing.value = item;
+                    existing.dirty = true;
                 }
                 nextItems.push(existing);
             }
             else {
-                itemsToUpdate.add(key);
-                nextItems.push({
+                const created = {
                     key,
                     value: item,
                     start: document.createComment(`for:${key}:start`),
                     end: document.createComment(`for:${key}:end`),
                     scope: null,
-                    indexSignal: signal(index)
-                });
+                    indexSignal: signal(index),
+                    dirty: true,
+                };
+                nextItems.push(created);
             }
         });
         // Phase 2: Remove items no longer present
-        const nextKeys = new Set(nextItems.map(i => i.key));
-        currentItems.forEach(item => {
-            if (!nextKeys.has(item.key))
-                removeRange(item);
-        });
+        for (const staleItem of reusableOldMap.values()) {
+            removeRange(staleItem);
+        }
         // Phase 3: Move/insert items to correct positions
         const parent = end.parentNode;
         if (parent) {
@@ -288,18 +289,20 @@ export function forEach(items, template, keyFn) {
         }
         // Phase 4: Dispose scopes and clear content for changed items
         nextItems.forEach(item => {
-            if (!itemsToUpdate.has(item.key))
+            if (!item.dirty)
                 return;
             disposeItemScope(item);
             clearBetween(item.start, item.end);
         });
-        // Phase 5: Update reactive indices for ALL items
+        // Phase 5: Update reactive indices only when index actually changes
         nextItems.forEach((item, index) => {
-            item.indexSignal.set(index);
+            if (item.indexSignal.peek() !== index) {
+                item.indexSignal.set(index);
+            }
         });
         // Phase 6: Render changed items
         nextItems.forEach(item => {
-            if (!itemsToUpdate.has(item.key))
+            if (!item.dirty)
                 return;
             item.scope = createScope();
             withScope(item.scope, () => {
@@ -308,6 +311,7 @@ export function forEach(items, template, keyFn) {
                 const nodes = Array.isArray(templateResult) ? templateResult : [templateResult];
                 item.end.before(...nodes);
             });
+            item.dirty = false;
         });
         currentItems = nextItems;
     };
