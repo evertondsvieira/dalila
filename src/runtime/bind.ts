@@ -170,7 +170,149 @@ function normalizeBinding(raw: string | null): string | null {
  * querySelectorAll that also tests the root element itself.
  * Necessary because querySelectorAll only searches descendants.
  */
+type BindScanPlan = {
+  root: Element;
+  elements: Element[];
+  attrIndex: Map<string, Element[]>;
+  tagIndex: Map<string, Element[]>;
+  selectorCache: Map<string, Element[]>;
+};
+
+let activeBindScanPlan: BindScanPlan | null = null;
+
+function createBindScanPlan(root: Element): BindScanPlan {
+  const boundary = root.closest('[data-dalila-internal-bound]');
+  const elements: Element[] = [];
+  const attrIndex = new Map<string, Element[]>();
+  const tagIndex = new Map<string, Element[]>();
+
+  const indexElement = (el: Element) => {
+    const tag = el.tagName.toLowerCase();
+    const byTag = tagIndex.get(tag);
+    if (byTag) byTag.push(el);
+    else tagIndex.set(tag, [el]);
+
+    for (const attr of Array.from(el.attributes)) {
+      const byAttr = attrIndex.get(attr.name);
+      if (byAttr) byAttr.push(el);
+      else attrIndex.set(attr.name, [el]);
+    }
+  };
+
+  if (root.matches('*')) {
+    const rootBoundary = root.closest('[data-dalila-internal-bound]');
+    if (rootBoundary === boundary) {
+      elements.push(root);
+      indexElement(root);
+    }
+  }
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  while (walker.nextNode()) {
+    const el = walker.currentNode as Element;
+    const nearestBound = el.closest('[data-dalila-internal-bound]');
+    if (nearestBound !== boundary) continue;
+    elements.push(el);
+    indexElement(el);
+  }
+
+  return {
+    root,
+    elements,
+    attrIndex,
+    tagIndex,
+    selectorCache: new Map(),
+  };
+}
+
+function mergeSelectorResults(plan: BindScanPlan, chunks: Element[][]): Element[] {
+  const hit = new Set<Element>();
+  for (const chunk of chunks) {
+    for (const el of chunk) hit.add(el);
+  }
+  return plan.elements.filter(el => hit.has(el));
+}
+
+function resolveSelectorFromIndex(plan: BindScanPlan, selector: string): Element[] | null {
+  const trimmed = selector.trim();
+  if (!trimmed) return [];
+
+  if (trimmed.includes(',')) {
+    const parts = trimmed
+      .split(',')
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    if (parts.length === 0) return [];
+
+    const chunks: Element[][] = [];
+    for (const part of parts) {
+      const partial = resolveSelectorFromIndex(plan, part);
+      if (partial === null) return null;
+      chunks.push(partial);
+    }
+    return mergeSelectorResults(plan, chunks);
+  }
+
+  if (trimmed === '*') return [...plan.elements];
+
+  const slotNameMatch = trimmed.match(/^slot\[name\]$/i);
+  if (slotNameMatch) {
+    const slotEls = plan.tagIndex.get('slot') ?? [];
+    return slotEls.filter(el => el.hasAttribute('name'));
+  }
+
+  const attrMatch = trimmed.match(/^\[([^\]=\s]+)\]$/);
+  if (attrMatch) {
+    const attrName = attrMatch[1];
+    const hit = new Set<Element>();
+    const out: Element[] = [];
+
+    for (const el of plan.attrIndex.get(attrName) ?? []) {
+      if (!el.hasAttribute(attrName) || hit.has(el)) continue;
+      hit.add(el);
+      out.push(el);
+    }
+
+    for (const el of plan.elements) {
+      if (!el.hasAttribute(attrName) || hit.has(el)) continue;
+      hit.add(el);
+      out.push(el);
+    }
+
+    return out;
+  }
+
+  const tagMatch = trimmed.match(/^[a-zA-Z][a-zA-Z0-9-]*$/);
+  if (tagMatch) {
+    return [...(plan.tagIndex.get(trimmed.toLowerCase()) ?? [])];
+  }
+
+  return null;
+}
+
+function qsaFromPlan(plan: BindScanPlan, selector: string): Element[] {
+  const cacheable = !selector.includes('[');
+  if (cacheable) {
+    const cached = plan.selectorCache.get(selector);
+    if (cached) {
+      return cached.filter(el => el === plan.root || plan.root.contains(el));
+    }
+  }
+
+  const indexed = resolveSelectorFromIndex(plan, selector);
+  const source = indexed ?? plan.elements.filter(el => el.matches(selector));
+  const matches = source.filter(el => el === plan.root || plan.root.contains(el));
+
+  if (cacheable) plan.selectorCache.set(selector, matches);
+  return matches;
+}
+
 function qsaIncludingRoot(root: Element, selector: string): Element[] {
+  if (activeBindScanPlan && activeBindScanPlan.root === root) {
+    return qsaFromPlan(activeBindScanPlan, selector);
+  }
+
   const out: Element[] = [];
   if (root.matches(selector)) out.push(root);
   out.push(...Array.from(root.querySelectorAll(selector)));
@@ -4815,74 +4957,81 @@ export function bind<T extends Record<string, unknown> = BindContext>(
   const cleanups: DisposeFunction[] = [];
   const refs = new Map<string, Element>();
   linkScopeToDom(templateScope, root, describeBindRoot(root));
+  const bindScanPlan = createBindScanPlan(root);
 
   // Run all bindings within the template scope
-  withScope(templateScope, () => {
-    // 1. Form setup — must run very early to register form instances
-    bindForm(root, ctx, cleanups);
+  const previousScanPlan = activeBindScanPlan;
+  try {
+    activeBindScanPlan = bindScanPlan;
+    withScope(templateScope, () => {
+      // 1. Form setup — must run very early to register form instances
+      bindForm(root, ctx, cleanups);
 
-    // 2. d-array — must run before d-each to setup field arrays
-    bindArray(root, ctx, cleanups);
+      // 2. d-array — must run before d-each to setup field arrays
+      bindArray(root, ctx, cleanups);
 
-    // 3. d-virtual-each — must run early for virtual template extraction
-    bindVirtualEach(root, ctx, cleanups);
+      // 3. d-virtual-each — must run early for virtual template extraction
+      bindVirtualEach(root, ctx, cleanups);
 
-    // 4. d-each — must run early: removes templates before TreeWalker visits them
-    bindEach(root, ctx, cleanups);
+      // 4. d-each — must run early: removes templates before TreeWalker visits them
+      bindEach(root, ctx, cleanups);
 
-    // 5. d-boundary — must run before child directive/component passes
-    // to avoid binding boundary children twice (original + cloned subtree).
-    bindBoundary(root, ctx, cleanups);
+      // 5. d-boundary — must run before child directive/component passes
+      // to avoid binding boundary children twice (original + cloned subtree).
+      bindBoundary(root, ctx, cleanups);
 
-    // 6. Components — must run after d-each but before d-ref / text interpolation
-    bindComponents(root, ctx, events, cleanups, onMountError);
+      // 6. Components — must run after d-each but before d-ref / text interpolation
+      bindComponents(root, ctx, events, cleanups, onMountError);
 
-    // 7. d-ref — collect element references (after d-each removes templates)
-    bindRef(root, refs);
+      // 7. d-ref — collect element references (after d-each removes templates)
+      bindRef(root, refs);
 
-    // 7.5. d-text — safe textContent binding (before text interpolation)
-    bindText(root, ctx, cleanups);
+      // 7.5. d-text — safe textContent binding (before text interpolation)
+      bindText(root, ctx, cleanups);
 
-    // 7. Text interpolation (template plan cache + lazy parser fallback)
-    bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
+      // 7. Text interpolation (template plan cache + lazy parser fallback)
+      bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
 
-    // 8. d-attr bindings
-    bindAttrs(root, ctx, cleanups);
+      // 8. d-attr bindings
+      bindAttrs(root, ctx, cleanups);
 
-    // 9. d-bind-* two-way bindings
-    bindTwoWay(root, ctx, cleanups);
+      // 9. d-bind-* two-way bindings
+      bindTwoWay(root, ctx, cleanups);
 
-    // 10. d-html bindings
-    bindHtml(root, ctx, cleanups);
+      // 10. d-html bindings
+      bindHtml(root, ctx, cleanups);
 
-    // 11. Form fields — register fields with form instances
-    bindField(root, ctx, cleanups);
+      // 11. Form fields — register fields with form instances
+      bindField(root, ctx, cleanups);
 
-    // 12. Event bindings
-    bindEvents(root, ctx, events, cleanups);
+      // 12. Event bindings
+      bindEvents(root, ctx, events, cleanups);
 
-    // 13. d-emit-* bindings (component template → parent)
-    bindEmit(root, ctx, cleanups);
+      // 13. d-emit-* bindings (component template → parent)
+      bindEmit(root, ctx, cleanups);
 
-    // 14. d-when directive
-    bindWhen(root, ctx, cleanups, transitionRegistry);
+      // 14. d-when directive
+      bindWhen(root, ctx, cleanups, transitionRegistry);
 
-    // 15. d-match directive
-    bindMatch(root, ctx, cleanups);
+      // 15. d-match directive
+      bindMatch(root, ctx, cleanups);
 
-    // 16. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
-    bindError(root, ctx, cleanups);
-    bindFormError(root, ctx, cleanups);
+      // 16. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
+      bindError(root, ctx, cleanups);
+      bindFormError(root, ctx, cleanups);
 
-    // 17. d-portal — move already-bound elements to external targets
-// d-lazy directive - loads component when it enters viewport
-    bindLazy(root, ctx, cleanups, refs, events);
+      // 17. d-portal — move already-bound elements to external targets
+      // d-lazy directive - loads component when it enters viewport
+      bindLazy(root, ctx, cleanups, refs, events);
 
-    bindPortal(root, ctx, cleanups);
+      bindPortal(root, ctx, cleanups);
 
-    // 18. d-if — must run last: elements are fully bound before conditional removal
-    bindIf(root, ctx, cleanups, transitionRegistry);
-  });
+      // 18. d-if — must run last: elements are fully bound before conditional removal
+      bindIf(root, ctx, cleanups, transitionRegistry);
+    });
+  } finally {
+    activeBindScanPlan = previousScanPlan;
+  }
 
   // Bindings complete: remove loading state and mark as ready.
   // Only the top-level bind owns this lifecycle — d-each clones skip it.

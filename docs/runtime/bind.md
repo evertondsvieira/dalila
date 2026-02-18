@@ -944,3 +944,11 @@ No special handling needed — the effect re-queries `[case]` children each time
 - [Scope](../core/scope.md) — lifecycle and automatic cleanup
 - [Template Spec](../template-spec.md) — full directive syntax reference
 - [FOUC Prevention](./fouc-prevention.md) — flash-of-tokens prevention
+
+## Runtime Performance Notes
+
+- `bind()` now builds an internal element scan plan with `TreeWalker` once per root bind call.
+- Subsequent directive passes reuse this plan instead of triggering repeated full `querySelectorAll` scans.
+- The scan plan now includes attribute/tag indexes (for selectors like `[d-if]`, `[d-on-click]`, `slot[name]`, and component tags), reducing per-directive filtering cost.
+- Selector results are cached per bind execution to reduce repeated selector matching cost.
+- The public API and directive semantics are unchanged.
