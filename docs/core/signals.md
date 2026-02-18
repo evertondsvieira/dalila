@@ -437,6 +437,8 @@ data.set(null);  // Error caught by handler instead of crashing
 2. **Effect subscription is O(1)** — Adding to a Set
 3. **Signal writes are O(n)** — n = number of subscribers (batched in microtask)
 4. **Computed reads are O(1) when cached** — Only recomputes when dirty
+5. **Effect scheduling is flag-based per effect** — avoids global pending sets in the hot path
+6. **Dependency subscription logic is centralized** — shared by signal and computed reads for lower runtime overhead and consistent behavior
 
 ```ts
 // For many rapid updates, use batch (see scheduler.md)

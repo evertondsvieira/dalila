@@ -44,16 +44,6 @@ let activeScope = null;
  * Per-tick dedupe for async effects.
  * Multiple writes in the same tick schedule an effect only once.
  */
-const pendingEffects = new Set();
-/**
- * Stable runner per effect (function identity).
- *
- * Why:
- * - when batching, we enqueue a function into the batch queue
- * - dedupe uses function identity
- * - each effect needs a stable runner function across schedules
- */
-const effectRunners = new WeakMap();
 /**
  * Schedule an effect with correct semantics:
  * - computed invalidations run synchronously (mark dirty immediately)
@@ -73,15 +63,12 @@ function scheduleEffect(eff) {
         }
         return;
     }
-    // Dedup before scheduling.
-    if (pendingEffects.has(eff))
+    if (eff.queued)
         return;
-    pendingEffects.add(eff);
-    // Create / reuse stable runner (so batch dedupe works correctly).
-    let runEffect = effectRunners.get(eff);
-    if (!runEffect) {
-        runEffect = () => {
-            pendingEffects.delete(eff);
+    eff.queued = true;
+    if (!eff.runner) {
+        eff.runner = () => {
+            eff.queued = false;
             if (eff.disposed)
                 return;
             try {
@@ -91,14 +78,27 @@ function scheduleEffect(eff) {
                 reportEffectError(error, 'effect');
             }
         };
-        effectRunners.set(eff, runEffect);
     }
     // During batch: defer scheduling into the batch queue (no microtask overhead).
     // Outside batch: schedule in a microtask (coalescing across multiple writes).
     if (isBatching())
-        queueInBatch(runEffect);
+        queueInBatch(eff.runner);
     else
-        scheduleMicrotask(runEffect);
+        scheduleMicrotask(eff.runner);
+}
+function trySubscribeActiveEffect(subscribers, signalRef) {
+    if (!activeEffect || activeEffect.disposed)
+        return;
+    if (activeScope) {
+        const current = getCurrentScope();
+        if (activeScope !== current)
+            return;
+    }
+    if (subscribers.has(activeEffect))
+        return;
+    subscribers.add(activeEffect);
+    (activeEffect.deps ?? (activeEffect.deps = new Set())).add(subscribers);
+    trackDependency(signalRef, activeEffect);
 }
 /**
  * Create a signal: a mutable value with automatic dependency tracking.
@@ -121,28 +121,7 @@ export function signal(initialValue) {
     let signalRef;
     const read = () => {
         trackSignalRead(signalRef);
-        if (activeEffect && !activeEffect.disposed) {
-            // Scope-aware subscription guard (best effort):
-            // - if the active effect is not scoped, allow subscription
-            // - if scoped, only subscribe when currently executing inside that scope
-            if (!activeScope) {
-                if (!subscribers.has(activeEffect)) {
-                    subscribers.add(activeEffect);
-                    (activeEffect.deps ?? (activeEffect.deps = new Set())).add(subscribers);
-                    trackDependency(signalRef, activeEffect);
-                }
-            }
-            else {
-                const current = getCurrentScope();
-                if (activeScope === current) {
-                    if (!subscribers.has(activeEffect)) {
-                        subscribers.add(activeEffect);
-                        (activeEffect.deps ?? (activeEffect.deps = new Set())).add(subscribers);
-                        trackDependency(signalRef, activeEffect);
-                    }
-                }
-            }
-        }
+        trySubscribeActiveEffect(subscribers, signalRef);
         return value;
     };
     const notify = () => {
@@ -223,7 +202,7 @@ export function effect(fn) {
             return;
         run.disposed = true;
         cleanupDeps();
-        pendingEffects.delete(run);
+        run.queued = false;
         trackEffectDispose(run);
     };
     const run = (() => {
@@ -302,25 +281,7 @@ export function computed(fn) {
     const read = () => {
         trackSignalRead(signalRef);
         // Allow effects to subscribe to this computed (same rules as signal()).
-        if (activeEffect && !activeEffect.disposed) {
-            if (!activeScope) {
-                if (!subscribers.has(activeEffect)) {
-                    subscribers.add(activeEffect);
-                    (activeEffect.deps ?? (activeEffect.deps = new Set())).add(subscribers);
-                    trackDependency(signalRef, activeEffect);
-                }
-            }
-            else {
-                const current = getCurrentScope();
-                if (activeScope === current) {
-                    if (!subscribers.has(activeEffect)) {
-                        subscribers.add(activeEffect);
-                        (activeEffect.deps ?? (activeEffect.deps = new Set())).add(subscribers);
-                        trackDependency(signalRef, activeEffect);
-                    }
-                }
-            }
-        }
+        trySubscribeActiveEffect(subscribers, signalRef);
         if (dirty) {
             cleanupDeps();
             const prevEffect = activeEffect;
@@ -426,7 +387,7 @@ export function effectAsync(fn) {
         controller?.abort();
         controller = null;
         cleanupDeps();
-        pendingEffects.delete(run);
+        run.queued = false;
         trackEffectDispose(run);
     };
     const run = (() => {
