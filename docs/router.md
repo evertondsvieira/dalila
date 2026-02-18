@@ -514,3 +514,11 @@ router.start();
 4. Configure `preloadCacheSize` for memory-constrained apps
 5. Use `createTypedNavigate` for compile-time route safety
 6. Maximum of 10 consecutive redirects before the router stops
+
+## Matching Performance Notes
+
+- Route matching uses compiled route tables and regex precompilation from `compileRoutes`.
+- Internal stack handling in matcher traversal is optimized to reduce per-navigation array allocations.
+- Matcher candidate selection is pre-filtered by first static route segment with a per-level cache, reducing regex attempts in large route trees.
+- Router location parsing uses a fast path for same-origin absolute paths (string parsing before URL fallback), reducing navigation overhead in common SPA transitions.
+- The matching result shape (`{ stack, exact }`) and routing semantics remain unchanged.

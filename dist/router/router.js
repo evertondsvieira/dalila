@@ -148,17 +148,42 @@ export function createRouter(config) {
     function applyBase(fullPath) {
         if (!basePrefix)
             return fullPath;
-        const url = new URL(fullPath, window.location.origin);
-        const pathname = url.pathname === '/' ? basePrefix : normalizePath(`${basePrefix}${url.pathname}`);
-        return `${pathname}${url.search}${url.hash}`;
+        const location = parseLocation(fullPath);
+        const pathname = location.pathname === '/' ? basePrefix : normalizePath(`${basePrefix}${location.pathname}`);
+        return `${pathname}${location.queryString ? `?${location.queryString}` : ''}${location.hash ? `#${location.hash}` : ''}`;
+    }
+    function parseRelativePath(to) {
+        let rest = to;
+        let hash = '';
+        const hashIdx = rest.indexOf('#');
+        if (hashIdx >= 0) {
+            hash = rest.slice(hashIdx + 1);
+            rest = rest.slice(0, hashIdx);
+        }
+        let queryString = '';
+        const queryIdx = rest.indexOf('?');
+        if (queryIdx >= 0) {
+            queryString = rest.slice(queryIdx + 1);
+            rest = rest.slice(0, queryIdx);
+        }
+        const pathname = stripBase(rest || '/');
+        const fullPath = `${pathname}${queryString ? `?${queryString}` : ''}${hash ? `#${hash}` : ''}`;
+        return { pathname, queryString, hash, fullPath };
+    }
+    function getLocationQuery(location) {
+        if (!location.query) {
+            location.query = new URLSearchParams(location.queryString);
+        }
+        return location.query;
     }
     function parseLocation(to) {
+        // Fast path for most app navigations (absolute pathname within same origin).
+        if (to.startsWith('/')) {
+            return parseRelativePath(to);
+        }
+        // Fallback for relative paths and absolute URLs.
         const url = new URL(to, window.location.href);
-        const pathname = stripBase(url.pathname);
-        const query = new URLSearchParams(url.search);
-        const hash = url.hash ? url.hash.slice(1) : '';
-        const fullPath = `${pathname}${url.search}${hash ? `#${hash}` : ''}`;
-        return { pathname, query, hash, fullPath };
+        return parseRelativePath(`${url.pathname}${url.search}${url.hash}`);
     }
     function joinRoutePaths(parent, child) {
         if (!child || child === '.')
@@ -194,7 +219,7 @@ export function createRouter(config) {
             path: location.pathname,
             fullPath: location.fullPath,
             params: match.params,
-            queryString: location.query.toString(),
+            queryString: location.queryString,
             hash: location.hash
         });
     }
@@ -223,7 +248,7 @@ export function createRouter(config) {
     }
     function resolvePreloadKey(match, location) {
         const routeId = resolvePreloadRouteId(match);
-        const search = location.query.toString();
+        const search = location.queryString;
         const urlKey = search ? `${location.pathname}?${search}` : location.pathname;
         return `${routeId}::${match.path}::${urlKey}`;
     }
@@ -495,7 +520,7 @@ export function createRouter(config) {
             routePath: match.path,
             routeId: manifest?.id,
             params: { ...match.params },
-            queryString: location.query.toString(),
+            queryString: location.queryString,
             tags: resolveMatchTags(match),
             score: resolveMatchScore(match)
         };
@@ -656,7 +681,7 @@ export function createRouter(config) {
                 path: location.pathname,
                 fullPath: location.fullPath,
                 params: {},
-                queryString: location.query.toString(),
+                queryString: location.queryString,
                 hash: location.hash
             });
         statusSignal.set({ state: 'loading', to: toState });
@@ -941,7 +966,7 @@ export function createRouter(config) {
         // Validate all matches first, then load data in parallel
         let dataStack;
         try {
-            const queryValues = createRouteQueryValues(location.query);
+            const queryValues = createRouteQueryValues(getLocationQuery(location));
             // Phase 1: Validate (sequential -- fail fast on first error)
             for (const match of matchStack) {
                 const paramsValues = createRouteParamsValues(match.params);
@@ -1394,7 +1419,7 @@ export function createRouter(config) {
                 }
             }
         }
-        const queryValues = createRouteQueryValues(location.query);
+        const queryValues = createRouteQueryValues(getLocationQuery(location));
         const pending = [];
         for (const match of stack) {
             const preloadFn = match.route.preload ?? match.route.loader;

@@ -121,6 +121,11 @@ export interface RouteStackResult {
 export interface CompiledRoute {
     route: RouteTable;
     fullPath: string;
+    normalizedFullPath: string;
+    /** Static first segment of fullPath (null for dynamic/wildcard/root-first paths). */
+    firstStaticSegment: string | null;
+    staticExactPath: string | null;
+    staticPrefixPath: string | null;
     exactPattern: RegExp;
     /** null means root "/" which always matches as prefix */
     prefixPattern: RegExp | null;

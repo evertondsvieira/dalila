@@ -156,6 +156,11 @@ export interface RouteStackResult {
 export interface CompiledRoute {
   route: RouteTable;
   fullPath: string;
+  normalizedFullPath: string;
+  /** Static first segment of fullPath (null for dynamic/wildcard/root-first paths). */
+  firstStaticSegment: string | null;
+  staticExactPath: string | null;
+  staticPrefixPath: string | null;
   exactPattern: RegExp;
   /** null means root "/" which always matches as prefix */
   prefixPattern: RegExp | null;
@@ -254,6 +259,53 @@ interface DynamicSegment {
 interface ParamCapture {
   name: string;
   isCatchAll: boolean;
+}
+
+interface RouteLevelIndex {
+  staticByFirstSegment: Map<string, CompiledRoute[]>;
+  genericRoutes: CompiledRoute[];
+  staticParentRoutesWithChildren: CompiledRoute[];
+}
+
+const routeLevelIndexCache = new WeakMap<CompiledRoute[], RouteLevelIndex>();
+
+function resolveFirstStaticSegment(path: string): string | null {
+  const normalized = normalizePath(path);
+  const segments = normalized.split('/').filter(Boolean);
+  const first = segments[0];
+  if (!first) return null;
+  if (first.startsWith(':') || first.includes('*')) return null;
+  return first;
+}
+
+function isFullyStaticPath(path: string): boolean {
+  const normalized = normalizePath(path);
+  const segments = normalized.split('/').filter(Boolean);
+  for (const segment of segments) {
+    if (segment.startsWith(':') || segment.includes('*')) return false;
+  }
+  return true;
+}
+
+function buildRouteLevelIndex(compiled: CompiledRoute[]): RouteLevelIndex {
+  const staticByFirstSegment = new Map<string, CompiledRoute[]>();
+  const genericRoutes: CompiledRoute[] = [];
+  const staticParentRoutesWithChildren: CompiledRoute[] = [];
+
+  for (const entry of compiled) {
+    if (entry.firstStaticSegment) {
+      const bucket = staticByFirstSegment.get(entry.firstStaticSegment);
+      if (bucket) bucket.push(entry);
+      else staticByFirstSegment.set(entry.firstStaticSegment, [entry]);
+      if (entry.children.length > 0) {
+        staticParentRoutesWithChildren.push(entry);
+      }
+      continue;
+    }
+    genericRoutes.push(entry);
+  }
+
+  return { staticByFirstSegment, genericRoutes, staticParentRoutesWithChildren };
 }
 
 function parseDynamicSegment(segment: string): DynamicSegment | null {
@@ -370,6 +422,7 @@ export function compileRoutes(routes: RouteTable[], parentPath = ''): CompiledRo
   return sortRoutes(routes).map(route => {
     const fullPath = joinPaths(parentPath, route.path);
     const normalizedFull = normalizePath(fullPath);
+    const staticPath = isFullyStaticPath(fullPath);
     const exact = parsePath(fullPath);
     const prefix = normalizedFull === '/'
       ? null
@@ -378,6 +431,10 @@ export function compileRoutes(routes: RouteTable[], parentPath = ''): CompiledRo
     return {
       route,
       fullPath,
+      normalizedFullPath: normalizedFull,
+      firstStaticSegment: resolveFirstStaticSegment(fullPath),
+      staticExactPath: staticPath ? normalizedFull : null,
+      staticPrefixPath: staticPath && normalizedFull !== '/' ? normalizedFull : null,
       exactPattern: exact.pattern,
       prefixPattern: prefix?.pattern ?? null,
       paramCaptures: exact.paramCaptures,
@@ -390,6 +447,9 @@ export function compileRoutes(routes: RouteTable[], parentPath = ''): CompiledRo
 
 /** Test a pathname against a compiled route's exact pattern. */
 function matchCompiled(pathname: string, compiled: CompiledRoute): Record<string, RouteParamValue> | null {
+  if (compiled.staticExactPath !== null) {
+    return pathname === compiled.staticExactPath ? {} : null;
+  }
   const match = pathname.match(compiled.exactPattern);
   if (!match) return null;
   return extractParams(match, compiled.paramCaptures);
@@ -398,6 +458,12 @@ function matchCompiled(pathname: string, compiled: CompiledRoute): Record<string
 /** Test a pathname against a compiled route's prefix pattern (for parent/layout matching). */
 function matchCompiledPrefix(pathname: string, compiled: CompiledRoute): Record<string, RouteParamValue> | null {
   if (!compiled.prefixPattern) return {};
+  if (compiled.staticPrefixPath !== null) {
+    if (pathname === compiled.staticPrefixPath || pathname.startsWith(`${compiled.staticPrefixPath}/`)) {
+      return {};
+    }
+    return null;
+  }
   const match = pathname.match(compiled.prefixPattern);
   if (!match) return null;
   return extractParams(match, compiled.paramCaptures);
@@ -415,17 +481,25 @@ export function findCompiledRouteStackResult(
   stack: RouteTableMatch[] = []
 ): RouteStackResult | null {
   const normalizedPathname = normalizePath(pathname);
-  return findCompiledRouteStackResultNormalized(normalizedPathname, compiled, stack);
+  const firstPathSegment = normalizedPathname.split('/').filter(Boolean)[0] ?? '';
+  return findCompiledRouteStackResultNormalized(normalizedPathname, firstPathSegment, compiled, stack);
 }
 
 function findCompiledRouteStackResultNormalized(
   pathname: string,
+  firstPathSegment: string,
   compiled: CompiledRoute[],
   stack: RouteTableMatch[]
 ): RouteStackResult | null {
+  let levelIndex = routeLevelIndexCache.get(compiled);
+  if (!levelIndex) {
+    levelIndex = buildRouteLevelIndex(compiled);
+    routeLevelIndexCache.set(compiled, levelIndex);
+  }
+
   let bestPartial: RouteTableMatch[] | null = null;
 
-  for (const entry of compiled) {
+  const tryCandidate = (entry: CompiledRoute): RouteStackResult | null => {
     const exactParams = matchCompiled(pathname, entry);
     const prefixParams = !exactParams && (entry.route.children || entry.route.layout)
       ? matchCompiledPrefix(pathname, entry)
@@ -439,12 +513,15 @@ function findCompiledRouteStackResultNormalized(
         path: entry.fullPath,
         params
       };
-      const newStack = [...stack, match];
+      stack.push(match);
 
       if (entry.children.length > 0) {
-        const childResult = findCompiledRouteStackResultNormalized(pathname, entry.children, newStack);
+        const childResult = findCompiledRouteStackResultNormalized(pathname, firstPathSegment, entry.children, stack);
         if (childResult) {
-          if (childResult.exact) return childResult;
+          if (childResult.exact) {
+            stack.pop();
+            return childResult;
+          }
           if (!bestPartial || childResult.stack.length > bestPartial.length) {
             bestPartial = childResult.stack;
           }
@@ -452,17 +529,20 @@ function findCompiledRouteStackResultNormalized(
       }
 
       if (isExact && (entry.route.view || entry.route.redirect)) {
-        return { stack: newStack, exact: true };
+        const exactStack = stack.slice();
+        stack.pop();
+        return { stack: exactStack, exact: true };
       }
 
       if (!isExact && (entry.route.layout || entry.route.children)) {
-        if (!bestPartial || newStack.length > bestPartial.length) {
-          bestPartial = newStack;
+        if (!bestPartial || stack.length > bestPartial.length) {
+          bestPartial = stack.slice();
         }
       }
+      stack.pop();
     } else if (entry.children.length > 0) {
       // Parent didn't match but children may have absolute-like paths
-      const childResult = findCompiledRouteStackResultNormalized(pathname, entry.children, stack);
+      const childResult = findCompiledRouteStackResultNormalized(pathname, firstPathSegment, entry.children, stack);
       if (childResult) {
         if (childResult.exact) return childResult;
         if (!bestPartial || childResult.stack.length > bestPartial.length) {
@@ -470,6 +550,28 @@ function findCompiledRouteStackResultNormalized(
         }
       }
     }
+    return null;
+  };
+
+  const specific = levelIndex.staticByFirstSegment.get(firstPathSegment);
+  if (specific) {
+    for (const entry of specific) {
+      const exact = tryCandidate(entry);
+      if (exact) return exact;
+    }
+  }
+
+  for (const entry of levelIndex.genericRoutes) {
+    const exact = tryCandidate(entry);
+    if (exact) return exact;
+  }
+
+  // Preserve support for absolute-like child paths under static parents.
+  // Example: parent "/admin" with child "/login" must still resolve "/login".
+  for (const entry of levelIndex.staticParentRoutesWithChildren) {
+    if (entry.firstStaticSegment === firstPathSegment) continue;
+    const exact = tryCandidate(entry);
+    if (exact) return exact;
   }
 
   return bestPartial ? { stack: bestPartial, exact: false } : null;
