@@ -10,5 +10,5 @@ export * from "./key.js";
 export * from "./resource.js";
 export * from "./query.js";
 export * from "./mutation.js";
-export { batch, measure, mutate, configureScheduler, getSchedulerConfig } from "./scheduler.js";
+export { batch, measure, mutate, timeSlice, configureScheduler, getSchedulerConfig } from "./scheduler.js";
 export { persist, createJSONStorage, clearPersisted, createPreloadScript, createThemeScript } from "./persist.js";

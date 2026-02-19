@@ -22,6 +22,22 @@
 
 type Task = () => void;
 
+export interface TimeSliceOptions {
+  /** Time budget per slice in milliseconds. Default: 8 */
+  budgetMs?: number;
+  /** Optional abort signal to cancel a running cooperative task. */
+  signal?: AbortSignal;
+}
+
+export interface TimeSliceContext {
+  /** Returns true when the current slice exceeded its budget or was aborted. */
+  shouldYield(): boolean;
+  /** Yields to the event loop and starts a fresh slice budget. */
+  yield(): Promise<void>;
+  /** Abort signal passed through from options for convenience. */
+  signal: AbortSignal | null;
+}
+
 /**
  * Scheduler configuration.
  */
@@ -80,6 +96,21 @@ const rafImpl: (cb: () => void) => void =
   typeof globalThis !== 'undefined' && typeof globalThis.requestAnimationFrame === 'function'
     ? (cb) => globalThis.requestAnimationFrame(() => cb())
     : (cb) => setTimeout(cb, 0);
+
+const nowImpl: () => number =
+  typeof globalThis !== 'undefined' && typeof globalThis.performance?.now === 'function'
+    ? () => globalThis.performance.now()
+    : () => Date.now();
+
+function createAbortError(): Error {
+  const err = new Error('The operation was aborted.');
+  err.name = 'AbortError';
+  return err;
+}
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw createAbortError();
+}
 
 /**
  * Batching state.
@@ -285,4 +316,57 @@ export function measure<T>(fn: () => T): T {
  */
 export function mutate(fn: () => void): void {
   scheduleMicrotask(fn);
+}
+
+/**
+ * Run cooperative work in slices to keep the event loop responsive.
+ *
+ * Usage pattern:
+ * - loop your heavy work
+ * - call `ctx.shouldYield()` inside the loop
+ * - `await ctx.yield()` when it returns true
+ *
+ * Example:
+ * ```ts
+ * await timeSlice(async (ctx) => {
+ *   while (hasMore()) {
+ *     processNext();
+ *     if (ctx.shouldYield()) await ctx.yield();
+ *   }
+ * }, { budgetMs: 8, signal });
+ * ```
+ */
+export async function timeSlice<T>(
+  fn: (ctx: TimeSliceContext) => T | Promise<T>,
+  options: TimeSliceOptions = {}
+): Promise<T> {
+  const budgetMs = options.budgetMs ?? 8;
+  if (!Number.isFinite(budgetMs) || budgetMs < 0) {
+    throw new Error('timeSlice: budgetMs must be a non-negative finite number.');
+  }
+
+  const signal = options.signal;
+  let deadline = nowImpl() + budgetMs;
+
+  const resetDeadline = () => {
+    deadline = nowImpl() + budgetMs;
+  };
+
+  const ctx: TimeSliceContext = {
+    shouldYield() {
+      return Boolean(signal?.aborted) || nowImpl() >= deadline;
+    },
+    async yield() {
+      assertNotAborted(signal);
+      await new Promise<void>((resolve) => rafImpl(resolve));
+      assertNotAborted(signal);
+      resetDeadline();
+    },
+    signal: signal ?? null,
+  };
+
+  assertNotAborted(signal);
+  const result = await fn(ctx);
+  assertNotAborted(signal);
+  return result;
 }

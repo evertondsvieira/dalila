@@ -20,6 +20,20 @@
  * - Flushes always drain with `splice(0)` to release references eagerly.
  */
 type Task = () => void;
+export interface TimeSliceOptions {
+    /** Time budget per slice in milliseconds. Default: 8 */
+    budgetMs?: number;
+    /** Optional abort signal to cancel a running cooperative task. */
+    signal?: AbortSignal;
+}
+export interface TimeSliceContext {
+    /** Returns true when the current slice exceeded its budget or was aborted. */
+    shouldYield(): boolean;
+    /** Yields to the event loop and starts a fresh slice budget. */
+    yield(): Promise<void>;
+    /** Abort signal passed through from options for convenience. */
+    signal: AbortSignal | null;
+}
 /**
  * Scheduler configuration.
  */
@@ -108,4 +122,23 @@ export declare function measure<T>(fn: () => T): T;
  * If you want stricter "writes only on RAF", you can swap this to `schedule(fn)`.
  */
 export declare function mutate(fn: () => void): void;
+/**
+ * Run cooperative work in slices to keep the event loop responsive.
+ *
+ * Usage pattern:
+ * - loop your heavy work
+ * - call `ctx.shouldYield()` inside the loop
+ * - `await ctx.yield()` when it returns true
+ *
+ * Example:
+ * ```ts
+ * await timeSlice(async (ctx) => {
+ *   while (hasMore()) {
+ *     processNext();
+ *     if (ctx.shouldYield()) await ctx.yield();
+ *   }
+ * }, { budgetMs: 8, signal });
+ * ```
+ */
+export declare function timeSlice<T>(fn: (ctx: TimeSliceContext) => T | Promise<T>, options?: TimeSliceOptions): Promise<T>;
 export {};

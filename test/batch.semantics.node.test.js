@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { signal, effect } from "../dist/core/signal.js";
-import { batch } from "../dist/core/scheduler.js";
+import { batch, timeSlice } from "../dist/core/scheduler.js";
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 const flush = () => Promise.resolve();
@@ -139,4 +139,49 @@ test("batch(): multiple signals coalesce correctly", async () => {
   // Effect should run once with final values
   assert.equal(effectRuns, runsBeforeBatch + 1, "effect should run once after batch");
   assert.equal(sum, 300, "effect should see final sum 100 + 200");
+});
+
+test("timeSlice(): processes heavy work cooperatively across slices", async () => {
+  let processed = 0;
+  let timerFired = false;
+  const target = 300;
+
+  setTimeout(() => {
+    timerFired = true;
+  }, 0);
+
+  await timeSlice(async (ctx) => {
+    while (processed < target) {
+      processed++;
+      if (ctx.shouldYield()) await ctx.yield();
+    }
+  }, { budgetMs: 0 });
+
+  assert.equal(processed, target, "should complete all work");
+  assert.equal(timerFired, true, "should yield enough for queued timers to run");
+});
+
+test("timeSlice(): aborts cooperative execution via AbortSignal", async () => {
+  const controller = new AbortController();
+  let processed = 0;
+
+  const run = timeSlice(async (ctx) => {
+    while (true) {
+      processed++;
+      if (processed === 10) controller.abort();
+      if (ctx.shouldYield()) await ctx.yield();
+    }
+  }, { budgetMs: 0, signal: controller.signal });
+
+  await assert.rejects(run, (error) => {
+    assert.equal(error?.name, "AbortError");
+    return true;
+  });
+});
+
+test("timeSlice(): rejects invalid budget values", async () => {
+  await assert.rejects(
+    () => timeSlice(async () => {}, { budgetMs: -1 }),
+    /budgetMs must be a non-negative finite number/
+  );
 });

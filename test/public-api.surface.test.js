@@ -19,6 +19,7 @@ test("core public surface keeps lifecycle helper aliases", () => {
   assert.equal(typeof core.readonly, "function");
   assert.equal(typeof core.debounceSignal, "function");
   assert.equal(typeof core.throttleSignal, "function");
+  assert.equal(typeof core.timeSlice, "function");
 });
 
 test("form public surface does not expose WRAPPED_HANDLER", () => {

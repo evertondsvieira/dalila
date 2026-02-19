@@ -17,6 +17,10 @@ function scheduleMicrotask(task: () => void): void
 function batch(fn: () => void): void
 function queueInBatch(task: () => void): void
 function isBatching(): boolean
+function timeSlice<T>(
+  fn: (ctx: { shouldYield(): boolean; yield(): Promise<void>; signal: AbortSignal | null }) => T | Promise<T>,
+  options?: { budgetMs?: number; signal?: AbortSignal }
+): Promise<T>
 function configureScheduler(config: Partial<{ maxMicrotaskIterations: number; maxRafIterations: number }>): void
 function getSchedulerConfig(): Readonly<{ maxMicrotaskIterations: number; maxRafIterations: number }>
 function measure<T>(fn: () => T): T
@@ -27,6 +31,7 @@ Notes:
 - `schedule()` groups work into the next animation frame.
 - `scheduleMicrotask()` runs before the next frame.
 - `queueInBatch()` is mainly for internal coalescing; most apps only need `batch()`.
+- `timeSlice()` lets long loops cooperatively yield to keep UI/event loop responsive.
 
 ## batch
 
@@ -57,6 +62,44 @@ mutate(() => {
 Behavior:
 - `measure()` is currently a no-op wrapper (documents intent for reads).
 - `mutate()` schedules the write in a microtask to avoid interleaving with sync reads.
+
+## timeSlice
+
+Use `timeSlice` for heavy loops that should periodically yield.
+
+```ts
+import { timeSlice } from "dalila";
+
+await timeSlice(async (ctx) => {
+  while (hasMoreItems()) {
+    processNextItem();
+    if (ctx.shouldYield()) await ctx.yield();
+  }
+}, { budgetMs: 8 });
+```
+
+Options:
+- `budgetMs` (default `8`): max time budget per cooperative slice.
+- `signal`: optional `AbortSignal` to cancel in-progress work.
+
+Cancellation:
+
+```ts
+const controller = new AbortController();
+
+const job = timeSlice(async (ctx) => {
+  while (hasMoreItems()) {
+    processNextItem();
+    if (ctx.shouldYield()) await ctx.yield();
+  }
+}, { signal: controller.signal });
+
+controller.abort();
+await job; // rejects with AbortError
+```
+
+Validation:
+- `budgetMs` must be a finite non-negative number.
 
 ## Comparison: Direct vs Batched Updates
 
