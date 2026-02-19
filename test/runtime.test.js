@@ -37,7 +37,7 @@ globalThis.document = {
 };
 
 // Import compiled modules
-import { signal, effect, computed, effectAsync } from '../dist/core/signal.js';
+import { signal, effect, computed, effectAsync, debounceSignal, throttleSignal } from '../dist/core/signal.js';
 import { batch, isBatching } from '../dist/core/scheduler.js';
 import { createScope, withScope, getCurrentScope } from '../dist/core/scope.js';
 
@@ -453,4 +453,99 @@ test('Edge case - computed read multiple times after invalidation returns cached
   assert.equal(val1, 4);
   assert.equal(val2, 4);
   assert.equal(val3, 4);
+});
+
+test('debounceSignal - trailing mode emits only the latest value after wait', async () => {
+  const source = signal(0);
+  const debounced = debounceSignal(source, 25);
+  const seen = [];
+
+  effect(() => {
+    seen.push(debounced());
+  });
+
+  await tick(10);
+  seen.length = 0;
+
+  source.set(1);
+  await tick(15);
+  source.set(2);
+  source.set(3);
+
+  await tick(10);
+  assert.deepEqual(seen, [], 'should not emit before debounce wait');
+
+  await tick(30);
+  assert.deepEqual(seen, [3], 'should emit only final value');
+});
+
+test('debounceSignal - leading+trailing emits first and last values in burst', async () => {
+  const source = signal(0);
+  const debounced = debounceSignal(source, 25, { leading: true, trailing: true });
+  const seen = [];
+
+  effect(() => {
+    seen.push(debounced());
+  });
+
+  await tick(10);
+  seen.length = 0;
+
+  source.set(1);
+  await tick(15);
+  source.set(2);
+
+  await tick(5);
+  assert.deepEqual(seen, [1], 'should emit leading value immediately');
+
+  await tick(30);
+  assert.deepEqual(seen, [1, 2], 'should emit trailing value after wait');
+});
+
+test('throttleSignal - default mode emits at most once per window with trailing latest', async () => {
+  const source = signal(0);
+  const throttled = throttleSignal(source, 25);
+  const seen = [];
+
+  effect(() => {
+    seen.push(throttled());
+  });
+
+  await tick(10);
+  seen.length = 0;
+
+  source.set(1);
+  await tick(1);
+  source.set(2);
+  source.set(3);
+
+  await tick(5);
+  assert.deepEqual(seen, [1], 'should emit leading value immediately');
+
+  await tick(30);
+  assert.deepEqual(seen, [1, 3], 'should emit latest trailing value at end of window');
+});
+
+test('debounceSignal/throttleSignal - timers and effects are cleaned up on scope dispose', async () => {
+  const scope = createScope();
+  const source = signal(0);
+  let debounced;
+  let throttled;
+
+  withScope(scope, () => {
+    debounced = debounceSignal(source, 25);
+    throttled = throttleSignal(source, 25);
+  });
+
+  source.set(1);
+  scope.dispose();
+
+  await tick(35);
+  assert.equal(debounced(), 0, 'debounced should not flush pending timer after dispose');
+  assert.equal(throttled(), 0, 'throttled should not flush pending timer after dispose');
+
+  source.set(2);
+  await tick(35);
+  assert.equal(debounced(), 0, 'debounced should stop reacting after dispose');
+  assert.equal(throttled(), 0, 'throttled should stop reacting after dispose');
 });

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createScope, withScope } from "../dist/core/scope.js";
-import { signal, effect, computed, setEffectErrorHandler } from "../dist/core/signal.js";
+import { signal, effect, computed, readonly, setEffectErrorHandler } from "../dist/core/signal.js";
 import { key, setKeyDevMode } from "../dist/core/key.js";
 import { createQueryClient } from "../dist/core/query.js";
 import { clearResourceCache, configureResourceCache, createResource } from "../dist/core/resource.js";
@@ -77,6 +77,38 @@ test("computed with dynamic dependencies recalculates correctly", async () => {
   // Changing b should affect result
   b.set("B2");
   assert.equal(result(), "B2");
+});
+
+test("readonly signal mirrors reads/subscriptions and blocks mutation", async () => {
+  const base = signal(1);
+  const ro = readonly(base);
+  const seen = [];
+
+  const off = ro.on((value) => {
+    seen.push(value);
+  });
+
+  assert.equal(ro(), 1);
+  assert.equal(ro.peek(), 1);
+
+  base.set(2);
+  base.update((v) => v + 1);
+  await flush();
+
+  assert.deepEqual(seen, [3]);
+  assert.equal(ro(), 3);
+  assert.equal(ro.peek(), 3);
+
+  off();
+
+  assert.throws(
+    () => ro.set(10),
+    /Cannot mutate a readonly signal/
+  );
+  assert.throws(
+    () => ro.update((v) => v + 1),
+    /Cannot mutate a readonly signal/
+  );
 });
 
 // EFFECT ERROR HANDLING TESTS

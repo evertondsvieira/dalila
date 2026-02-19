@@ -173,6 +173,166 @@ export function signal(initialValue) {
     return read;
 }
 /**
+ * Create a read-only view over a signal.
+ *
+ * Type-level:
+ * - hides `set` and `update` from the public contract
+ *
+ * Runtime:
+ * - defensive guards throw if mutating methods are accessed via casts
+ */
+export function readonly(source) {
+    const read = (() => source());
+    read.peek = () => source.peek();
+    read.on = (callback) => source.on(callback);
+    const throwReadonlyMutationError = () => {
+        throw new Error('Cannot mutate a readonly signal.');
+    };
+    // Runtime guard against trivial casts to mutable signal-like shape.
+    Object.defineProperty(read, 'set', {
+        value: throwReadonlyMutationError,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+    });
+    Object.defineProperty(read, 'update', {
+        value: throwReadonlyMutationError,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+    });
+    return read;
+}
+function assertTimingOptions(waitMs, leading, trailing, kind) {
+    if (!Number.isFinite(waitMs) || waitMs < 0) {
+        throw new Error(`${kind}: waitMs must be a non-negative finite number.`);
+    }
+    if (!leading && !trailing) {
+        throw new Error(`${kind}: at least one of { leading, trailing } must be true.`);
+    }
+}
+/**
+ * Create a debounced read-only signal derived from a source signal.
+ *
+ * Default semantics:
+ * - leading: false
+ * - trailing: true
+ */
+export function debounceSignal(source, waitMs, options = {}) {
+    const leading = options.leading ?? false;
+    const trailing = options.trailing ?? true;
+    assertTimingOptions(waitMs, leading, trailing, 'debounceSignal');
+    const out = signal(source.peek());
+    let timer = null;
+    let pending = false;
+    let latest = out.peek();
+    let lastSourceValue = latest;
+    const clearTimer = () => {
+        if (!timer)
+            return;
+        clearTimeout(timer);
+        timer = null;
+    };
+    const startTimer = () => {
+        clearTimer();
+        timer = setTimeout(() => {
+            timer = null;
+            if (trailing && pending)
+                out.set(latest);
+            pending = false;
+        }, waitMs);
+    };
+    const stopEffect = effect(() => {
+        const next = source();
+        if (Object.is(next, lastSourceValue))
+            return;
+        lastSourceValue = next;
+        latest = next;
+        // First update in burst can emit immediately.
+        if (!timer && leading) {
+            out.set(next);
+            pending = false;
+            startTimer();
+            return;
+        }
+        pending = true;
+        startTimer();
+    });
+    const dispose = () => {
+        clearTimer();
+        pending = false;
+        stopEffect();
+    };
+    const owningScope = getCurrentScope();
+    if (owningScope)
+        owningScope.onCleanup(dispose);
+    return readonly(out);
+}
+/**
+ * Create a throttled read-only signal derived from a source signal.
+ *
+ * Default semantics:
+ * - leading: true
+ * - trailing: true
+ */
+export function throttleSignal(source, waitMs, options = {}) {
+    const leading = options.leading ?? true;
+    const trailing = options.trailing ?? true;
+    assertTimingOptions(waitMs, leading, trailing, 'throttleSignal');
+    const out = signal(source.peek());
+    let timer = null;
+    let hasPending = false;
+    let pendingValue = out.peek();
+    let lastSourceValue = pendingValue;
+    const clearTimer = () => {
+        if (!timer)
+            return;
+        clearTimeout(timer);
+        timer = null;
+    };
+    const startWindow = () => {
+        timer = setTimeout(() => {
+            timer = null;
+            if (trailing && hasPending) {
+                hasPending = false;
+                out.set(pendingValue);
+                startWindow();
+                return;
+            }
+            hasPending = false;
+        }, waitMs);
+    };
+    const stopEffect = effect(() => {
+        const next = source();
+        if (Object.is(next, lastSourceValue))
+            return;
+        lastSourceValue = next;
+        if (!timer) {
+            if (leading)
+                out.set(next);
+            else if (trailing) {
+                pendingValue = next;
+                hasPending = true;
+            }
+            startWindow();
+            return;
+        }
+        if (trailing) {
+            pendingValue = next;
+            hasPending = true;
+        }
+    });
+    const dispose = () => {
+        clearTimer();
+        hasPending = false;
+        stopEffect();
+    };
+    const owningScope = getCurrentScope();
+    if (owningScope)
+        owningScope.onCleanup(dispose);
+    return readonly(out);
+}
+/**
  * Create an effect: reruns `fn` whenever any tracked signal changes.
  *
  * Scheduling:

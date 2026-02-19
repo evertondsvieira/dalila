@@ -20,6 +20,8 @@ Signals are the foundation of Dalila's reactivity system. They hold values that 
 1. **`signal`** — Writable reactive value
 2. **`computed`** — Derived value (read-only, lazy)
 3. **`effect`** — Side effect that re-runs on dependency changes
+4. **`readonly`** — Read-only contract for an existing signal
+5. **`debounceSignal` / `throttleSignal`** — Time-based derived signals
 
 ## API Reference
 
@@ -49,11 +51,41 @@ function effect(fn: () => void): () => void  // Returns dispose function
 function computed<T>(fn: () => T): Signal<T>  // Read-only signal
 ```
 
+### readonly
+
+```ts
+function readonly<T>(source: Signal<T>): ReadonlySignal<T>
+```
+
 ### effectAsync
 
 ```ts
 function effectAsync(fn: (signal: AbortSignal) => void | Promise<void>): () => void
 ```
+
+### debounceSignal
+
+```ts
+function debounceSignal<T>(
+  source: ReadonlySignal<T>,
+  waitMs: number,
+  options?: { leading?: boolean; trailing?: boolean }
+): ReadonlySignal<T>
+```
+
+Defaults: `leading = false`, `trailing = true`.
+
+### throttleSignal
+
+```ts
+function throttleSignal<T>(
+  source: ReadonlySignal<T>,
+  waitMs: number,
+  options?: { leading?: boolean; trailing?: boolean }
+): ReadonlySignal<T>
+```
+
+Defaults: `leading = true`, `trailing = true`.
 
 ### untrack
 
@@ -126,6 +158,83 @@ firstName.set("Jane");
 // fullName recomputes → "Jane Doe"
 // Effect re-runs → document.title updated
 ```
+
+## Read-only Signal Contracts
+
+Use `readonly` when you need to expose a signal to consumers without allowing writes.
+
+```ts
+import { signal, readonly } from "dalila";
+
+const count = signal(0);
+const countRO = readonly(count);
+
+countRO();       // read
+countRO.peek();  // untracked read
+
+// countRO.set(1) and countRO.update(...) are not part of the public type
+// Runtime also throws if mutation is attempted via casts.
+```
+
+When to use `readonly`:
+- Expose store state publicly but keep mutation private.
+- Avoid accidental writes from components/consumers.
+- Enforce updates through explicit actions (`increment`, `reset`, etc.).
+
+Practical pattern:
+
+```ts
+function createCounterStore() {
+  const count = signal(0);
+  return {
+    count: readonly(count),
+    increment: () => count.update((v) => v + 1),
+    reset: () => count.set(0)
+  };
+}
+```
+
+## Time-based Signal Utilities
+
+Use these helpers to reduce update frequency in noisy streams (search input, scroll, resize).
+
+```ts
+import { signal, debounceSignal, throttleSignal, effect } from "dalila";
+
+const query = signal("");
+const scrollY = signal(0);
+
+const debouncedQuery = debounceSignal(query, 250);   // trailing by default
+const throttledScroll = throttleSignal(scrollY, 16); // leading + trailing by default
+
+effect(() => {
+  console.log("Search after pause:", debouncedQuery());
+});
+
+effect(() => {
+  console.log("Scroll sample:", throttledScroll());
+});
+```
+
+Option examples:
+
+```ts
+// Emit immediately, and also emit the latest value after the burst.
+const debouncedLeading = debounceSignal(query, 250, { leading: true, trailing: true });
+
+// Trailing-only throttle (no immediate value at the start of the window).
+const trailingThrottle = throttleSignal(scrollY, 50, { leading: false, trailing: true });
+```
+
+When to use `debounceSignal`:
+- Text search/filter inputs.
+- Autosave after user pause.
+- Expensive validation while typing.
+
+When to use `throttleSignal`:
+- Scroll position tracking.
+- Resize/mousemove listeners.
+- Animation-like updates that should be capped per frame/window.
 
 ### Computed vs Effect: When to Use Which?
 

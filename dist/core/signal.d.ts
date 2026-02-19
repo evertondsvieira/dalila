@@ -16,6 +16,26 @@ export interface Signal<T> {
     /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
     on(callback: (value: T) => void): () => void;
 }
+export interface ReadonlySignal<T> {
+    /** Read the current value (with dependency tracking if inside an effect). */
+    (): T;
+    /** Read the current value without creating a dependency (no tracking). */
+    peek(): T;
+    /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
+    on(callback: (value: T) => void): () => void;
+}
+export interface DebounceSignalOptions {
+    /** Emit immediately on the first update in a burst. Default: false */
+    leading?: boolean;
+    /** Emit the latest value when the burst settles. Default: true */
+    trailing?: boolean;
+}
+export interface ThrottleSignalOptions {
+    /** Emit immediately when entering a throttle window. Default: true */
+    leading?: boolean;
+    /** Emit the latest buffered value at the end of a throttle window. Default: true */
+    trailing?: boolean;
+}
 /**
  * Create a signal: a mutable value with automatic dependency tracking.
  *
@@ -31,6 +51,32 @@ export interface Signal<T> {
  * - signals do not "own" subscriber lifetimes; they only maintain the set
  */
 export declare function signal<T>(initialValue: T): Signal<T>;
+/**
+ * Create a read-only view over a signal.
+ *
+ * Type-level:
+ * - hides `set` and `update` from the public contract
+ *
+ * Runtime:
+ * - defensive guards throw if mutating methods are accessed via casts
+ */
+export declare function readonly<T>(source: Signal<T>): ReadonlySignal<T>;
+/**
+ * Create a debounced read-only signal derived from a source signal.
+ *
+ * Default semantics:
+ * - leading: false
+ * - trailing: true
+ */
+export declare function debounceSignal<T>(source: ReadonlySignal<T>, waitMs: number, options?: DebounceSignalOptions): ReadonlySignal<T>;
+/**
+ * Create a throttled read-only signal derived from a source signal.
+ *
+ * Default semantics:
+ * - leading: true
+ * - trailing: true
+ */
+export declare function throttleSignal<T>(source: ReadonlySignal<T>, waitMs: number, options?: ThrottleSignalOptions): ReadonlySignal<T>;
 /**
  * Create an effect: reruns `fn` whenever any tracked signal changes.
  *

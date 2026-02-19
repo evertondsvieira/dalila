@@ -118,13 +118,20 @@ dalila/http      → createHttpClient with XSRF protection
 ### Signals
 
 ```ts
-import { signal, computed, effect } from 'dalila';
+import { signal, computed, effect, readonly, debounceSignal, throttleSignal } from 'dalila';
 
 const count = signal(0);
 const doubled = computed(() => count() * 2);
+const countRO = readonly(count);
+const search = signal('');
+const debouncedSearch = debounceSignal(search, 250);
+const scrollY = signal(0);
+const throttledScrollY = throttleSignal(scrollY, 16);
 
 effect(() => {
-  console.log('Count is', count());
+  console.log('Count is', countRO());
+  console.log('Search after pause', debouncedSearch());
+  console.log('Scroll sample', throttledScrollY());
 });
 
 count.set(5); // logs: Count is 5
