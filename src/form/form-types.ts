@@ -4,6 +4,40 @@
 
 export type FieldErrors = Record<string, string>;
 
+export interface SchemaValidationIssue {
+  path?: string;
+  message: string;
+}
+
+export interface SchemaValidationResult<T = unknown> {
+  value?: T;
+  issues?: SchemaValidationIssue[];
+  formError?: string;
+}
+
+export interface FormSchemaAdapter<T = unknown> {
+  /**
+   * Validate full form data.
+   */
+  validate(
+    data: unknown
+  ): SchemaValidationResult<T> | Promise<SchemaValidationResult<T>>;
+
+  /**
+   * Optional field-level validation. Useful for validateOn blur/change.
+   */
+  validateField?(
+    path: string,
+    value: unknown,
+    data: unknown
+  ): SchemaValidationResult<T> | Promise<SchemaValidationResult<T>>;
+
+  /**
+   * Optional fallback mapper for unknown schema errors.
+   */
+  mapErrors?(error: unknown): SchemaValidationIssue[] | { formError?: string };
+}
+
 export interface FormSubmitContext {
   signal: AbortSignal;
 }
@@ -27,7 +61,16 @@ export interface FormOptions<T> {
    */
   validate?: (
     data: T
-  ) => FieldErrors | { fieldErrors?: FieldErrors; formError?: string } | void;
+  ) =>
+    | FieldErrors
+    | { fieldErrors?: FieldErrors; formError?: string }
+    | void
+    | Promise<FieldErrors | { fieldErrors?: FieldErrors; formError?: string } | void>;
+
+  /**
+   * Optional schema adapter (zod/valibot/yup/custom).
+   */
+  schema?: FormSchemaAdapter<T>;
 
   /**
    * When to run validation:

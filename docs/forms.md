@@ -46,6 +46,8 @@ interface FormOptions<T> {
     | { fieldErrors?: FieldErrors; formError?: string }
     | void;
 
+  schema?: FormSchemaAdapter<T>;
+
   validateOn?: 'submit' | 'blur' | 'change';
 
   transformServerErrors?: (error: unknown) =>
@@ -56,6 +58,22 @@ interface FormOptions<T> {
 
 ```ts
 type FieldErrors = Record<string, string>;
+```
+
+```ts
+interface FormSchemaAdapter<T = unknown> {
+  validate(data: unknown):
+    | SchemaValidationResult<T>
+    | Promise<SchemaValidationResult<T>>;
+  validateField?(
+    path: string,
+    value: unknown,
+    data: unknown
+  ): SchemaValidationResult<T> | Promise<SchemaValidationResult<T>>;
+  mapErrors?(error: unknown):
+    | SchemaValidationIssue[]
+    | { formError?: string };
+}
 ```
 
 ```ts
@@ -269,6 +287,34 @@ const form = createForm({
   validateOn: 'blur'
 });
 ```
+
+### Schema adapters (Zod, Valibot, Yup)
+
+```ts
+import { createForm, zodAdapter, valibotAdapter, yupAdapter } from 'dalila/form';
+
+const zodForm = createForm({
+  schema: zodAdapter(UserSchema)
+});
+
+const valibotForm = createForm({
+  schema: valibotAdapter(UserSchema)
+});
+
+const yupForm = createForm({
+  schema: yupAdapter(UserSchema)
+});
+```
+
+Pass Valibot runtime explicitly:
+
+```ts
+import * as v from 'valibot';
+const form = createForm({ schema: valibotAdapter(UserSchema, v) });
+```
+
+`schema` and `validate` can be used together. Validation pipeline supports sync/async adapters.
+When `validateOn` is `blur` or `change`, `validateField()` is used when available.
 
 ### Server-side errors
 

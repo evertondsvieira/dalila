@@ -5,7 +5,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { JSDOM } from 'jsdom';
-import { createForm, parseFormData } from '../dist/form/index.js';
+import { createForm, parseFormData, zodAdapter, valibotAdapter, yupAdapter } from '../dist/form/index.js';
 import { createScope, withScope } from '../dist/core/scope.js';
 
 // Simple mock function helper
@@ -554,6 +554,631 @@ describe('createForm', () => {
 
     assert.strictEqual(handler.callCount, 1);
     assert.strictEqual(form.error('email'), null);
+  });
+
+  it('should validate with zod adapter and map nested issues to field paths', async () => {
+    const schema = {
+      safeParse: (data) => {
+        const email = data?.user?.email;
+        if (typeof email === 'string' && email.includes('@')) {
+          return { success: true, data };
+        }
+        return {
+          success: false,
+          error: {
+            issues: [{ path: ['user', 'email'], message: 'Invalid email' }],
+          },
+        };
+      },
+    };
+
+    const form = withScope(scope, () => createForm({ schema: zodAdapter(schema) }));
+    const formElement = document.createElement('form');
+    formElement.innerHTML = '<input name="user.email" value="bad" />';
+    form._setFormElement(formElement);
+
+    const handler = mockFn();
+    const submitHandler = form.handleSubmit(handler);
+    const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'target', { value: formElement });
+
+    await submitHandler(event);
+    assert.strictEqual(handler.callCount, 0);
+    assert.strictEqual(form.error('user.email'), 'Invalid email');
+  });
+
+  it('should pass schema-transformed values to submit handler', async () => {
+    const schema = {
+      safeParse: (data) => ({
+        success: true,
+        data: {
+          ...data,
+          age: Number(data.age),
+          email: String(data.email).trim().toLowerCase(),
+        },
+      }),
+    };
+
+    const form = withScope(scope, () => createForm({ schema: zodAdapter(schema) }));
+    const formElement = document.createElement('form');
+    formElement.innerHTML = `
+      <input name="age" value="42" />
+      <input name="email" value="  USER@EXAMPLE.COM  " />
+    `;
+    form._setFormElement(formElement);
+
+    const handler = mockFn((data) => {
+      assert.strictEqual(data.age, 42);
+      assert.strictEqual(data.email, 'user@example.com');
+    });
+    const submitHandler = form.handleSubmit(handler);
+    const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'target', { value: formElement });
+
+    await submitHandler(event);
+    assert.strictEqual(handler.callCount, 1);
+  });
+
+  it('should run custom validate with schema-transformed values', async () => {
+    const schema = {
+      safeParse: (data) => ({
+        success: true,
+        data: {
+          ...data,
+          age: Number(data.age),
+        },
+      }),
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema: zodAdapter(schema),
+        validate: (data) => {
+          if (typeof data.age !== 'number') {
+            return { age: 'Age must be number' };
+          }
+          return {};
+        },
+      })
+    );
+
+    const formElement = document.createElement('form');
+    formElement.innerHTML = '<input name="age" value="42" />';
+    form._setFormElement(formElement);
+
+    const handler = mockFn();
+    const submitHandler = form.handleSubmit(handler);
+    const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'target', { value: formElement });
+
+    await submitHandler(event);
+    assert.strictEqual(form.error('age'), null);
+    assert.strictEqual(handler.callCount, 1);
+  });
+
+  it('should validate with valibot adapter and map key-segment paths', async () => {
+    const schema = { kind: 'valibot-schema' };
+    const runtime = {
+      safeParse: (_schema, data) => {
+        if (data?.age >= 18) return { success: true, output: data };
+        return {
+          success: false,
+          issues: [
+            {
+              path: [{ key: 'age' }],
+              message: 'Must be adult',
+            },
+          ],
+        };
+      },
+    };
+
+    const form = withScope(scope, () =>
+      createForm({ schema: valibotAdapter(schema, runtime) })
+    );
+    const formElement = document.createElement('form');
+    formElement.innerHTML = '<input name="age" type="number" value="10" />';
+    form._setFormElement(formElement);
+
+    const handler = mockFn();
+    const submitHandler = form.handleSubmit(handler);
+    const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'target', { value: formElement });
+
+    await submitHandler(event);
+    assert.strictEqual(handler.callCount, 0);
+    assert.strictEqual(form.error('age'), 'Must be adult');
+  });
+
+  it('should resolve valibot runtime when omitted', async () => {
+    const previous = globalThis.valibot;
+    globalThis.valibot = {
+      safeParse: (_schema, data) => {
+        if (data?.age >= 18) return { success: true, output: data };
+        return {
+          success: false,
+          issues: [{ path: [{ key: 'age' }], message: 'Must be adult' }],
+        };
+      },
+    };
+
+    try {
+      const schema = { kind: 'valibot-schema' };
+      const form = withScope(scope, () =>
+        createForm({ schema: valibotAdapter(schema) })
+      );
+
+      const formElement = document.createElement('form');
+      formElement.innerHTML = '<input name="age" type="number" value="10" />';
+      form._setFormElement(formElement);
+
+      const handler = mockFn();
+      const submitHandler = form.handleSubmit(handler);
+      const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: formElement });
+
+      await submitHandler(event);
+      assert.strictEqual(handler.callCount, 0);
+      assert.strictEqual(form.error('age'), 'Must be adult');
+    } finally {
+      if (previous === undefined) {
+        delete globalThis.valibot;
+      } else {
+        globalThis.valibot = previous;
+      }
+    }
+  });
+
+  it('should validate with yup adapter and map inner errors', async () => {
+    const schema = {
+      validate: async (data) => {
+        if (typeof data.email === 'string' && data.email.includes('@')) return data;
+        const error = new Error('ValidationError');
+        error.name = 'ValidationError';
+        error.inner = [{ path: 'email', message: 'Invalid email' }];
+        throw error;
+      },
+    };
+
+    const form = withScope(scope, () => createForm({ schema: yupAdapter(schema) }));
+    const formElement = document.createElement('form');
+    formElement.innerHTML = '<input name="email" value="bad" />';
+    form._setFormElement(formElement);
+
+    const handler = mockFn();
+    const submitHandler = form.handleSubmit(handler);
+    const event = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'target', { value: formElement });
+
+    await submitHandler(event);
+    assert.strictEqual(handler.callCount, 0);
+    assert.strictEqual(form.error('email'), 'Invalid email');
+  });
+
+  it('should surface yup validateAt non-field errors as formError on field validation', async () => {
+    const schema = {
+      validate: async (data) => data,
+      validateAt: async () => {
+        const error = new Error('Schema runtime failure');
+        error.name = 'ValidationError';
+        throw error;
+      },
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema: yupAdapter(schema),
+        validateOn: 'change',
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.value = 'test@example.com';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const submitHandler = form.handleSubmit(async () => {});
+    const submitEvent = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+    Object.defineProperty(submitEvent, 'target', { value: formElement });
+    await submitHandler(submitEvent);
+
+    input.dispatchEvent(new dom.window.Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    assert.strictEqual(form.formError(), 'Schema runtime failure');
+  });
+
+  it('should use schema validateField on blur after first submit', async () => {
+    let validateFieldCalls = 0;
+    const schema = {
+      validate: () => ({ issues: [] }),
+      validateField: (path, value) => {
+        validateFieldCalls++;
+        if (path === 'email' && !String(value ?? '').includes('@')) {
+          return { issues: [{ path: 'email', message: 'Invalid email' }] };
+        }
+        return { issues: [] };
+      },
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema,
+        validateOn: 'blur',
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.value = 'ok@example.com';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const submitHandler = form.handleSubmit(async () => {});
+    const submitEvent = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(submitEvent, 'target', { value: formElement });
+    await submitHandler(submitEvent);
+
+    input.value = 'not-an-email';
+    input.dispatchEvent(new dom.window.Event('blur'));
+
+    assert.ok(validateFieldCalls > 0);
+    assert.strictEqual(form.error('email'), 'Invalid email');
+  });
+
+  it('should ignore stale async validateField results on rapid change events', async () => {
+    const schema = {
+      validate: () => ({ issues: [] }),
+      validateField: async (path, value) => {
+        if (path !== 'email') return { issues: [] };
+        if (value === 'bad') {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          return { issues: [{ path: 'email', message: 'Invalid email' }] };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { issues: [] };
+      },
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema,
+        validateOn: 'change',
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.value = 'ok@example.com';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const submitHandler = form.handleSubmit(async () => {});
+    const submitEvent = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(submitEvent, 'target', { value: formElement });
+    await submitHandler(submitEvent);
+
+    input.value = 'bad';
+    input.dispatchEvent(new dom.window.Event('change'));
+    input.value = 'good@example.com';
+    input.dispatchEvent(new dom.window.Event('change'));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.strictEqual(form.error('email'), null);
+  });
+
+  it('should surface schema runtime failures instead of treating them as valid', async () => {
+    const invalidSchema = {};
+    const form = withScope(scope, () =>
+      createForm({
+        schema: zodAdapter(invalidSchema),
+      })
+    );
+
+    const formElement = document.createElement('form');
+    formElement.innerHTML = '<input name="email" value="ok@example.com" />';
+    form._setFormElement(formElement);
+
+    const handler = mockFn();
+    const submitHandler = form.handleSubmit(handler);
+    const event = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(event, 'target', { value: formElement });
+
+    await submitHandler(event);
+
+    assert.strictEqual(handler.callCount, 0);
+    assert.ok((form.formError() ?? '').includes('Invalid schema adapter input'));
+  });
+
+  it('should fail validation when adapter parse throws non-validation error without issues', async () => {
+    const schema = {
+      parse: () => {
+        throw new Error('schema crashed');
+      },
+    };
+    const form = withScope(scope, () =>
+      createForm({
+        schema: zodAdapter(schema),
+      })
+    );
+
+    const formElement = document.createElement('form');
+    formElement.innerHTML = '<input name="email" value="ok@example.com" />';
+    form._setFormElement(formElement);
+
+    const handler = mockFn();
+    const submitHandler = form.handleSubmit(handler);
+    const event = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(event, 'target', { value: formElement });
+    await submitHandler(event);
+
+    assert.strictEqual(handler.callCount, 0);
+    assert.strictEqual(form.formError(), 'schema crashed');
+  });
+
+  it('should ignore stale async submit validation after newer field validation', async () => {
+    const schema = {
+      validate: async (data) => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        if (!String(data?.email ?? '').includes('@')) {
+          return { issues: [{ path: 'email', message: 'Invalid email' }] };
+        }
+        return { issues: [] };
+      },
+      validateField: async (path, value) => {
+        if (path !== 'email') return { issues: [] };
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        if (!String(value ?? '').includes('@')) {
+          return { issues: [{ path: 'email', message: 'Invalid email' }] };
+        }
+        return { issues: [] };
+      },
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema,
+        validateOn: 'change',
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.value = 'bad';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const handler = mockFn(async () => {});
+    const submitHandler = form.handleSubmit(handler);
+    const submitEvent = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(submitEvent, 'target', { value: formElement });
+    const submitPromise = submitHandler(submitEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    input.value = 'good@example.com';
+    input.dispatchEvent(new dom.window.Event('change'));
+
+    await submitPromise;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.strictEqual(form.error('email'), null);
+    assert.strictEqual(handler.callCount, 0);
+  });
+
+  it('should not produce unhandled rejection for rejected async custom validators on field events', async () => {
+    const unhandled = [];
+    const onUnhandled = (reason) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      const form = withScope(scope, () =>
+        createForm({
+          validateOn: 'change',
+          validate: async (data) => {
+            if (data?.email === 'boom') {
+              throw new Error('validator exploded');
+            }
+            return {};
+          },
+        })
+      );
+
+      const formElement = document.createElement('form');
+      const input = document.createElement('input');
+      input.name = 'email';
+      input.value = 'ok@example.com';
+      formElement.appendChild(input);
+      form._setFormElement(formElement);
+      form._registerField('email', input);
+
+      const submitHandler = form.handleSubmit(async () => {});
+      const submitEvent = new dom.window.Event('submit', {
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(submitEvent, 'target', { value: formElement });
+      await submitHandler(submitEvent);
+
+      input.value = 'boom';
+      input.dispatchEvent(new dom.window.Event('change'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.strictEqual(unhandled.length, 0);
+      assert.strictEqual(form.formError(), 'validator exploded');
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('should keep async field validations independent across different paths', async () => {
+    const schema = {
+      validate: () => ({ issues: [] }),
+      validateField: async (path, value) => {
+        if (path === 'email') {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          if (!String(value ?? '').includes('@')) {
+            return { issues: [{ path: 'email', message: 'Invalid email' }] };
+          }
+          return { issues: [] };
+        }
+        if (path === 'name') {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          if (String(value ?? '').length < 2) {
+            return { issues: [{ path: 'name', message: 'Name too short' }] };
+          }
+          return { issues: [] };
+        }
+        return { issues: [] };
+      },
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema,
+        validateOn: 'change',
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const emailInput = document.createElement('input');
+    emailInput.name = 'email';
+    emailInput.value = 'ok@example.com';
+    formElement.appendChild(emailInput);
+    const nameInput = document.createElement('input');
+    nameInput.name = 'name';
+    nameInput.value = 'John';
+    formElement.appendChild(nameInput);
+    form._setFormElement(formElement);
+    form._registerField('email', emailInput);
+    form._registerField('name', nameInput);
+
+    const submitHandler = form.handleSubmit(async () => {});
+    const submitEvent = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(submitEvent, 'target', { value: formElement });
+    await submitHandler(submitEvent);
+
+    emailInput.value = 'bad-email';
+    emailInput.dispatchEvent(new dom.window.Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    nameInput.value = 'A';
+    nameInput.dispatchEvent(new dom.window.Event('change'));
+
+    await new Promise((resolve) => setTimeout(resolve, 70));
+
+    assert.strictEqual(form.error('email'), 'Invalid email');
+    assert.strictEqual(form.error('name'), 'Name too short');
+  });
+
+  it('should clear stale formError after successful field-level schema validation', async () => {
+    const schema = {
+      validate: () => ({ formError: 'Schema unavailable', issues: [] }),
+      validateField: async () => ({ issues: [] }),
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema,
+        validateOn: 'change',
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.value = 'ok@example.com';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const submitHandler = form.handleSubmit(async () => {});
+    const submitEvent = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(submitEvent, 'target', { value: formElement });
+    await submitHandler(submitEvent);
+    assert.strictEqual(form.formError(), 'Schema unavailable');
+
+    input.value = 'next@example.com';
+    input.dispatchEvent(new dom.window.Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.strictEqual(form.formError(), null);
+  });
+
+  it('should preserve unrelated field errors on path validation when schema.validateField and validate coexist', async () => {
+    const schema = {
+      validate: () => ({ issues: [] }),
+      validateField: async (path, value) => {
+        if (path === 'email' && !String(value ?? '').includes('@')) {
+          return { issues: [{ path: 'email', message: 'Invalid email' }] };
+        }
+        return { issues: [] };
+      },
+    };
+
+    const form = withScope(scope, () =>
+      createForm({
+        schema,
+        validateOn: 'change',
+        validate: () => ({}),
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const emailInput = document.createElement('input');
+    emailInput.name = 'email';
+    emailInput.value = 'bad-email';
+    formElement.appendChild(emailInput);
+    const nameInput = document.createElement('input');
+    nameInput.name = 'name';
+    nameInput.value = 'x';
+    formElement.appendChild(nameInput);
+    form._setFormElement(formElement);
+    form._registerField('email', emailInput);
+    form._registerField('name', nameInput);
+
+    const submitHandler = form.handleSubmit(async () => {});
+    const submitEvent = new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(submitEvent, 'target', { value: formElement });
+    await submitHandler(submitEvent);
+
+    form.setError('name', 'Name required');
+    emailInput.dispatchEvent(new dom.window.Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.strictEqual(form.error('email'), 'Invalid email');
+    assert.strictEqual(form.error('name'), 'Name required');
   });
 
   it('should handle async submit with abort', async () => {
