@@ -73,6 +73,7 @@ interface Form<T> {
   submitCount(): number;
   focus(path?: string): void;
   fieldArray<TItem = unknown>(path: string): FieldArray<TItem>;
+  watch(path: string, fn: (next: unknown, prev: unknown) => void): () => void;
 
   // Internal (used by runtime bindings)
   _registerField(path: string, element: HTMLElement): () => void;
@@ -85,6 +86,20 @@ interface Form<T> {
 interface FormSubmitContext {
   signal: AbortSignal;
 }
+```
+
+### `form.watch(path, fn)`
+
+Observe a specific form path and run `fn(next, prev)` only when that path changes.
+It supports nested paths and array paths (for example, `phones[0].number`), and returns an idempotent unsubscribe.
+
+```ts
+const stop = form.watch('user.email', (next, prev) => {
+  console.log('email changed:', prev, '->', next);
+});
+
+// later
+stop();
 ```
 
 ### parseFormData

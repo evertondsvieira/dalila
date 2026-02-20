@@ -321,6 +321,11 @@ export function createForm<T = unknown>(
   // Registry
   const fieldRegistry = new Map<string, HTMLElement>();
   const fieldArrayRegistry = new Map<string, FieldArray<any>>();
+  const pathWatchers = new Set<{
+    path: string;
+    callback: (next: unknown, prev: unknown) => void;
+    lastValue: unknown;
+  }>();
 
   // Form element reference
   let formElement: HTMLFormElement | null = null;
@@ -331,6 +336,100 @@ export function createForm<T = unknown>(
   // Default values
   let defaultValues: Partial<T> = {};
   let defaultsInitialized = false;
+
+  function getCurrentSnapshot(preferFieldArrayPaths?: Set<string>): unknown {
+    const snapshot: any = formElement
+      ? (options.parse ?? parseFormData)(formElement, new FormData(formElement))
+      : {};
+
+    // Field arrays may exist before DOM render; overlay them when DOM snapshot
+    // has no value for that path, or when callers explicitly prefer array state
+    // (useful during reorder mutations before DOM patches apply).
+    for (const [path, array] of fieldArrayRegistry) {
+      const hasDomValue = getNestedValue(snapshot, path) !== undefined;
+      const shouldPreferArrayState = preferFieldArrayPaths?.has(path) === true;
+      if (hasDomValue && !shouldPreferArrayState) continue;
+      const rows = array.fields().map((item) => item.value);
+      setNestedValue(snapshot, path, rows);
+    }
+
+    return snapshot;
+  }
+
+  function readPathValue(path: string, preferFieldArrayPaths?: Set<string>): unknown {
+    return getNestedValue(getCurrentSnapshot(preferFieldArrayPaths), path);
+  }
+
+  function isPathRelated(pathA: string, pathB: string): boolean {
+    if (pathA === pathB) return true;
+    if (pathA.startsWith(`${pathB}.`) || pathA.startsWith(`${pathB}[`)) return true;
+    if (pathB.startsWith(`${pathA}.`) || pathB.startsWith(`${pathA}[`)) return true;
+    return false;
+  }
+
+  function emitWatchCallback(
+    callback: (next: unknown, prev: unknown) => void,
+    next: unknown,
+    prev: unknown
+  ): void {
+    try {
+      callback(next, prev);
+    } catch (err) {
+      if (typeof console !== 'undefined') {
+        console.error('[Dalila] Error in form.watch callback:', err);
+      }
+    }
+  }
+
+  function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Object.prototype.toString.call(value) === '[object Object]';
+  }
+
+  function areValuesEqual(a: unknown, b: unknown): boolean {
+    if (Object.is(a, b)) return true;
+
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (!areValuesEqual(a[i], b[i])) return false;
+      }
+      return true;
+    }
+
+    if (isPlainObject(a) && isPlainObject(b)) {
+      const aKeys = Object.keys(a);
+      const bKeys = Object.keys(b);
+      if (aKeys.length !== bKeys.length) return false;
+      for (const key of aKeys) {
+        if (!(key in b)) return false;
+        if (!areValuesEqual(a[key], b[key])) return false;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  function notifyWatchers(
+    changedPath?: string,
+    opts: { preferFieldArrayPath?: string; preferFieldArrayPaths?: Iterable<string> } = {}
+  ): void {
+    if (pathWatchers.size === 0) return;
+    const preferFieldArrayPaths =
+      opts.preferFieldArrayPaths != null
+        ? new Set<string>(opts.preferFieldArrayPaths)
+        : opts.preferFieldArrayPath
+          ? new Set<string>([opts.preferFieldArrayPath])
+          : undefined;
+    for (const watcher of pathWatchers) {
+      if (changedPath && !isPathRelated(changedPath, watcher.path)) continue;
+      const next = readPathValue(watcher.path, preferFieldArrayPaths);
+      if (areValuesEqual(next, watcher.lastValue)) continue;
+      const prev = watcher.lastValue;
+      watcher.lastValue = next;
+      emitWatchCallback(watcher.callback, next, prev);
+    }
+  }
 
   // Initialize defaults
   (async () => {
@@ -399,6 +498,29 @@ export function createForm<T = unknown>(
 
   function formError(): string | null {
     return formErrorSignal();
+  }
+
+  function watch(path: string, fn: (next: unknown, prev: unknown) => void): () => void {
+    const watcher = {
+      path,
+      callback: fn,
+      lastValue: readPathValue(path),
+    };
+    pathWatchers.add(watcher);
+
+    let active = true;
+    const unsubscribe = () => {
+      if (!active) return;
+      active = false;
+      pathWatchers.delete(watcher);
+    };
+
+    const ownerScope = getCurrentScope();
+    if (ownerScope) {
+      ownerScope.onCleanup(unsubscribe);
+    }
+
+    return unsubscribe;
   }
   // Touched / Dirty Management
   function touched(path: string): boolean {
@@ -491,10 +613,12 @@ export function createForm<T = unknown>(
 
     // Setup change handler for dirty + validation
     const handleChange = () => {
-      if (!defaultsInitialized) return;
-
       // Use dynamic path lookup instead of captured path
       const currentPath = getCurrentPath();
+      if (!defaultsInitialized) {
+        notifyWatchers(currentPath);
+        return;
+      }
 
       const input = element as HTMLInputElement;
       const defaultValue = getNestedValue(defaultValues, currentPath);
@@ -551,6 +675,8 @@ export function createForm<T = unknown>(
         const data = parser(formElement, fd);
         validate(data);
       }
+
+      notifyWatchers(currentPath);
     };
 
     element.addEventListener('change', handleChange);
@@ -754,6 +880,8 @@ export function createForm<T = unknown>(
     submitController?.abort();
     submitController = null;
     submittingSignal.set(false);
+
+    notifyWatchers(undefined, { preferFieldArrayPaths: fieldArrayRegistry.keys() });
   }
   // Field Arrays
   function fieldArray<TItem = unknown>(path: string): FieldArray<TItem> {
@@ -766,11 +894,15 @@ export function createForm<T = unknown>(
     const array = createFieldArray<TItem>(path, {
       form: formElement,
       scope,
+      onMutate: () => notifyWatchers(path, { preferFieldArrayPath: path }),
       // Pass meta-state signals for remapping on reorder
       errors,
       touchedSet,
       dirtySet,
     });
+
+    // Register before hydration so watch reads can see this array immediately.
+    fieldArrayRegistry.set(path, array);
 
     // Initialize from defaultValues if available
     // When d-array is first rendered, it should start with values from defaultValues
@@ -781,7 +913,6 @@ export function createForm<T = unknown>(
       }
     }
 
-    fieldArrayRegistry.set(path, array);
     return array;
   }
   // Getters
@@ -799,6 +930,7 @@ export function createForm<T = unknown>(
 
   function _setFormElement(form: HTMLFormElement): void {
     formElement = form;
+    notifyWatchers();
   }
 
   // Cleanup on scope disposal
@@ -807,6 +939,7 @@ export function createForm<T = unknown>(
       submitController?.abort();
       fieldRegistry.clear();
       fieldArrayRegistry.clear();
+      pathWatchers.clear();
     });
   }
 
@@ -823,6 +956,7 @@ export function createForm<T = unknown>(
     submitting,
     submitCount,
     focus,
+    watch,
     _registerField,
     _getFormElement,
     _setFormElement,
@@ -835,6 +969,7 @@ export function createForm<T = unknown>(
 interface FieldArrayOptions {
   form: HTMLFormElement | null;
   scope: ReturnType<typeof getCurrentScope>;
+  onMutate?: () => void;
   // Meta-state signals for remapping on reorder
   errors?: Signal<FieldErrors>;
   touchedSet?: Signal<Set<string>>;
@@ -962,6 +1097,7 @@ function createFieldArray<TItem = unknown>(
       newKeys.forEach((key, i) => next.set(key, items[i]));
       return next;
     });
+    options.onMutate?.();
   }
 
   function remove(key: string): void {
@@ -1030,6 +1166,8 @@ function createFieldArray<TItem = unknown>(
         remapMetaState(oldIndices, newIndices);
       }
     }
+
+    options.onMutate?.();
   }
 
   function removeAt(index: number): void {
@@ -1067,6 +1205,7 @@ function createFieldArray<TItem = unknown>(
       next.set(key, value);
       return next;
     });
+    options.onMutate?.();
   }
 
   function move(fromIndex: number, toIndex: number): void {
@@ -1104,6 +1243,7 @@ function createFieldArray<TItem = unknown>(
       next.splice(toIndex, 0, item);
       return next;
     });
+    options.onMutate?.();
   }
 
   function swap(indexA: number, indexB: number): void {
@@ -1119,6 +1259,7 @@ function createFieldArray<TItem = unknown>(
       [next[indexA], next[indexB]] = [next[indexB], next[indexA]];
       return next;
     });
+    options.onMutate?.();
   }
 
   function replace(newValues: TItem[]): void {
@@ -1163,6 +1304,7 @@ function createFieldArray<TItem = unknown>(
 
     keys.set(newKeys);
     values.set(new Map(newKeys.map((key, i) => [key, newValues[i]])));
+    options.onMutate?.();
   }
 
   function update(key: string, value: TItem): void {
@@ -1171,6 +1313,7 @@ function createFieldArray<TItem = unknown>(
       next.set(key, value);
       return next;
     });
+    options.onMutate?.();
   }
 
   function updateAt(index: number, value: TItem): void {

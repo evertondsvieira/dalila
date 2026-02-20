@@ -655,6 +655,276 @@ describe('createForm', () => {
     assert.strictEqual(form.error('email'), null);
     assert.strictEqual(form.formError(), null);
   });
+
+  it('should watch a specific path and allow idempotent unsubscribe', () => {
+    const form = withScope(scope, () => createForm());
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.setAttribute('d-field', '');
+    input.value = 'a@example.com';
+    formElement.appendChild(input);
+
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const changes = [];
+    const stop = form.watch('email', (next, prev) => {
+      changes.push({ next, prev });
+    });
+
+    input.value = 'b@example.com';
+    input.dispatchEvent(new dom.window.Event('change'));
+
+    assert.deepStrictEqual(changes, [
+      { next: 'b@example.com', prev: 'a@example.com' },
+    ]);
+
+    stop();
+    stop();
+    input.value = 'c@example.com';
+    input.dispatchEvent(new dom.window.Event('change'));
+    assert.strictEqual(changes.length, 1);
+  });
+
+  it('should use options.parse for watch snapshots', () => {
+    const form = withScope(scope, () =>
+      createForm({
+        parse: (formEl, fd) => {
+          const raw = parseFormData(formEl, fd);
+          return {
+            email: String(raw.email ?? '').trim().toLowerCase(),
+          };
+        },
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.setAttribute('d-field', '');
+    input.value = '  A@EXAMPLE.COM  ';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const calls = [];
+    form.watch('email', (next, prev) => {
+      calls.push({ next, prev });
+    });
+
+    input.value = '  B@EXAMPLE.COM  ';
+    input.dispatchEvent(new dom.window.Event('change'));
+
+    assert.deepStrictEqual(calls, [
+      { next: 'b@example.com', prev: 'a@example.com' },
+    ]);
+  });
+
+  it('should watch array item paths across fieldArray reorder operations', () => {
+    const form = withScope(scope, () => createForm());
+    const array = form.fieldArray('phones');
+    array.append([{ number: '111' }, { number: '222' }]);
+
+    const runs = [];
+    form.watch('phones[0].number', (next, prev) => {
+      runs.push({ next, prev });
+    });
+
+    array.move(1, 0);
+    assert.deepStrictEqual(runs, [{ next: '222', prev: '111' }]);
+
+    array.move(0, 1);
+    assert.deepStrictEqual(runs, [
+      { next: '222', prev: '111' },
+      { next: '111', prev: '222' },
+    ]);
+  });
+
+  it('should notify watchers after reset updates values', () => {
+    const form = withScope(scope, () => createForm());
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.setAttribute('d-field', '');
+    input.value = 'before@example.com';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const calls = [];
+    form.watch('email', (next, prev) => {
+      calls.push({ next, prev });
+    });
+
+    form.reset({ email: 'after@example.com' });
+
+    assert.deepStrictEqual(calls, [
+      { next: 'after@example.com', prev: 'before@example.com' },
+    ]);
+  });
+
+  it('should prefer live DOM values over fieldArray cache when watching array paths', () => {
+    const form = withScope(scope, () => createForm());
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'phones[0].number';
+    input.setAttribute('d-field', '');
+    input.setAttribute('data-field-path', 'phones[0].number');
+    input.value = '111';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('phones[0].number', input);
+
+    const array = form.fieldArray('phones');
+    array.append({ number: '111' });
+
+    const calls = [];
+    form.watch('phones[0].number', (next, prev) => {
+      calls.push({ next, prev });
+    });
+
+    input.value = '999';
+    input.dispatchEvent(new dom.window.Event('change'));
+
+    assert.deepStrictEqual(calls, [
+      { next: '999', prev: '111' },
+    ]);
+  });
+
+  it('should notify watchers even before async defaults initialization finishes', () => {
+    const form = withScope(scope, () =>
+      createForm({
+        defaultValues: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          return { email: 'seed@example.com' };
+        },
+      })
+    );
+
+    const formElement = document.createElement('form');
+    const input = document.createElement('input');
+    input.name = 'email';
+    input.setAttribute('d-field', '');
+    input.value = 'early@example.com';
+    formElement.appendChild(input);
+    form._setFormElement(formElement);
+    form._registerField('email', input);
+
+    const calls = [];
+    form.watch('email', (next, prev) => {
+      calls.push({ next, prev });
+    });
+
+    input.value = 'typed-before-defaults@example.com';
+    input.dispatchEvent(new dom.window.Event('input'));
+
+    assert.deepStrictEqual(calls, [
+      { next: 'typed-before-defaults@example.com', prev: 'early@example.com' },
+    ]);
+  });
+
+  it('should notify array-path watchers on fieldArray move before DOM reorder patch', () => {
+    const form = withScope(scope, () => createForm());
+    const formElement = document.createElement('form');
+    const input0 = document.createElement('input');
+    input0.name = 'phones[0].number';
+    input0.setAttribute('d-field', '');
+    input0.setAttribute('data-field-path', 'phones[0].number');
+    input0.value = '111';
+    formElement.appendChild(input0);
+
+    const input1 = document.createElement('input');
+    input1.name = 'phones[1].number';
+    input1.setAttribute('d-field', '');
+    input1.setAttribute('data-field-path', 'phones[1].number');
+    input1.value = '222';
+    formElement.appendChild(input1);
+
+    form._setFormElement(formElement);
+    form._registerField('phones[0].number', input0);
+    form._registerField('phones[1].number', input1);
+
+    const array = form.fieldArray('phones');
+    array.append([{ number: '111' }, { number: '222' }]);
+
+    const calls = [];
+    form.watch('phones[0].number', (next, prev) => {
+      calls.push({ next, prev });
+    });
+
+    // Simulate mutation notification happening before DOM paths/values are patched.
+    array.move(1, 0);
+
+    assert.deepStrictEqual(calls, [
+      { next: '222', prev: '111' },
+    ]);
+  });
+
+  it('should notify pre-registered watchers when fieldArray hydrates from sync defaults', async () => {
+    const form = withScope(scope, () =>
+      createForm({
+        defaultValues: {
+          phones: [{ number: '555-1234' }],
+        },
+      })
+    );
+
+    // Wait for defaultValues initialization task.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const calls = [];
+    form.watch('phones[0].number', (next, prev) => {
+      calls.push({ next, prev });
+    });
+
+    // Initial hydration should emit undefined -> default transition.
+    form.fieldArray('phones');
+
+    assert.deepStrictEqual(calls, [
+      { next: '555-1234', prev: undefined },
+    ]);
+  });
+
+  it('should avoid stale duplicate watch callbacks for removed array indices after reset', () => {
+    const form = withScope(scope, () => createForm());
+    const formElement = document.createElement('form');
+
+    const input0 = document.createElement('input');
+    input0.name = 'phones[0].number';
+    input0.setAttribute('d-field', '');
+    input0.setAttribute('data-field-path', 'phones[0].number');
+    input0.value = '111';
+    formElement.appendChild(input0);
+
+    const input1 = document.createElement('input');
+    input1.name = 'phones[1].number';
+    input1.setAttribute('d-field', '');
+    input1.setAttribute('data-field-path', 'phones[1].number');
+    input1.value = 'stale-dom';
+    formElement.appendChild(input1);
+
+    form._setFormElement(formElement);
+    form._registerField('phones[0].number', input0);
+    form._registerField('phones[1].number', input1);
+
+    const array = form.fieldArray('phones');
+    array.append([{ number: '111' }, { number: '222' }]);
+
+    const calls = [];
+    form.watch('phones[1].number', (next, prev) => {
+      calls.push({ next, prev });
+    });
+
+    // Shrink array to one item; second row remains stale in DOM until view patch.
+    form.reset({
+      phones: [{ number: '111' }],
+    });
+
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].next, undefined);
+    assert.strictEqual(calls[0].prev, 'stale-dom');
+  });
 });
 
 describe('FieldArray Meta-State Remapping', () => {

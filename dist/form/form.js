@@ -275,6 +275,7 @@ export function createForm(options = {}) {
     // Registry
     const fieldRegistry = new Map();
     const fieldArrayRegistry = new Map();
+    const pathWatchers = new Set();
     // Form element reference
     let formElement = null;
     // Submit abort controller
@@ -282,6 +283,94 @@ export function createForm(options = {}) {
     // Default values
     let defaultValues = {};
     let defaultsInitialized = false;
+    function getCurrentSnapshot(preferFieldArrayPaths) {
+        const snapshot = formElement
+            ? (options.parse ?? parseFormData)(formElement, new FormData(formElement))
+            : {};
+        // Field arrays may exist before DOM render; overlay them when DOM snapshot
+        // has no value for that path, or when callers explicitly prefer array state
+        // (useful during reorder mutations before DOM patches apply).
+        for (const [path, array] of fieldArrayRegistry) {
+            const hasDomValue = getNestedValue(snapshot, path) !== undefined;
+            const shouldPreferArrayState = preferFieldArrayPaths?.has(path) === true;
+            if (hasDomValue && !shouldPreferArrayState)
+                continue;
+            const rows = array.fields().map((item) => item.value);
+            setNestedValue(snapshot, path, rows);
+        }
+        return snapshot;
+    }
+    function readPathValue(path, preferFieldArrayPaths) {
+        return getNestedValue(getCurrentSnapshot(preferFieldArrayPaths), path);
+    }
+    function isPathRelated(pathA, pathB) {
+        if (pathA === pathB)
+            return true;
+        if (pathA.startsWith(`${pathB}.`) || pathA.startsWith(`${pathB}[`))
+            return true;
+        if (pathB.startsWith(`${pathA}.`) || pathB.startsWith(`${pathA}[`))
+            return true;
+        return false;
+    }
+    function emitWatchCallback(callback, next, prev) {
+        try {
+            callback(next, prev);
+        }
+        catch (err) {
+            if (typeof console !== 'undefined') {
+                console.error('[Dalila] Error in form.watch callback:', err);
+            }
+        }
+    }
+    function isPlainObject(value) {
+        return Object.prototype.toString.call(value) === '[object Object]';
+    }
+    function areValuesEqual(a, b) {
+        if (Object.is(a, b))
+            return true;
+        if (Array.isArray(a) && Array.isArray(b)) {
+            if (a.length !== b.length)
+                return false;
+            for (let i = 0; i < a.length; i++) {
+                if (!areValuesEqual(a[i], b[i]))
+                    return false;
+            }
+            return true;
+        }
+        if (isPlainObject(a) && isPlainObject(b)) {
+            const aKeys = Object.keys(a);
+            const bKeys = Object.keys(b);
+            if (aKeys.length !== bKeys.length)
+                return false;
+            for (const key of aKeys) {
+                if (!(key in b))
+                    return false;
+                if (!areValuesEqual(a[key], b[key]))
+                    return false;
+            }
+            return true;
+        }
+        return false;
+    }
+    function notifyWatchers(changedPath, opts = {}) {
+        if (pathWatchers.size === 0)
+            return;
+        const preferFieldArrayPaths = opts.preferFieldArrayPaths != null
+            ? new Set(opts.preferFieldArrayPaths)
+            : opts.preferFieldArrayPath
+                ? new Set([opts.preferFieldArrayPath])
+                : undefined;
+        for (const watcher of pathWatchers) {
+            if (changedPath && !isPathRelated(changedPath, watcher.path))
+                continue;
+            const next = readPathValue(watcher.path, preferFieldArrayPaths);
+            if (areValuesEqual(next, watcher.lastValue))
+                continue;
+            const prev = watcher.lastValue;
+            watcher.lastValue = next;
+            emitWatchCallback(watcher.callback, next, prev);
+        }
+    }
     // Initialize defaults
     (async () => {
         try {
@@ -345,6 +434,26 @@ export function createForm(options = {}) {
     }
     function formError() {
         return formErrorSignal();
+    }
+    function watch(path, fn) {
+        const watcher = {
+            path,
+            callback: fn,
+            lastValue: readPathValue(path),
+        };
+        pathWatchers.add(watcher);
+        let active = true;
+        const unsubscribe = () => {
+            if (!active)
+                return;
+            active = false;
+            pathWatchers.delete(watcher);
+        };
+        const ownerScope = getCurrentScope();
+        if (ownerScope) {
+            ownerScope.onCleanup(unsubscribe);
+        }
+        return unsubscribe;
     }
     // Touched / Dirty Management
     function touched(path) {
@@ -429,10 +538,12 @@ export function createForm(options = {}) {
         element.addEventListener('blur', handleBlur);
         // Setup change handler for dirty + validation
         const handleChange = () => {
-            if (!defaultsInitialized)
-                return;
             // Use dynamic path lookup instead of captured path
             const currentPath = getCurrentPath();
+            if (!defaultsInitialized) {
+                notifyWatchers(currentPath);
+                return;
+            }
             const input = element;
             const defaultValue = getNestedValue(defaultValues, currentPath);
             let currentValue;
@@ -489,6 +600,7 @@ export function createForm(options = {}) {
                 const data = parser(formElement, fd);
                 validate(data);
             }
+            notifyWatchers(currentPath);
         };
         element.addEventListener('change', handleChange);
         element.addEventListener('input', handleChange);
@@ -672,6 +784,7 @@ export function createForm(options = {}) {
         submitController?.abort();
         submitController = null;
         submittingSignal.set(false);
+        notifyWatchers(undefined, { preferFieldArrayPaths: fieldArrayRegistry.keys() });
     }
     // Field Arrays
     function fieldArray(path) {
@@ -683,11 +796,14 @@ export function createForm(options = {}) {
         const array = createFieldArray(path, {
             form: formElement,
             scope,
+            onMutate: () => notifyWatchers(path, { preferFieldArrayPath: path }),
             // Pass meta-state signals for remapping on reorder
             errors,
             touchedSet,
             dirtySet,
         });
+        // Register before hydration so watch reads can see this array immediately.
+        fieldArrayRegistry.set(path, array);
         // Initialize from defaultValues if available
         // When d-array is first rendered, it should start with values from defaultValues
         if (defaultsInitialized) {
@@ -696,7 +812,6 @@ export function createForm(options = {}) {
                 array.replace(initialValue);
             }
         }
-        fieldArrayRegistry.set(path, array);
         return array;
     }
     // Getters
@@ -711,6 +826,7 @@ export function createForm(options = {}) {
     }
     function _setFormElement(form) {
         formElement = form;
+        notifyWatchers();
     }
     // Cleanup on scope disposal
     if (scope) {
@@ -718,6 +834,7 @@ export function createForm(options = {}) {
             submitController?.abort();
             fieldRegistry.clear();
             fieldArrayRegistry.clear();
+            pathWatchers.clear();
         });
     }
     return {
@@ -733,6 +850,7 @@ export function createForm(options = {}) {
         submitting,
         submitCount,
         focus,
+        watch,
         _registerField,
         _getFormElement,
         _setFormElement,
@@ -844,6 +962,7 @@ function createFieldArray(basePath, options) {
             newKeys.forEach((key, i) => next.set(key, items[i]));
             return next;
         });
+        options.onMutate?.();
     }
     function remove(key) {
         const removeIndex = _getIndex(key);
@@ -905,6 +1024,7 @@ function createFieldArray(basePath, options) {
                 remapMetaState(oldIndices, newIndices);
             }
         }
+        options.onMutate?.();
     }
     function removeAt(index) {
         if (index < 0 || index >= keys().length)
@@ -939,6 +1059,7 @@ function createFieldArray(basePath, options) {
             next.set(key, value);
             return next;
         });
+        options.onMutate?.();
     }
     function move(fromIndex, toIndex) {
         const len = keys().length;
@@ -974,6 +1095,7 @@ function createFieldArray(basePath, options) {
             next.splice(toIndex, 0, item);
             return next;
         });
+        options.onMutate?.();
     }
     function swap(indexA, indexB) {
         const len = keys().length;
@@ -988,6 +1110,7 @@ function createFieldArray(basePath, options) {
             [next[indexA], next[indexB]] = [next[indexB], next[indexA]];
             return next;
         });
+        options.onMutate?.();
     }
     function replace(newValues) {
         const newKeys = newValues.map(() => generateKey());
@@ -1027,6 +1150,7 @@ function createFieldArray(basePath, options) {
         }
         keys.set(newKeys);
         values.set(new Map(newKeys.map((key, i) => [key, newValues[i]])));
+        options.onMutate?.();
     }
     function update(key, value) {
         values.update((prev) => {
@@ -1034,6 +1158,7 @@ function createFieldArray(basePath, options) {
             next.set(key, value);
             return next;
         });
+        options.onMutate?.();
     }
     function updateAt(index, value) {
         if (index < 0 || index >= keys().length)

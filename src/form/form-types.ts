@@ -137,6 +137,12 @@ export interface Form<T> {
    * Create or get a field array
    */
   fieldArray<TItem = unknown>(path: string): FieldArray<TItem>;
+
+  /**
+   * Watch a specific path and run callback when its value changes.
+   * Returns an idempotent unsubscribe function.
+   */
+  watch(path: string, fn: (next: unknown, prev: unknown) => void): () => void;
 }
 
 export interface FieldArrayItem<T = unknown> {
