@@ -337,6 +337,11 @@ export interface QueryClient {
      */
     setQueryData: <TResult>(key: QueryKey, updater: TResult | null | ((current: TResult | null | undefined) => TResult | null)) => TResult | null;
     /**
+     * Creates a memoized derived accessor from query cache data.
+     * Memoization is scoped by encoded key + selector identity.
+     */
+    select: <TResult, TSelected>(key: QueryKey | (() => QueryKey), selector: (data: TResult | null | undefined) => TSelected) => () => TSelected;
+    /**
      * Finds all queries matching filters.
      */
     findQueries: (filters?: QueryFilters | QueryKey) => QueryInfo[];

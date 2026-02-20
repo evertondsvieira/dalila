@@ -42,6 +42,10 @@ interface QueryClient {
   prefetchQuery<TK extends QueryKey, TR>(cfg: PrefetchQueryConfig<TK, TR>): Promise<TR | null>
 
   getQueryData<TR>(key: QueryKey): TR | null | undefined
+  select<TR, TSelected>(
+    key: QueryKey | (() => QueryKey),
+    selector: (data: TR | null | undefined) => TSelected
+  ): () => TSelected
   setQueryData<TR>(
     key: QueryKey,
     updater: TR | null | ((current: TR | null | undefined) => TR | null)
@@ -157,6 +161,15 @@ q.setQueryData(key, (old) => [...(old ?? []), { id: 99, title: "optimistic" }]);
 // rollback
 q.setQueryData(key, previous ?? []);
 ```
+
+## Derived Selectors
+
+```ts
+const userName = q.select(["user", 1], (data) => data?.name ?? "Unknown");
+console.log(userName());
+```
+
+`select()` memoizes by encoded key + selector identity and only recomputes when the base query data changes (`Object.is`).
 
 ## Infinite Query
 

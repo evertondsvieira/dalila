@@ -1,7 +1,7 @@
 import { computed, effect, signal } from "./signal.js";
 import { getCurrentScope, createScope, withScope } from "./scope.js";
 import { key as keyBuilder, encodeKey } from "./key.js";
-import { createResource, invalidateResourceCache, invalidateResourceTag, invalidateResourceTags, getResourceCacheData, getResourceCacheKeys, setResourceCacheData, cancelResourceCache, } from "./resource.js";
+import { createResource, invalidateResourceCache, invalidateResourceTag, invalidateResourceTags, getResourceCacheData, getResourceCacheKeys, getResourceCacheKeysByTag, setResourceCacheData, cancelResourceCache, } from "./resource.js";
 import { createMutation } from "./mutation.js";
 import { isInDevMode } from "./dev.js";
 function isKeyPrefixMatch(key, prefix) {
@@ -112,6 +112,10 @@ export function createQueryClient() {
     const registry = new Set();
     const managedCacheKeyRefs = new Map();
     const persistentManagedKeys = new Set();
+    const registryKeyVersionSignals = new Map();
+    const cacheVersionSignals = new Map();
+    const selectRefsByKey = new Map();
+    const sharedSelectByKey = new Map();
     function retainManagedCacheKey(key) {
         managedCacheKeyRefs.set(key, (managedCacheKeyRefs.get(key) ?? 0) + 1);
     }
@@ -119,6 +123,7 @@ export function createQueryClient() {
         const current = managedCacheKeyRefs.get(key) ?? 0;
         if (current <= 1) {
             managedCacheKeyRefs.delete(key);
+            maybeCleanupKeyState(key);
             return;
         }
         managedCacheKeyRefs.set(key, current - 1);
@@ -128,17 +133,107 @@ export function createQueryClient() {
         for (const key of managedCacheKeyRefs.keys()) {
             if (!existing.has(key)) {
                 managedCacheKeyRefs.delete(key);
+                maybeCleanupKeyState(key);
             }
         }
         for (const key of persistentManagedKeys) {
             if (!existing.has(key)) {
                 persistentManagedKeys.delete(key);
+                maybeCleanupKeyState(key);
             }
         }
         return Array.from(new Set([...managedCacheKeyRefs.keys(), ...persistentManagedKeys]));
     }
     function trackPersistentManagedKey(key) {
         persistentManagedKeys.add(key);
+    }
+    function retainSelectKey(key) {
+        selectRefsByKey.set(key, (selectRefsByKey.get(key) ?? 0) + 1);
+    }
+    function releaseSelectKey(key) {
+        const current = selectRefsByKey.get(key) ?? 0;
+        if (current <= 1) {
+            selectRefsByKey.delete(key);
+            maybeCleanupKeyState(key);
+            return;
+        }
+        selectRefsByKey.set(key, current - 1);
+    }
+    function hasRegistryEntryForKey(key) {
+        for (const entry of registry) {
+            if (entry.getCacheKey() === key)
+                return true;
+        }
+        return false;
+    }
+    function maybeCleanupKeyState(key) {
+        const stillInCache = getResourceCacheKeys().includes(key);
+        if (stillInCache)
+            return;
+        if (managedCacheKeyRefs.has(key))
+            return;
+        if (persistentManagedKeys.has(key))
+            return;
+        if (selectRefsByKey.has(key))
+            return;
+        if (hasRegistryEntryForKey(key))
+            return;
+        cacheVersionSignals.delete(key);
+        registryKeyVersionSignals.delete(key);
+        sharedSelectByKey.delete(key);
+    }
+    function getCacheVersionSignal(key) {
+        let version = cacheVersionSignals.get(key);
+        if (!version) {
+            version = signal(0);
+            cacheVersionSignals.set(key, version);
+        }
+        return version;
+    }
+    function bumpCacheVersion(key) {
+        getCacheVersionSignal(key).update((n) => n + 1);
+    }
+    function getRegistryKeyVersionSignal(key) {
+        let version = registryKeyVersionSignals.get(key);
+        if (!version) {
+            version = signal(0);
+            registryKeyVersionSignals.set(key, version);
+        }
+        return version;
+    }
+    function bumpRegistryKeyVersion(key) {
+        getRegistryKeyVersionSignal(key).update((n) => n + 1);
+    }
+    function getOrCreateSharedSelectAccessor(encodedKey, selector) {
+        let bySelector = sharedSelectByKey.get(encodedKey);
+        if (!bySelector) {
+            bySelector = new WeakMap();
+            sharedSelectByKey.set(encodedKey, bySelector);
+        }
+        const existing = bySelector.get(selector);
+        if (existing) {
+            return existing;
+        }
+        const selected = computed(() => {
+            getRegistryKeyVersionSignal(encodedKey)();
+            let source;
+            let found = false;
+            for (const entry of registry) {
+                if (entry.getCacheKey() !== encodedKey)
+                    continue;
+                source = entry.getData();
+                found = true;
+                break;
+            }
+            if (!found) {
+                getCacheVersionSignal(encodedKey)();
+                source = getResourceCacheData(encodedKey);
+            }
+            return selector(source);
+        });
+        const accessor = () => selected();
+        bySelector.set(selector, accessor);
+        return accessor;
     }
     function makeQuery(cfg, behavior) {
         const scope = getCurrentScope();
@@ -204,6 +299,7 @@ export function createQueryClient() {
             const opts = {
                 onError: cfg.onError,
                 onSuccess: (data) => {
+                    bumpCacheVersion(ck);
                     cfg.onSuccess?.(data);
                     scheduleStaleRevalidate(r, ck);
                 },
@@ -243,6 +339,7 @@ export function createQueryClient() {
             if (trackedManagedKey === current)
                 return;
             if (trackedManagedKey != null) {
+                bumpRegistryKeyVersion(trackedManagedKey);
                 releaseManagedCacheKey(trackedManagedKey);
             }
             retainManagedCacheKey(current);
@@ -250,6 +347,7 @@ export function createQueryClient() {
                 trackPersistentManagedKey(current);
             }
             trackedManagedKey = current;
+            bumpRegistryKeyVersion(current);
         });
         const entry = {
             getRawKey: () => rawKeySig(),
@@ -272,6 +370,7 @@ export function createQueryClient() {
             scope.onCleanup(() => {
                 registry.delete(entry);
                 if (trackedManagedKey != null) {
+                    bumpRegistryKeyVersion(trackedManagedKey);
                     releaseManagedCacheKey(trackedManagedKey);
                     trackedManagedKey = null;
                 }
@@ -316,10 +415,36 @@ export function createQueryClient() {
             entry.setData(next);
         }
         const appliedToCache = setResourceCacheData(encoded, next);
+        bumpCacheVersion(encoded);
         if (!appliedToRegistry && !appliedToCache) {
             return next;
         }
         return next;
+    }
+    function select(inputKey, selector) {
+        const keySig = computed(() => typeof inputKey === "function" ? inputKey() : inputKey);
+        const ownerScope = getCurrentScope();
+        let ownedKey = null;
+        if (ownerScope) {
+            ownerScope.onCleanup(() => {
+                if (ownedKey != null) {
+                    releaseSelectKey(ownedKey);
+                    ownedKey = null;
+                }
+            });
+        }
+        return () => {
+            const resolvedKey = keySig();
+            const encoded = encodeKey(resolvedKey);
+            if (ownedKey !== encoded) {
+                if (ownedKey != null) {
+                    releaseSelectKey(ownedKey);
+                }
+                ownedKey = encoded;
+                retainSelectKey(encoded);
+            }
+            return getOrCreateSharedSelectAccessor(encoded, selector)();
+        };
     }
     function findQueries(filters) {
         const normalized = normalizeQueryFilters(filters);
@@ -386,16 +511,32 @@ export function createQueryClient() {
             staleWhileRevalidate: cfg.staleWhileRevalidate ?? true,
         });
         await prefetched.refresh();
-        return prefetched.data();
+        const data = prefetched.data();
+        bumpCacheVersion(encoded);
+        return data;
     }
     function invalidateKey(k, opts = {}) {
-        invalidateResourceCache(encodeKey(k), opts);
+        const encoded = encodeKey(k);
+        invalidateResourceCache(encoded, opts);
+        bumpCacheVersion(encoded);
     }
     function invalidateTag(tag, opts = {}) {
+        const affected = getResourceCacheKeysByTag(tag);
         invalidateResourceTag(tag, opts);
+        for (const key of affected) {
+            bumpCacheVersion(key);
+        }
     }
     function invalidateTags(tags, opts = {}) {
+        const affected = new Set();
+        for (const tag of tags) {
+            for (const key of getResourceCacheKeysByTag(tag))
+                affected.add(key);
+        }
         invalidateResourceTags(tags, opts);
+        for (const key of affected) {
+            bumpCacheVersion(key);
+        }
     }
     function refetchQueries(filters, opts = {}) {
         const keys = new Set(findQueries(filters).map((q) => q.cacheKey));
@@ -410,6 +551,7 @@ export function createQueryClient() {
         if (!normalized.predicate) {
             for (const key of getFilteredCacheKeys(normalized, listManagedCacheKeys())) {
                 invalidateResourceCache(key, { revalidate: true, force: opts.force ?? true });
+                bumpCacheVersion(key);
             }
             return;
         }
@@ -550,6 +692,7 @@ export function createQueryClient() {
         prefetchQuery,
         getQueryData,
         setQueryData,
+        select,
         findQueries,
         cancelQueries,
         refetchQueries,

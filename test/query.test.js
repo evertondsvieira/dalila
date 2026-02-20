@@ -156,6 +156,204 @@ test("setQueryData clears previous query error state", async () => {
   scope.dispose();
 });
 
+test("query.select recomputes on explicit cache writes for the same key", async () => {
+  clearResourceCache();
+  const q = createQueryClient();
+  let selectorRuns = 0;
+  await q.prefetchQuery({
+    key: ["user", 1],
+    fetch: async () => ({ name: "Initial" }),
+  });
+
+  const selectName = q.select(["user", 1], (data) => {
+    selectorRuns++;
+    return data?.name ?? null;
+  });
+
+  assert.equal(selectName(), "Initial");
+  assert.equal(selectName(), "Initial");
+  assert.equal(selectorRuns, 1);
+
+  q.setQueryData(["user", 1], { name: "Ana" });
+  assert.equal(selectName(), "Ana");
+  assert.equal(selectName(), "Ana");
+  assert.equal(selectorRuns, 2);
+
+  const sameRef = { name: "Bea" };
+  q.setQueryData(["user", 1], sameRef);
+  assert.equal(selectName(), "Bea");
+  assert.equal(selectorRuns, 3);
+
+  q.setQueryData(["user", 1], sameRef);
+  assert.equal(selectName(), "Bea");
+  assert.equal(selectorRuns, 4);
+});
+
+test("query.select tracks reactive key changes", async () => {
+  clearResourceCache();
+  const q = createQueryClient();
+  const userId = signal(1);
+  await q.prefetchQuery({
+    key: ["user", 1],
+    fetch: async () => ({ id: 1, name: "Ana" }),
+  });
+  await q.prefetchQuery({
+    key: ["user", 2],
+    fetch: async () => ({ id: 2, name: "Bia" }),
+  });
+
+  const selectedName = q.select(() => q.key("user", userId()), (data) => data?.name ?? null);
+
+  assert.equal(selectedName(), "Ana");
+  userId.set(2);
+  await flush();
+  assert.equal(selectedName(), "Bia");
+});
+
+test("query.select preserves external reactive dependencies", async () => {
+  clearResourceCache();
+  const q = createQueryClient();
+  const multiplier = signal(2);
+  await q.prefetchQuery({
+    key: ["price", 1],
+    fetch: async () => ({ total: 10 }),
+  });
+
+  const selectedTotal = q.select(["price", 1], (data) => (data?.total ?? 0) * multiplier());
+  assert.equal(selectedTotal(), 20);
+
+  multiplier.set(3);
+  await flush();
+  assert.equal(selectedTotal(), 30);
+});
+
+test("query.select shares memoization by key and selector identity", async () => {
+  clearResourceCache();
+  const q = createQueryClient();
+  let selectorRuns = 0;
+
+  await q.prefetchQuery({
+    key: ["shared", 1],
+    fetch: async () => ({ name: "Shared" }),
+  });
+
+  const selector = (data) => {
+    selectorRuns++;
+    return data?.name ?? null;
+  };
+
+  const selectedA = q.select(["shared", 1], selector);
+  const selectedB = q.select(["shared", 1], selector);
+
+  assert.equal(selectedA(), "Shared");
+  assert.equal(selectedB(), "Shared");
+  assert.equal(selectorRuns, 1);
+
+  q.setQueryData(["shared", 1], { name: "Updated" });
+  assert.equal(selectedA(), "Updated");
+  assert.equal(selectedB(), "Updated");
+  assert.equal(selectorRuns, 2);
+});
+
+test("invalidateTag only bumps versions for matching tagged keys", async () => {
+  clearResourceCache();
+  const q = createQueryClient();
+  let userRuns = 0;
+  let todoRuns = 0;
+
+  await q.prefetchQuery({
+    key: ["user", 1],
+    tags: ["users"],
+    fetch: async () => ({ id: 1 }),
+  });
+  await q.prefetchQuery({
+    key: ["todo", 1],
+    tags: ["todos"],
+    fetch: async () => ({ id: 1 }),
+  });
+
+  const userSel = q.select(["user", 1], (data) => {
+    userRuns++;
+    return data?.id ?? null;
+  });
+  const todoSel = q.select(["todo", 1], (data) => {
+    todoRuns++;
+    return data?.id ?? null;
+  });
+
+  assert.equal(userSel(), 1);
+  assert.equal(todoSel(), 1);
+  assert.equal(userRuns, 1);
+  assert.equal(todoRuns, 1);
+
+  q.invalidateTag("users", { revalidate: false });
+
+  assert.equal(userSel(), 1);
+  assert.equal(todoSel(), 1);
+  assert.equal(userRuns, 2);
+  assert.equal(todoRuns, 1);
+});
+
+test("query.select updates when unscoped queryGlobal populates a previously missing key", async () => {
+  clearResourceCache();
+  const q = createQueryClient();
+
+  const selected = q.select(["late", 1], (data) => data?.value ?? null);
+  assert.equal(selected(), null);
+
+  const state = q.queryGlobal({
+    key: () => q.key("late", 1),
+    fetch: async () => ({ value: 42 }),
+  });
+
+  await flush();
+  await sleep(20);
+  assert.equal(state.data()?.value, 42);
+  assert.equal(selected(), 42);
+});
+
+test("query.select does not recompute on unrelated registry lifecycle changes", async () => {
+  clearResourceCache();
+  const q = createQueryClient();
+  let selectorRuns = 0;
+
+  const scopeA = createScope();
+  withScope(scopeA, () => {
+    q.query({
+      key: () => q.key("stable", 1),
+      fetch: async () => ({ value: 10 }),
+    });
+  });
+
+  await flush();
+  await sleep(10);
+
+  const selected = q.select(["stable", 1], (data) => {
+    selectorRuns++;
+    return data?.value ?? null;
+  });
+  assert.equal(selected(), 10);
+  assert.equal(selected(), 10);
+  assert.equal(selectorRuns, 1);
+
+  const scopeB = createScope();
+  withScope(scopeB, () => {
+    q.query({
+      key: () => q.key("other", 1),
+      fetch: async () => ({ value: 99 }),
+    });
+  });
+  await flush();
+  await sleep(10);
+  scopeB.dispose();
+  await flush();
+  await sleep(5);
+
+  assert.equal(selected(), 10);
+  assert.equal(selectorRuns, 1);
+  scopeA.dispose();
+});
+
 test("prefetchQuery stores data in cache before query mount", async () => {
   clearResourceCache();
 

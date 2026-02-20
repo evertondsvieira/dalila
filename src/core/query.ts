@@ -8,6 +8,7 @@ import {
   invalidateResourceTags,
   getResourceCacheData,
   getResourceCacheKeys,
+  getResourceCacheKeysByTag,
   setResourceCacheData,
   cancelResourceCache,
   type ResourceState,
@@ -406,6 +407,15 @@ export interface QueryClient {
    * Updates data in cache directly.
    */
   setQueryData: <TResult>(key: QueryKey, updater: TResult | null | ((current: TResult | null | undefined) => TResult | null)) => TResult | null;
+
+  /**
+   * Creates a memoized derived accessor from query cache data.
+   * Memoization is scoped by encoded key + selector identity.
+   */
+  select: <TResult, TSelected>(
+    key: QueryKey | (() => QueryKey),
+    selector: (data: TResult | null | undefined) => TSelected
+  ) => () => TSelected;
   
   /**
    * Finds all queries matching filters.
@@ -597,6 +607,10 @@ export function createQueryClient(): QueryClient {
   const registry = new Set<QueryRegistryEntry>();
   const managedCacheKeyRefs = new Map<string, number>();
   const persistentManagedKeys = new Set<string>();
+  const registryKeyVersionSignals = new Map<string, ReturnType<typeof signal<number>>>();
+  const cacheVersionSignals = new Map<string, ReturnType<typeof signal<number>>>();
+  const selectRefsByKey = new Map<string, number>();
+  const sharedSelectByKey = new Map<string, WeakMap<Function, () => unknown>>();
 
   function retainManagedCacheKey(key: string): void {
     managedCacheKeyRefs.set(key, (managedCacheKeyRefs.get(key) ?? 0) + 1);
@@ -606,6 +620,7 @@ export function createQueryClient(): QueryClient {
     const current = managedCacheKeyRefs.get(key) ?? 0;
     if (current <= 1) {
       managedCacheKeyRefs.delete(key);
+      maybeCleanupKeyState(key);
       return;
     }
     managedCacheKeyRefs.set(key, current - 1);
@@ -616,11 +631,13 @@ export function createQueryClient(): QueryClient {
     for (const key of managedCacheKeyRefs.keys()) {
       if (!existing.has(key)) {
         managedCacheKeyRefs.delete(key);
+        maybeCleanupKeyState(key);
       }
     }
     for (const key of persistentManagedKeys) {
       if (!existing.has(key)) {
         persistentManagedKeys.delete(key);
+        maybeCleanupKeyState(key);
       }
     }
     return Array.from(new Set([...managedCacheKeyRefs.keys(), ...persistentManagedKeys]));
@@ -628,6 +645,105 @@ export function createQueryClient(): QueryClient {
 
   function trackPersistentManagedKey(key: string): void {
     persistentManagedKeys.add(key);
+  }
+
+  function retainSelectKey(key: string): void {
+    selectRefsByKey.set(key, (selectRefsByKey.get(key) ?? 0) + 1);
+  }
+
+  function releaseSelectKey(key: string): void {
+    const current = selectRefsByKey.get(key) ?? 0;
+    if (current <= 1) {
+      selectRefsByKey.delete(key);
+      maybeCleanupKeyState(key);
+      return;
+    }
+    selectRefsByKey.set(key, current - 1);
+  }
+
+  function hasRegistryEntryForKey(key: string): boolean {
+    for (const entry of registry) {
+      if (entry.getCacheKey() === key) return true;
+    }
+    return false;
+  }
+
+  function maybeCleanupKeyState(key: string): void {
+    const stillInCache = getResourceCacheKeys().includes(key);
+    if (stillInCache) return;
+    if (managedCacheKeyRefs.has(key)) return;
+    if (persistentManagedKeys.has(key)) return;
+    if (selectRefsByKey.has(key)) return;
+    if (hasRegistryEntryForKey(key)) return;
+
+    cacheVersionSignals.delete(key);
+    registryKeyVersionSignals.delete(key);
+    sharedSelectByKey.delete(key);
+  }
+
+  function getCacheVersionSignal(key: string): ReturnType<typeof signal<number>> {
+    let version = cacheVersionSignals.get(key);
+    if (!version) {
+      version = signal(0);
+      cacheVersionSignals.set(key, version);
+    }
+    return version;
+  }
+
+  function bumpCacheVersion(key: string): void {
+    getCacheVersionSignal(key).update((n) => n + 1);
+  }
+
+  function getRegistryKeyVersionSignal(key: string): ReturnType<typeof signal<number>> {
+    let version = registryKeyVersionSignals.get(key);
+    if (!version) {
+      version = signal(0);
+      registryKeyVersionSignals.set(key, version);
+    }
+    return version;
+  }
+
+  function bumpRegistryKeyVersion(key: string): void {
+    getRegistryKeyVersionSignal(key).update((n) => n + 1);
+  }
+
+  function getOrCreateSharedSelectAccessor<TResult, TSelected>(
+    encodedKey: string,
+    selector: (data: TResult | null | undefined) => TSelected
+  ): () => TSelected {
+    let bySelector = sharedSelectByKey.get(encodedKey);
+    if (!bySelector) {
+      bySelector = new WeakMap<Function, () => unknown>();
+      sharedSelectByKey.set(encodedKey, bySelector);
+    }
+    const existing = bySelector.get(selector as Function);
+    if (existing) {
+      return existing as () => TSelected;
+    }
+
+    const selected = computed<TSelected>(() => {
+      getRegistryKeyVersionSignal(encodedKey)();
+
+      let source: TResult | null | undefined;
+      let found = false;
+      for (const entry of registry) {
+        if (entry.getCacheKey() !== encodedKey) continue;
+        source = entry.getData() as TResult | null | undefined;
+        found = true;
+        break;
+      }
+
+      if (!found) {
+        getCacheVersionSignal(encodedKey)();
+        source = getResourceCacheData<TResult>(encodedKey);
+      }
+
+      return selector(source);
+    });
+
+    const accessor = () => selected();
+    bySelector.set(selector as Function, accessor as () => unknown);
+    return accessor;
   }
 
   function makeQuery<TKey extends QueryKey, TResult>(
@@ -719,6 +835,7 @@ export function createQueryClient(): QueryClient {
       } = {
         onError: cfg.onError,
         onSuccess: (data) => {
+          bumpCacheVersion(ck);
           cfg.onSuccess?.(data);
           scheduleStaleRevalidate(r, ck);
         },
@@ -767,6 +884,7 @@ export function createQueryClient(): QueryClient {
       const current = cacheKeySig();
       if (trackedManagedKey === current) return;
       if (trackedManagedKey != null) {
+        bumpRegistryKeyVersion(trackedManagedKey);
         releaseManagedCacheKey(trackedManagedKey);
       }
       retainManagedCacheKey(current);
@@ -774,6 +892,7 @@ export function createQueryClient(): QueryClient {
         trackPersistentManagedKey(current);
       }
       trackedManagedKey = current;
+      bumpRegistryKeyVersion(current);
     });
 
     const entry: QueryRegistryEntry = {
@@ -798,6 +917,7 @@ export function createQueryClient(): QueryClient {
       scope.onCleanup(() => {
         registry.delete(entry);
         if (trackedManagedKey != null) {
+          bumpRegistryKeyVersion(trackedManagedKey);
           releaseManagedCacheKey(trackedManagedKey);
           trackedManagedKey = null;
         }
@@ -851,11 +971,45 @@ export function createQueryClient(): QueryClient {
     }
 
     const appliedToCache = setResourceCacheData<TResult>(encoded, next);
+    bumpCacheVersion(encoded);
     if (!appliedToRegistry && !appliedToCache) {
       return next;
     }
 
     return next;
+  }
+
+  function select<TResult, TSelected>(
+    inputKey: QueryKey | (() => QueryKey),
+    selector: (data: TResult | null | undefined) => TSelected
+  ): () => TSelected {
+    const keySig = computed<QueryKey>(() =>
+      typeof inputKey === "function" ? (inputKey as () => QueryKey)() : inputKey
+    );
+    const ownerScope = getCurrentScope();
+    let ownedKey: string | null = null;
+
+    if (ownerScope) {
+      ownerScope.onCleanup(() => {
+        if (ownedKey != null) {
+          releaseSelectKey(ownedKey);
+          ownedKey = null;
+        }
+      });
+    }
+
+    return () => {
+      const resolvedKey = keySig();
+      const encoded = encodeKey(resolvedKey);
+      if (ownedKey !== encoded) {
+        if (ownedKey != null) {
+          releaseSelectKey(ownedKey);
+        }
+        ownedKey = encoded;
+        retainSelectKey(encoded);
+      }
+      return getOrCreateSharedSelectAccessor<TResult, TSelected>(encoded, selector)();
+    };
   }
 
   function findQueries(filters?: QueryFilters | QueryKey): QueryInfo[] {
@@ -935,19 +1089,34 @@ export function createQueryClient(): QueryClient {
     );
 
     await prefetched.refresh();
-    return prefetched.data();
+    const data = prefetched.data();
+    bumpCacheVersion(encoded);
+    return data;
   }
 
   function invalidateKey(k: QueryKey, opts: { revalidate?: boolean; force?: boolean } = {}): void {
-    invalidateResourceCache(encodeKey(k), opts);
+    const encoded = encodeKey(k);
+    invalidateResourceCache(encoded, opts);
+    bumpCacheVersion(encoded);
   }
 
   function invalidateTag(tag: string, opts: { revalidate?: boolean; force?: boolean } = {}): void {
+    const affected = getResourceCacheKeysByTag(tag);
     invalidateResourceTag(tag, opts);
+    for (const key of affected) {
+      bumpCacheVersion(key);
+    }
   }
 
   function invalidateTags(tags: readonly string[], opts: { revalidate?: boolean; force?: boolean } = {}): void {
+    const affected = new Set<string>();
+    for (const tag of tags) {
+      for (const key of getResourceCacheKeysByTag(tag)) affected.add(key);
+    }
     invalidateResourceTags(tags, opts);
+    for (const key of affected) {
+      bumpCacheVersion(key);
+    }
   }
 
   function refetchQueries(filters?: QueryFilters | QueryKey, opts: { force?: boolean } = {}): void {
@@ -963,6 +1132,7 @@ export function createQueryClient(): QueryClient {
     if (!normalized.predicate) {
       for (const key of getFilteredCacheKeys(normalized, listManagedCacheKeys())) {
         invalidateResourceCache(key, { revalidate: true, force: opts.force ?? true });
+        bumpCacheVersion(key);
       }
       return;
     }
@@ -1132,6 +1302,7 @@ export function createQueryClient(): QueryClient {
     prefetchQuery,
     getQueryData,
     setQueryData,
+    select,
     findQueries,
     cancelQueries,
     refetchQueries,
