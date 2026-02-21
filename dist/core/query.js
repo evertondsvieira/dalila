@@ -697,7 +697,26 @@ export function createQueryClient() {
         cancelQueries,
         refetchQueries,
         observeQuery,
-        mutation: (cfg) => createMutation(cfg),
+        mutation: (cfg) => {
+            const { optimistic, ...rest } = cfg;
+            if (!optimistic) {
+                return createMutation(rest);
+            }
+            const cacheHelpers = {
+                key: keyBuilder,
+                getQueryData,
+                setQueryData,
+                cancelQueries,
+                invalidateQueries,
+            };
+            return createMutation({
+                ...rest,
+                optimistic: {
+                    rollback: optimistic.rollback,
+                    apply: (input) => optimistic.apply(cacheHelpers, input),
+                },
+            });
+        },
         invalidateKey,
         invalidateTag,
         invalidateTags,

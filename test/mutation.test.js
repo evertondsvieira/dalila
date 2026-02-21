@@ -204,6 +204,35 @@ test("mutation does not run mutationFn for aborted run after onMutate resolves",
   scope.dispose();
 });
 
+test("mutation treats non-signal AbortError as regular error", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  const calls = [];
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async () => {
+        const err = new Error("request timed out");
+        err.name = "AbortError";
+        throw err;
+      },
+      onError: (err) => {
+        calls.push(`error:${err.name}`);
+      },
+      onSettled: (_result, err) => {
+        calls.push(`settled:${err?.name ?? "none"}`);
+      },
+    });
+  });
+
+  const result = await m.run({ id: 1 });
+  assert.equal(result, null);
+  assert.equal(m.error()?.name, "AbortError");
+  assert.deepEqual(calls, ["error:AbortError", "settled:AbortError"]);
+  scope.dispose();
+});
+
 test("mutation clears loading when onMutate error hooks throw", async () => {
   const scope = createScope();
   const q = createQueryClient();
@@ -233,5 +262,219 @@ test("mutation clears loading when onMutate error hooks throw", async () => {
   assert.equal(second, null);
   assert.equal(m.loading(), false);
   assert.equal(starts, 0);
+  scope.dispose();
+});
+
+test("mutation supports optimistic shorthand with automatic rollback", async () => {
+  clearResourceCache();
+  const scope = createScope();
+  const q = createQueryClient();
+
+  let todos;
+  let save;
+  withScope(scope, () => {
+    todos = q.query({
+      key: () => q.key("todos-shorthand"),
+      fetch: async () => [{ id: 1, title: "A" }],
+    });
+
+    save = q.mutation({
+      mutationFn: async () => {
+        await sleep(10);
+        throw new Error("boom");
+      },
+      optimistic: {
+        apply: (cache, newTodo) => {
+          const previous = cache.getQueryData(["todos-shorthand"]);
+          cache.setQueryData(["todos-shorthand"], (old) => [...(old ?? []), newTodo]);
+          return () => {
+            cache.setQueryData(["todos-shorthand"], previous ?? []);
+          };
+        },
+        rollback: true,
+      },
+    });
+  });
+
+  await flush();
+  await sleep(10);
+
+  const runPromise = save.run({ id: 2, title: "B" });
+  await flush();
+  assert.equal(todos.data().length, 2);
+
+  await runPromise;
+  await sleep(10);
+  assert.equal(todos.data().length, 1);
+  scope.dispose();
+});
+
+test("mutation retries transient failures", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  let attempts = 0;
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async (_sig, input) => {
+        attempts++;
+        if (attempts < 3) throw new Error("temporary");
+        return { ok: true, input, attempts };
+      },
+      retry: 2,
+      retryDelay: () => 1,
+    });
+  });
+
+  const result = await m.run({ id: 1 });
+  assert.deepEqual(result, { ok: true, input: { id: 1 }, attempts: 3 });
+  assert.equal(attempts, 3);
+  assert.equal(m.error(), null);
+  scope.dispose();
+});
+
+test("mutation queue serial runs calls in order", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  const starts = [];
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async (_sig, input) => {
+        starts.push(input.id);
+        await sleep(10);
+        return { id: input.id };
+      },
+      queue: "serial",
+    });
+  });
+
+  const [r1, r2, r3] = await Promise.all([
+    m.run({ id: 1 }),
+    m.run({ id: 2 }),
+    m.run({ id: 3 }),
+  ]);
+
+  assert.deepEqual(starts, [1, 2, 3]);
+  assert.deepEqual(r1, { id: 1 });
+  assert.deepEqual(r2, { id: 2 });
+  assert.deepEqual(r3, { id: 3 });
+  scope.dispose();
+});
+
+test("mutation queue serial maxQueue counts only waiting jobs", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  const starts = [];
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async (_sig, input) => {
+        starts.push(input.id);
+        await sleep(10);
+        return { id: input.id };
+      },
+      queue: "serial",
+      maxQueue: 1,
+    });
+  });
+
+  const p1 = m.run({ id: 1 });
+  const p2 = m.run({ id: 2 });
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  assert.deepEqual(starts, [1, 2]);
+  assert.deepEqual(r1, { id: 1 });
+  assert.deepEqual(r2, { id: 2 });
+  assert.equal(m.error(), null);
+  scope.dispose();
+});
+
+test("mutation queue serial allows first run when maxQueue is 0", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  const starts = [];
+  let releaseFirst;
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async (_sig, input) => {
+        starts.push(input.id);
+        if (input.id === 1) {
+          await new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        return { id: input.id };
+      },
+      queue: "serial",
+      maxQueue: 0,
+    });
+  });
+
+  const p1 = m.run({ id: 1 });
+  await flush();
+  assert.deepEqual(starts, [1]);
+
+  const r2 = await m.run({ id: 2 });
+  assert.equal(r2, null);
+  assert.equal(m.error()?.message, "Mutation queue is full (maxQueue=0)");
+
+  releaseFirst();
+  const r1 = await p1;
+  assert.deepEqual(r1, { id: 1 });
+  scope.dispose();
+});
+
+test("mutation queue serial force reset ignores stale epoch completion bookkeeping", async () => {
+  const scope = createScope();
+  const q = createQueryClient();
+  const starts = [];
+  const releases = new Map();
+  let m;
+
+  withScope(scope, () => {
+    m = q.mutation({
+      mutationFn: async (_sig, input) => {
+        starts.push(input.id);
+        await new Promise((resolve) => {
+          releases.set(input.id, resolve);
+        });
+        return { id: input.id };
+      },
+      queue: "serial",
+    });
+  });
+
+  const p1 = m.run({ id: 1 });
+  const p2 = m.run({ id: 2 });
+  await flush();
+  assert.deepEqual(starts, [1]);
+
+  const p3 = m.run({ id: 3 }, { force: true });
+  await flush();
+  assert.deepEqual(starts, [1, 3]);
+
+  releases.get(1)?.();
+  await p1;
+
+  const p4 = m.run({ id: 4 });
+  await flush();
+  assert.deepEqual(starts, [1, 3]);
+
+  releases.get(3)?.();
+  const r3 = await p3;
+  await flush();
+  assert.deepEqual(r3, { id: 3 });
+  assert.deepEqual(starts, [1, 3, 4]);
+
+  releases.get(4)?.();
+  const [r2, r4] = await Promise.all([p2, p4]);
+  assert.equal(r2, null);
+  assert.deepEqual(r4, { id: 4 });
   scope.dispose();
 });

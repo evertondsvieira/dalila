@@ -49,6 +49,16 @@ interface MutationConfig<TInput, TResult, TContext> {
 
   invalidateTags?: readonly string[]
   invalidateKeys?: readonly QueryKey[]
+
+  optimistic?: {
+    apply: (input: TInput) => void | (() => void | Promise<void>) | { rollback?: () => void | Promise<void> }
+    rollback?: boolean | ((context: unknown, input: TInput) => void | Promise<void>)
+  }
+
+  retry?: number | ((failureCount: number, error: Error, input: TInput) => boolean)
+  retryDelay?: number | ((failureCount: number, error: Error, input: TInput) => number)
+  queue?: "dedupe" | "serial"
+  maxQueue?: number
 }
 
 interface MutationState<TInput, TResult> {
@@ -124,6 +134,36 @@ const updateUser = createMutation({
   },
   invalidateTags: ["users"],
   invalidateKeys: [["user", "me"]],
+});
+```
+
+## Optimistic Shorthand
+
+When using `queryClient.mutation(...)`, `optimistic.apply` receives cache helpers as first argument.
+
+```ts
+const saveTodo = q.mutation({
+  mutationFn: apiSaveTodo,
+  optimistic: {
+    apply: (cache, input) => {
+      const previous = cache.getQueryData(["todos"]);
+      cache.setQueryData(["todos"], (old) => [...(old ?? []), input]);
+      return () => cache.setQueryData(["todos"], previous ?? []);
+    },
+    rollback: true,
+  },
+  invalidateKeys: [["todos"]],
+});
+```
+
+## Retry and Serial Queue
+
+```ts
+const saveDraft = createMutation({
+  mutationFn: apiSaveDraft,
+  retry: 3,
+  retryDelay: (attempt) => attempt * 300,
+  queue: "serial",
 });
 ```
 

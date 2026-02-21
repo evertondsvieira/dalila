@@ -278,6 +278,30 @@ export interface QueryObserverSnapshot<TResult> {
     /** Cache key. */
     cacheKey: string;
 }
+export interface QueryMutationCacheHelpers {
+    key: typeof keyBuilder;
+    getQueryData: <TResult>(key: QueryKey) => TResult | null | undefined;
+    setQueryData: <TResult>(key: QueryKey, updater: TResult | null | ((current: TResult | null | undefined) => TResult | null)) => TResult | null;
+    cancelQueries: (filters?: QueryFilters | QueryKey) => void;
+    invalidateQueries: (filters: QueryFilters | QueryKey, opts?: {
+        force?: boolean;
+    }) => void;
+}
+export interface QueryMutationOptimisticConfig<TInput> {
+    apply: (cache: QueryMutationCacheHelpers, input: TInput) => void | (() => void | Promise<void>) | {
+        rollback?: () => void | Promise<void>;
+    } | Promise<void | (() => void | Promise<void>) | {
+        rollback?: () => void | Promise<void>;
+    }>;
+    rollback?: boolean;
+}
+export interface QueryMutationConfig<TInput, TResult, TContext = unknown> extends Omit<MutationConfig<TInput, TResult, TContext>, "optimistic"> {
+    /**
+     * Query-aware optimistic helper.
+     * Receives cache helpers and can return a rollback function.
+     */
+    optimistic?: QueryMutationOptimisticConfig<TInput>;
+}
 /**
  * Query client - main interface for managing queries and mutations.
  *
@@ -365,7 +389,7 @@ export interface QueryClient {
     /**
      * Creates a mutation associated with this client.
      */
-    mutation: <TInput, TResult, TContext = unknown>(cfg: MutationConfig<TInput, TResult, TContext>) => MutationState<TInput, TResult>;
+    mutation: <TInput, TResult, TContext = unknown>(cfg: QueryMutationConfig<TInput, TResult, TContext>) => MutationState<TInput, TResult>;
     /**
      * Invalidates all queries with a specific key.
      */

@@ -1,4 +1,23 @@
 import { type QueryKey } from "./key.js";
+type MutationRetryFn<TInput> = (failureCount: number, error: Error, input: TInput) => boolean;
+type MutationRetryDelayFn<TInput> = (failureCount: number, error: Error, input: TInput) => number;
+type MutationQueueMode = "dedupe" | "serial";
+type RollbackFn = () => void | Promise<void>;
+export type MutationOptimisticApplyResult<TOptimisticContext = unknown> = void | TOptimisticContext | RollbackFn | {
+    rollback?: RollbackFn;
+};
+export interface MutationOptimisticConfig<TInput, TOptimisticContext = unknown> {
+    /**
+     * Applies optimistic changes before the mutationFn runs.
+     * Can return a rollback function (directly or in { rollback }).
+     */
+    apply: (input: TInput) => Promise<MutationOptimisticApplyResult<TOptimisticContext>> | MutationOptimisticApplyResult<TOptimisticContext>;
+    /**
+     * If true, rollback is attempted on mutation error or abort.
+     * A custom rollback function can also be provided.
+     */
+    rollback?: boolean | ((context: TOptimisticContext | undefined, input: TInput) => void | Promise<void>);
+}
 /**
  * Configuration for creating a mutation (write operation).
  *
@@ -55,6 +74,32 @@ export interface MutationConfig<TInput, TResult, TContext = unknown> {
      * @param context - The context returned by onMutate (or undefined)
      */
     onSettled?: (result: TResult | null, error: Error | null, input: TInput, context: TContext | undefined) => void;
+    /**
+     * Simplified optimistic update API.
+     * Useful when you only need apply + automatic rollback behavior.
+     */
+    optimistic?: MutationOptimisticConfig<TInput>;
+    /**
+     * Number of retry attempts on mutationFn failures.
+     * Can be a number or a function returning whether to retry.
+     */
+    retry?: number | MutationRetryFn<TInput>;
+    /**
+     * Delay between retries in ms.
+     * Can be a number or a function.
+     */
+    retryDelay?: number | MutationRetryDelayFn<TInput>;
+    /**
+     * Queue behavior for run() calls.
+     * - dedupe (default): concurrent runs share in-flight result
+     * - serial: runs execute one-by-one in call order
+     */
+    queue?: MutationQueueMode;
+    /**
+     * Maximum queued items when queue="serial".
+     * Extra calls are rejected with null and error state set.
+     */
+    maxQueue?: number;
 }
 /**
  * Mutation state, exposing functions to control and access data.
@@ -128,3 +173,4 @@ export interface MutationState<TInput, TResult> {
  * ```
  */
 export declare function createMutation<TInput, TResult, TContext = unknown>(cfg: MutationConfig<TInput, TResult, TContext>): MutationState<TInput, TResult>;
+export {};

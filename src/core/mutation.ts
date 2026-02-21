@@ -3,6 +3,31 @@ import { getCurrentScope } from "./scope.js";
 import { encodeKey, type QueryKey } from "./key.js";
 import { invalidateResourceCache, invalidateResourceTags } from "./resource.js";
 
+type MutationRetryFn<TInput> = (failureCount: number, error: Error, input: TInput) => boolean;
+type MutationRetryDelayFn<TInput> = (failureCount: number, error: Error, input: TInput) => number;
+type MutationQueueMode = "dedupe" | "serial";
+type RollbackFn = () => void | Promise<void>;
+
+export type MutationOptimisticApplyResult<TOptimisticContext = unknown> =
+  | void
+  | TOptimisticContext
+  | RollbackFn
+  | { rollback?: RollbackFn };
+
+export interface MutationOptimisticConfig<TInput, TOptimisticContext = unknown> {
+  /**
+   * Applies optimistic changes before the mutationFn runs.
+   * Can return a rollback function (directly or in { rollback }).
+   */
+  apply: (input: TInput) => Promise<MutationOptimisticApplyResult<TOptimisticContext>> | MutationOptimisticApplyResult<TOptimisticContext>;
+
+  /**
+   * If true, rollback is attempted on mutation error or abort.
+   * A custom rollback function can also be provided.
+   */
+  rollback?: boolean | ((context: TOptimisticContext | undefined, input: TInput) => void | Promise<void>);
+}
+
 /**
  * Configuration for creating a mutation (write operation).
  * 
@@ -71,6 +96,37 @@ export interface MutationConfig<TInput, TResult, TContext = unknown> {
     input: TInput,
     context: TContext | undefined
   ) => void;
+
+  /**
+   * Simplified optimistic update API.
+   * Useful when you only need apply + automatic rollback behavior.
+   */
+  optimistic?: MutationOptimisticConfig<TInput>;
+
+  /**
+   * Number of retry attempts on mutationFn failures.
+   * Can be a number or a function returning whether to retry.
+   */
+  retry?: number | MutationRetryFn<TInput>;
+
+  /**
+   * Delay between retries in ms.
+   * Can be a number or a function.
+   */
+  retryDelay?: number | MutationRetryDelayFn<TInput>;
+
+  /**
+   * Queue behavior for run() calls.
+   * - dedupe (default): concurrent runs share in-flight result
+   * - serial: runs execute one-by-one in call order
+   */
+  queue?: MutationQueueMode;
+
+  /**
+   * Maximum queued items when queue="serial".
+   * Extra calls are rejected with null and error state set.
+   */
+  maxQueue?: number;
 }
 
 /**
@@ -109,6 +165,88 @@ export interface MutationState<TInput, TResult> {
    * Aborts any in-flight mutation and clears data, loading, and error.
    */
   reset: () => void;
+}
+
+function abortError(): Error {
+  const err = new Error("Aborted");
+  err.name = "AbortError";
+  return err;
+}
+
+async function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(abortError());
+      return;
+    }
+
+    const onAbort = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      reject(abortError());
+    };
+
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function shouldRetry<TInput>(
+  retry: number | MutationRetryFn<TInput> | undefined,
+  failureCount: number,
+  error: Error,
+  input: TInput
+): boolean {
+  if (typeof retry === "function") return retry(failureCount, error, input);
+  const maxRetries = retry ?? 0;
+  return failureCount <= maxRetries;
+}
+
+function retryDelayMs<TInput>(
+  retryDelay: number | MutationRetryDelayFn<TInput> | undefined,
+  failureCount: number,
+  error: Error,
+  input: TInput
+): number {
+  if (typeof retryDelay === "function") {
+    return Math.max(0, retryDelay(failureCount, error, input));
+  }
+  return Math.max(0, retryDelay ?? 300);
+}
+
+async function runWithRetry<TInput, TResult>(
+  signal: AbortSignal,
+  input: TInput,
+  run: () => Promise<TResult>,
+  retry: number | MutationRetryFn<TInput> | undefined,
+  retryDelay: number | MutationRetryDelayFn<TInput> | undefined
+): Promise<TResult> {
+  let failureCount = 0;
+  while (true) {
+    try {
+      return await run();
+    } catch (error) {
+      if (signal.aborted) throw abortError();
+      const err = error instanceof Error ? error : new Error(String(error));
+      failureCount++;
+      if (!shouldRetry(retry, failureCount, err, input)) throw err;
+      await waitForRetry(retryDelayMs(retryDelay, failureCount, err, input), signal);
+    }
+  }
+}
+
+function getRollbackFromApplyResult(result: MutationOptimisticApplyResult<unknown>): RollbackFn | null {
+  if (!result) return null;
+  if (typeof result === "function") return result as RollbackFn;
+  if (typeof result === "object" && "rollback" in result && typeof result.rollback === "function") {
+    return result.rollback as RollbackFn;
+  }
+  return null;
 }
 
 /**
@@ -156,6 +294,11 @@ export function createMutation<TInput, TResult, TContext = unknown>(
 
   let inFlight: Promise<TResult | null> | null = null;
   let controller: AbortController | null = null;
+  const idleSerialTail = Promise.resolve();
+  let serialTail: Promise<void> = idleSerialTail;
+  let queuedCount = 0;
+  let queueEpoch = 0;
+  const queueMode: MutationQueueMode = cfg.queue ?? "dedupe";
 
   const scope = getCurrentScope();
   if (scope) {
@@ -163,6 +306,9 @@ export function createMutation<TInput, TResult, TContext = unknown>(
       controller?.abort();
       controller = null;
       inFlight = null;
+      queueEpoch++;
+      queuedCount = 0;
+      serialTail = idleSerialTail;
     });
   }
 
@@ -171,12 +317,7 @@ export function createMutation<TInput, TResult, TContext = unknown>(
     throw new Error("createMutation requires mutationFn or mutate");
   }
 
-  async function run(input: TInput, opts: { force?: boolean } = {}): Promise<TResult | null> {
-    if (loading() && !opts.force) {
-      const pending = inFlight;
-      return (await (pending ?? Promise.resolve(null))) as TResult | null;
-    }
-
+  async function executeMutation(input: TInput): Promise<TResult | null> {
     controller?.abort();
     controller = new AbortController();
     const sig = controller.signal;
@@ -187,14 +328,38 @@ export function createMutation<TInput, TResult, TContext = unknown>(
 
     inFlight = (async () => {
       let context: TContext | undefined = undefined;
+      let optimisticContext: unknown = undefined;
+      let optimisticRollback: RollbackFn | null = null;
+
+      const rollbackIfNeeded = async (): Promise<void> => {
+        if (!cfg.optimistic?.rollback) return;
+        try {
+          if (typeof cfg.optimistic.rollback === "function") {
+            await cfg.optimistic.rollback(optimisticContext, input);
+            return;
+          }
+          await optimisticRollback?.();
+        } catch {
+        }
+      };
 
       try {
+        if (cfg.optimistic) {
+          const optimisticResult = await cfg.optimistic.apply(input);
+          optimisticRollback = getRollbackFromApplyResult(optimisticResult);
+          optimisticContext = optimisticResult;
+        }
+
         if (cfg.onMutate) {
           context = await cfg.onMutate(input);
         }
       } catch (e) {
-        if (sig.aborted) return null;
+        if (sig.aborted) {
+          await rollbackIfNeeded();
+          return null;
+        }
         const err = e instanceof Error ? e : new Error(String(e));
+        await rollbackIfNeeded();
         error.set(err);
         if (controller === localController) loading.set(false);
         try {
@@ -205,11 +370,23 @@ export function createMutation<TInput, TResult, TContext = unknown>(
         return null;
       }
 
-      if (sig.aborted) return null;
+      if (sig.aborted) {
+        await rollbackIfNeeded();
+        return null;
+      }
 
       try {
-        const result = await (mutationFn as (signal: AbortSignal, input: TInput) => Promise<TResult>)(sig, input);
-        if (sig.aborted) return null;
+        const result = await runWithRetry(
+          sig,
+          input,
+          () => (mutationFn as (signal: AbortSignal, input: TInput) => Promise<TResult>)(sig, input),
+          cfg.retry,
+          cfg.retryDelay
+        );
+        if (sig.aborted) {
+          await rollbackIfNeeded();
+          return null;
+        }
 
         data.set(result);
         cfg.onSuccess?.(result, input, context);
@@ -227,9 +404,13 @@ export function createMutation<TInput, TResult, TContext = unknown>(
         cfg.onSettled?.(result, null, input, context);
         return result;
       } catch (e) {
-        if (sig.aborted) return null;
+        if (sig.aborted) {
+          await rollbackIfNeeded();
+          return null;
+        }
 
         const err = e instanceof Error ? e : new Error(String(e));
+        await rollbackIfNeeded();
         error.set(err);
         cfg.onError?.(err, input, context);
         cfg.onSettled?.(null, err, input, context);
@@ -242,10 +423,70 @@ export function createMutation<TInput, TResult, TContext = unknown>(
     return await inFlight;
   }
 
+  async function run(input: TInput, opts: { force?: boolean } = {}): Promise<TResult | null> {
+    const markSerialIdle = (epoch: number): void => {
+      if (epoch !== queueEpoch) return;
+      if (queuedCount === 0) {
+        serialTail = idleSerialTail;
+      }
+    };
+
+    if (queueMode === "serial") {
+      if (opts.force) {
+        controller?.abort();
+        queueEpoch++;
+        queuedCount = 0;
+        serialTail = idleSerialTail;
+      }
+
+      const limit = cfg.maxQueue;
+      if (typeof limit === "number" && limit >= 0) {
+        const queueIsFull = queuedCount >= limit + 1;
+        if (queueIsFull) {
+          const err = new Error(`Mutation queue is full (maxQueue=${limit})`);
+          error.set(err);
+          return null;
+        }
+      }
+
+      const epoch = queueEpoch;
+      queuedCount++;
+
+      const runPromise = serialTail.then(async () => {
+        if (epoch !== queueEpoch) return null;
+        return await executeMutation(input);
+      });
+
+      serialTail = runPromise.then(
+        () => {
+          if (epoch !== queueEpoch) return;
+          queuedCount = Math.max(0, queuedCount - 1);
+          markSerialIdle(epoch);
+        },
+        () => {
+          if (epoch !== queueEpoch) return;
+          queuedCount = Math.max(0, queuedCount - 1);
+          markSerialIdle(epoch);
+        }
+      );
+      return await runPromise;
+    }
+
+    if (loading() && !opts.force) {
+      const pending = inFlight;
+      return (await (pending ?? Promise.resolve(null))) as TResult | null;
+    }
+
+    return await executeMutation(input);
+  }
+
   function reset(): void {
     controller?.abort();
     controller = null;
     inFlight = null;
+    queueEpoch++;
+    queuedCount = 0;
+    serialTail = idleSerialTail;
 
     loading.set(false);
     error.set(null);
