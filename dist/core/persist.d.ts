@@ -31,11 +31,25 @@ export interface PersistOptions<T> {
      * Kept for forward-compat with preload injection.
      */
     preload?: boolean;
+    /**
+     * Sync persisted state across browser tabs using BroadcastChannel.
+     * When enabled, changes in one tab will automatically reflect in other tabs.
+     * Default: false
+     */
+    syncTabs?: boolean;
+}
+/**
+ * Signal with optional dispose method for manual cleanup.
+ * Returned when persist() is called outside of a scope.
+ */
+export interface PersistedSignal<T> extends Signal<T> {
+    /** Cleanup resources. Only available when persist is called outside a scope. */
+    dispose?: () => void;
 }
 /**
  * Create a persisted signal that automatically syncs with storage.
  */
-export declare function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): Signal<T>;
+export declare function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): Signal<T> | PersistedSignal<T>;
 /**
  * Helper to create JSON storage wrapper
  */

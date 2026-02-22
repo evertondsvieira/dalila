@@ -685,3 +685,121 @@ test('persist: preload flag does not affect runtime behavior', async () => {
 
   scope.dispose();
 });
+
+// ============================================
+// Tab Sync (syncTabs)
+// ============================================
+
+test('persist: syncTabs option is accepted without error', () => {
+  const storage = new MockStorage();
+  const scope = createScope();
+
+  withScope(scope, () => {
+    // Should not throw - syncTabs is an accepted option
+    const count = persist(signal(0), {
+      name: 'sync-tabs-test',
+      storage,
+      syncTabs: true,
+    });
+
+    assert.equal(count.peek(), 0, 'Should work with syncTabs option');
+  });
+
+  scope.dispose();
+});
+
+test('persist: syncTabs defaults to false', async () => {
+  const storage = new MockStorage();
+  const scope = createScope();
+
+  await withScopeAsync(scope, async () => {
+    // Should work without syncTabs option
+    const count = persist(signal(0), {
+      name: 'no-sync-tabs',
+      storage,
+    });
+
+    count.set(10);
+
+    // Wait for effect + queued write
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.equal(storage.getItem('no-sync-tabs'), '10');
+  });
+
+  scope.dispose();
+});
+
+test('persist: syncTabs works with merge shallow', () => {
+  const storage = new MockStorage();
+  const scope = createScope();
+
+  withScope(scope, () => {
+    const prefs = persist(signal({ theme: 'light', lang: 'en' }), {
+      name: 'sync-merge-test',
+      storage,
+      syncTabs: true,
+      merge: 'shallow',
+    });
+
+    assert.deepEqual(prefs.peek(), { theme: 'light', lang: 'en' });
+  });
+
+  scope.dispose();
+});
+
+test('persist: syncTabs with version', async () => {
+  const storage = new MockStorage();
+  storage.setItem('versioned-sync', JSON.stringify({ value: 1 }));
+  storage.setItem('versioned-sync:version', '1');
+
+  const scope = createScope();
+
+  await withScopeAsync(scope, async () => {
+    const data = persist(signal({ value: 0, extra: 'field' }), {
+      name: 'versioned-sync',
+      storage,
+      syncTabs: true,
+      version: 2,
+      migrate: (persisted, version) => {
+        if (version < 2) {
+          return { ...persisted, extra: 'field' };
+        }
+        return persisted;
+      },
+    });
+
+    // Should have migrated
+    assert.deepEqual(data.peek(), { value: 1, extra: 'field' });
+
+    // Wait for migration save
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.equal(storage.getItem('versioned-sync:version'), '2');
+  });
+
+  scope.dispose();
+});
+
+test('persist: returns dispose for manual cleanup when no scope', async () => {
+  const storage = new MockStorage();
+
+  const count = persist(signal(0), {
+    name: 'manual-cleanup-test',
+    storage,
+    syncTabs: true,
+  });
+
+  count.set(10);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(storage.getItem('manual-cleanup-test'), '10');
+
+  assert.equal(typeof count.dispose, 'function');
+
+  count.dispose();
+
+  count.set(20);
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(storage.getItem('manual-cleanup-test'), '10');
+});

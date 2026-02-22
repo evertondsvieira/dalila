@@ -123,17 +123,28 @@ const settings = persist(signal({ theme: 'dark', lang: 'en' }), {
 });
 ```
 
-### `onRehydrate` and `onError` (optional)
+### `syncTabs` (optional)
 
-Callbacks for hydration and error handling.
+Sync persisted state across browser tabs using BroadcastChannel. When enabled, changes in one tab will automatically reflect in other tabs.
 
 ```ts
-const data = persist(signal([]), {
-  name: 'data',
-  onRehydrate: (state) => console.log('Restored:', state),
-  onError: (error) => console.error('Failed:', error)
+// Enable tab sync
+const session = persist(signal({ user: null }), {
+  name: 'session',
+  syncTabs: true
 });
+
+// Changes in tab A automatically appear in tab B
+session.set({ user: { name: 'Alice' } });
 ```
+
+**How it works:**
+- Uses `BroadcastChannel` API for real-time sync between tabs
+- Fallback to `storage` event for environments without BroadcastChannel
+- Prevents echo loops by tracking local vs remote changes
+- Automatically cleans up when scope disposes
+
+**Note:** Requires browser environment (not available in Node.js).
 
 ## Preventing FOUC (Flash of Unstyled Content)
 

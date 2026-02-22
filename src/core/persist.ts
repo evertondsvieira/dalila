@@ -36,6 +36,13 @@ export interface PersistOptions<T> {
    * Kept for forward-compat with preload injection.
    */
   preload?: boolean;
+
+  /**
+   * Sync persisted state across browser tabs using BroadcastChannel.
+   * When enabled, changes in one tab will automatically reflect in other tabs.
+   * Default: false
+   */
+  syncTabs?: boolean;
 }
 
 const defaultSerializer: Serializer<any> = {
@@ -73,9 +80,18 @@ function isPlainObject(v: unknown): v is Record<string, any> {
 }
 
 /**
+ * Signal with optional dispose method for manual cleanup.
+ * Returned when persist() is called outside of a scope.
+ */
+export interface PersistedSignal<T> extends Signal<T> {
+  /** Cleanup resources. Only available when persist is called outside a scope. */
+  dispose?: () => void;
+}
+
+/**
  * Create a persisted signal that automatically syncs with storage.
  */
-export function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): Signal<T> {
+export function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): Signal<T> | PersistedSignal<T> {
   const {
     name,
     storage = safeDefaultStorage(),
@@ -98,6 +114,100 @@ export function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): S
 
   const storageKey = name;
   const versionKey = version !== undefined ? `${name}:version` : undefined;
+
+  // ---- Tab Sync (BroadcastChannel) ----
+  const { syncTabs = false } = options;
+  let channel: BroadcastChannel | null = null;
+  let isHandlingRemoteChange = false;
+
+  // Feature detection for BroadcastChannel
+  const canUseBroadcastChannel = typeof BroadcastChannel !== 'undefined';
+
+  if (syncTabs && canUseBroadcastChannel) {
+    try {
+      channel = new BroadcastChannel(`dalila:${name}`);
+      channel.onmessage = (event) => {
+        const { type, value, version: remoteVersion } = event.data;
+        
+        // Ignore our own messages (prevent echo loop)
+        if (isHandlingRemoteChange) return;
+        
+        // Only handle update events
+        if (type !== 'update') return;
+        
+        // Mark as handling remote to prevent echo
+        isHandlingRemoteChange = true;
+        
+        try {
+          // Deserialize and apply the remote value
+          const deserialized = serializer.deserialize(value) as T;
+          
+          // Apply with merge strategy
+          if (merge === 'shallow' && isPlainObject(deserialized)) {
+            const current = baseSignal.peek();
+            if (isPlainObject(current)) {
+              baseSignal.set({ ...current, ...deserialized } as T);
+            } else {
+              baseSignal.set(deserialized);
+            }
+          } else {
+            baseSignal.set(deserialized);
+          }
+          
+          // Update local tracking
+          lastSaved = value;
+          pendingSaved = null;
+          
+          // Handle version sync
+          if (versionKey && remoteVersion !== undefined) {
+            lastSavedVersion = String(remoteVersion);
+            pendingSavedVersion = null;
+          }
+        } finally {
+          isHandlingRemoteChange = false;
+        }
+      };
+    } catch (e) {
+      console.warn(`[Dalila] persist(): Failed to create BroadcastChannel for "${name}"`, e);
+    }
+  }
+
+  // Fallback: use storage event for environments without BroadcastChannel
+  let storageListener: ((e: StorageEvent) => void) | null = null;
+  if (syncTabs && !channel && typeof window !== 'undefined') {
+    try {
+      storageListener = (e: StorageEvent) => {
+        if (e.key !== storageKey || e.newValue === null) return;
+        
+        // Ignore our own changes
+        if (isHandlingRemoteChange) return;
+        
+        isHandlingRemoteChange = true;
+        try {
+          const deserialized = serializer.deserialize(e.newValue) as T;
+          
+          if (merge === 'shallow' && isPlainObject(deserialized)) {
+            const current = baseSignal.peek();
+            if (isPlainObject(current)) {
+              baseSignal.set({ ...current, ...deserialized } as T);
+            } else {
+              baseSignal.set(deserialized);
+            }
+          } else {
+            baseSignal.set(deserialized);
+          }
+          
+          lastSaved = e.newValue;
+          pendingSaved = null;
+        } finally {
+          isHandlingRemoteChange = false;
+        }
+      };
+      window.addEventListener('storage', storageListener);
+    } catch (e) {
+      console.warn(`[Dalila] persist(): Failed to add storage listener for "${name}"`, e);
+    }
+  }
 
   // ---- Core safety flags ----
   // hydrated=false blocks writes so we don't overwrite storage before async read resolves.
@@ -200,6 +310,19 @@ export function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): S
 
         lastSaved = serialized;
         if (pendingSaved === serialized) pendingSaved = null;
+
+        // Broadcast to other tabs
+        if (channel) {
+          try {
+            channel.postMessage({
+              type: 'update',
+              value: serialized,
+              version: versionKey ? version : undefined,
+            });
+          } catch (e) {
+            // Ignore broadcast errors
+          }
+        }
       }
 
       // Write version
@@ -211,6 +334,23 @@ export function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): S
         if (pendingSavedVersion === versionStr) pendingSavedVersion = null;
       }
     });
+  };
+
+  // ---- Cleanup ----
+  // Close BroadcastChannel when scope disposes
+  const cleanup = () => {
+    if (channel) {
+      channel.close();
+      channel = null;
+    }
+    if (storageListener && typeof window !== 'undefined') {
+      try {
+        window.removeEventListener('storage', storageListener);
+      } catch (e) {
+        // Ignore
+      }
+      storageListener = null;
+    }
   };
 
   const persistValue = (value: T) => {
@@ -391,14 +531,33 @@ export function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): S
     if (removeDirtyListener) {
       scope.onCleanup(removeDirtyListener);
     }
+
+    // Clean up BroadcastChannel/storage listener when scope disposes
+    scope.onCleanup(cleanup);
   } else {
     // No scope: use manual subscription.
     // Dirty-before-hydrate is still handled by the temporary dirty listener above.
-    baseSignal.on((value) => {
+    const removeSubscription = baseSignal.on((value) => {
       if (hydrated) {
         persistValue(value);
       }
     });
+
+    // Hydrate before returning (so the signal has data)
+    const hydration = hydrate();
+    if (isPromiseLike(hydration)) {
+      hydration.catch((err) => {
+        console.error(`[Dalila] persist(): hydration promise rejected for "${name}"`, err);
+      });
+    }
+
+    // Add dispose method for manual cleanup
+    const persistedSignal = baseSignal as PersistedSignal<T>;
+    persistedSignal.dispose = () => {
+      removeSubscription();
+      cleanup();
+    };
+    return persistedSignal;
   }
 
   // Hydrate after wiring subscribers so async hydration sets can trigger persist if needed.
