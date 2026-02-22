@@ -14,6 +14,10 @@ export interface Scope {
     /** Parent scope in the hierarchy (for context lookup). */
     readonly parent: Scope | null;
 }
+export interface CreateScopeOptions {
+    /** Optional debug name shown in DevTools. */
+    name?: string;
+}
 /**
  * Subscribe to scope creation events.
  * Returns an unsubscribe function.
@@ -34,8 +38,12 @@ export declare function isScopeDisposed(scope: Scope): boolean;
  * - If a cleanup registers another cleanup during disposal, it will NOT run
  *   in the same dispose pass (because we snapshot via `splice(0)`).
  * - Parent is captured from the current scope context (set by withScope).
+ * - Optional debug names can be passed for DevTools diagnostics.
  */
+export declare function createScope(): Scope;
 export declare function createScope(parentOverride?: Scope | null): Scope;
+export declare function createScope(options: CreateScopeOptions): Scope;
+export declare function createScope(parentOverride: Scope | null, options?: CreateScopeOptions): Scope;
 /** Returns the current active scope (or null if none). */
 export declare function getCurrentScope(): Scope | null;
 /**

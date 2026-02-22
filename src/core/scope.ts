@@ -19,6 +19,11 @@ export interface Scope {
   readonly parent: Scope | null;
 }
 
+export interface CreateScopeOptions {
+  /** Optional debug name shown in DevTools. */
+  name?: string;
+}
+
 /** Tracks disposed scopes without mutating the public interface. */
 const disposedScopes = new WeakSet<Scope>();
 
@@ -48,6 +53,42 @@ export function isScopeDisposed(scope: Scope): boolean {
   return disposedScopes.has(scope);
 }
 
+function isScopeLike(value: unknown): value is Scope {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.onCleanup === "function" &&
+    typeof candidate.dispose === "function" &&
+    "parent" in candidate
+  );
+}
+
+function normalizeScopeName(options: CreateScopeOptions | undefined): string | undefined {
+  if (!options || typeof options.name !== "string") return undefined;
+  const trimmed = options.name.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveCreateScopeArgs(
+  parentOrOptions?: Scope | null | CreateScopeOptions,
+  maybeOptions?: CreateScopeOptions
+): {
+  parentOverride: Scope | null | undefined;
+  options: CreateScopeOptions | undefined;
+} {
+  if (parentOrOptions === undefined || parentOrOptions === null || isScopeLike(parentOrOptions)) {
+    return {
+      parentOverride: parentOrOptions,
+      options: maybeOptions,
+    };
+  }
+
+  return {
+    parentOverride: undefined,
+    options: parentOrOptions,
+  };
+}
+
 /**
  * Creates a new Scope instance.
  *
@@ -56,8 +97,18 @@ export function isScopeDisposed(scope: Scope): boolean {
  * - If a cleanup registers another cleanup during disposal, it will NOT run
  *   in the same dispose pass (because we snapshot via `splice(0)`).
  * - Parent is captured from the current scope context (set by withScope).
+ * - Optional debug names can be passed for DevTools diagnostics.
  */
-export function createScope(parentOverride?: Scope | null): Scope {
+export function createScope(): Scope;
+export function createScope(parentOverride?: Scope | null): Scope;
+export function createScope(options: CreateScopeOptions): Scope;
+export function createScope(parentOverride: Scope | null, options?: CreateScopeOptions): Scope;
+export function createScope(
+  parentOrOptions?: Scope | null | CreateScopeOptions,
+  maybeOptions?: CreateScopeOptions
+): Scope {
+  const { parentOverride, options } = resolveCreateScopeArgs(parentOrOptions, maybeOptions);
+  const name = normalizeScopeName(options);
   const cleanups: (() => void)[] = [];
   const parentCandidate =
     parentOverride === undefined ? currentScope : parentOverride === null ? null : parentOverride;
@@ -114,7 +165,7 @@ export function createScope(parentOverride?: Scope | null): Scope {
     parent,
   };
 
-  registerScope(scope, parent);
+  registerScope(scope, parent, name);
 
   if (parent) {
     parent.onCleanup(() => scope.dispose());

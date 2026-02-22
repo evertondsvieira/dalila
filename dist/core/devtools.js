@@ -319,10 +319,10 @@ export function getSnapshot() {
         events: events.map((event) => ({ ...event, payload: { ...event.payload } })),
     };
 }
-export function registerScope(scopeRef, parentScopeRef) {
+export function registerScope(scopeRef, parentScopeRef, name) {
     if (!enabled)
         return;
-    createNode(scopeRef, "scope", "scope", {
+    createNode(scopeRef, "scope", name || "scope", {
         parentScopeRef,
     });
 }

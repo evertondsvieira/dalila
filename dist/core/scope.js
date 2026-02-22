@@ -23,16 +23,35 @@ export function onScopeDispose(fn) {
 export function isScopeDisposed(scope) {
     return disposedScopes.has(scope);
 }
-/**
- * Creates a new Scope instance.
- *
- * Notes:
- * - Cleanups run in FIFO order (registration order).
- * - If a cleanup registers another cleanup during disposal, it will NOT run
- *   in the same dispose pass (because we snapshot via `splice(0)`).
- * - Parent is captured from the current scope context (set by withScope).
- */
-export function createScope(parentOverride) {
+function isScopeLike(value) {
+    if (!value || typeof value !== "object")
+        return false;
+    const candidate = value;
+    return (typeof candidate.onCleanup === "function" &&
+        typeof candidate.dispose === "function" &&
+        "parent" in candidate);
+}
+function normalizeScopeName(options) {
+    if (!options || typeof options.name !== "string")
+        return undefined;
+    const trimmed = options.name.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+function resolveCreateScopeArgs(parentOrOptions, maybeOptions) {
+    if (parentOrOptions === undefined || parentOrOptions === null || isScopeLike(parentOrOptions)) {
+        return {
+            parentOverride: parentOrOptions,
+            options: maybeOptions,
+        };
+    }
+    return {
+        parentOverride: undefined,
+        options: parentOrOptions,
+    };
+}
+export function createScope(parentOrOptions, maybeOptions) {
+    const { parentOverride, options } = resolveCreateScopeArgs(parentOrOptions, maybeOptions);
+    const name = normalizeScopeName(options);
     const cleanups = [];
     const parentCandidate = parentOverride === undefined ? currentScope : parentOverride === null ? null : parentOverride;
     // A stale async context can leave `currentScope` pointing to an already
@@ -86,7 +105,7 @@ export function createScope(parentOverride) {
         },
         parent,
     };
-    registerScope(scope, parent);
+    registerScope(scope, parent, name);
     if (parent) {
         parent.onCleanup(() => scope.dispose());
     }

@@ -44,7 +44,7 @@ export declare function isEnabled(): boolean;
 export declare function reset(): void;
 export declare function subscribe(listener: (event: DevtoolsEvent) => void): () => void;
 export declare function getSnapshot(): DevtoolsSnapshot;
-export declare function registerScope(scopeRef: object, parentScopeRef: object | null): void;
+export declare function registerScope(scopeRef: object, parentScopeRef: object | null, name?: string): void;
 export declare function withDevtoolsDomTarget<T>(element: Element | null, fn: () => T): T;
 export declare function linkScopeToDom(scopeRef: object, element: Element, label?: string): void;
 export declare function disposeScope(scopeRef: object): void;

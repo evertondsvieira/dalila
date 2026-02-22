@@ -34,7 +34,40 @@ function isScopeDisposed(scope: Scope): boolean
 function getCurrentScopeHierarchy(): Scope[]  // Returns [current, parent, grandparent, ...]
 function onScopeCreate(fn: (scope: Scope) => void): () => void
 function onScopeDispose(fn: (scope: Scope) => void): () => void
+function registerScope(scopeRef: object, parentScopeRef: object | null, name?: string): void
 ```
+
+#### registerScope
+
+Registers a scope with the DevTools for debugging and inspection purposes. This function is called automatically by the framework, but can also be used manually to register custom scopes.
+
+```ts
+function registerScope(
+  scopeRef: object,        // Reference to the scope object
+  parentScopeRef: object | null,  // Reference to the parent scope (or null for root)
+  name?: string            // Optional name for easier identification in DevTools
+): void
+```
+
+**Parameters:**
+- `scopeRef` - The scope object to register
+- `parentScopeRef` - The parent scope object, or `null` if this is a root scope
+- `name` (optional) - A human-readable name to identify this scope in DevTools
+
+**Example:**
+
+```ts
+import { createScope, registerScope } from "dalila";
+
+const parentScope = createScope();
+const childScope = createScope(parentScope);
+
+// Register with custom names for better debugging
+registerScope(parentScope, null, "MainComponent");
+registerScope(childScope, parentScope, "UserListComponent");
+```
+
+When viewing in DevTools, scopes with custom names will display their names instead of the default "scope" label, making it easier to identify specific components during debugging.
 
 ### Scope Interface
 

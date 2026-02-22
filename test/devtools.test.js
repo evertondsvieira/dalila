@@ -146,3 +146,36 @@ test("late devtools enable does not create dangling ownership edges", async () =
 
   assert.equal(hasDanglingOwnership, false, "ownership edges must point only to registered nodes");
 });
+
+test("createScope supports optional name for devtools diagnostics", async () => {
+  await initDevTools({ exposeGlobalHook: false, dispatchEvents: false });
+  resetDevtools();
+
+  const emitted = [];
+  const off = onDevtoolsEvent((event) => {
+    if (event.type === "node.create" && event.payload?.type === "scope") {
+      emitted.push(event);
+    }
+  });
+
+  const root = createScope({ name: "router:posts" });
+  const child = createScope(root, { name: "form:checkout" });
+  const unnamed = createScope(root);
+
+  off();
+
+  const snapshot = getDevtoolsSnapshot();
+  const labels = snapshot.nodes.filter((node) => node.type === "scope").map((node) => node.label);
+
+  assert.ok(labels.includes("router:posts"), "named scope label should be visible in snapshot");
+  assert.ok(labels.includes("form:checkout"), "named child scope label should be visible in snapshot");
+  assert.ok(labels.includes("scope"), "unnamed scope should keep default label");
+
+  const createdLabels = emitted.map((event) => event.payload?.label);
+  assert.ok(createdLabels.includes("router:posts"), "node.create event should include named scope label");
+  assert.ok(createdLabels.includes("form:checkout"), "node.create event should include named child scope label");
+
+  unnamed.dispose();
+  child.dispose();
+  root.dispose();
+});

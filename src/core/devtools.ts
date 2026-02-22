@@ -421,9 +421,13 @@ export function getSnapshot(): DevtoolsSnapshot {
   };
 }
 
-export function registerScope(scopeRef: object, parentScopeRef: object | null): void {
+export function registerScope(
+  scopeRef: object,
+  parentScopeRef: object | null,
+  name?: string
+): void {
   if (!enabled) return;
-  createNode(scopeRef, "scope", "scope", {
+  createNode(scopeRef, "scope", name || "scope", {
     parentScopeRef,
   });
 }
