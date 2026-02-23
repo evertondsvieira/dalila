@@ -75,10 +75,10 @@ export interface RouteTable<T = any> {
   // Post-mount lifecycle hook (called after view is mounted to DOM)
   // Receives the leaf loader data and route context.
   // May return a cleanup function that runs automatically on route leave/replace.
-  onMount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteMountResult;
+  onRouteMount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteMountResult;
   // Pre-unmount lifecycle hook (called before route content is replaced/cleared)
   // Receives the previous leaf loader data and route context.
-  onUnmount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteUnmountResult;
+  onRouteUnmount?: (root: HTMLElement, data: T, ctx: RouteCtx) => RouteUnmountResult;
 
   // State views
   pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];

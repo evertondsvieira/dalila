@@ -404,18 +404,17 @@ Components are found by `d-ui` attribute, ID, or fallback `data-d-tag`.
 
 ---
 
-## Lifecycle Hooks: `onMount` / `onUnmount`
+## Lifecycle Hooks: `onRouteMount` / `onRouteUnmount`
 
-**Naming note:** this `onMount(root)` is the **router hook**.
+**Naming note:** this `onRouteMount(root)` is the **router hook**.
 It is different from:
-- `onMount(() => {})` from `dalila` (scope-level helper in `docs/core/watch.md`)
 - `ctx.onMount(() => {})` inside component `setup()` (component lifecycle in `docs/runtime/component.md`)
 
-When using Dalila Router with UI components, export `onMount` to initialize components after the view is mounted. You can return a cleanup function from `onMount`, and/or export `onUnmount` for additional teardown.
+When using Dalila Router with UI components, export `onRouteMount` to initialize components after the view is mounted. You can return a cleanup function from `onRouteMount`, and/or export `onRouteUnmount` for additional teardown.
 
-**Why `onMount`?**
+**Why `onRouteMount`?**
 
-The router needs to render the HTML first before UI components can attach to DOM elements. The `onMount` hook is called automatically after the view is mounted, giving you a safe place to call `mountUI()`.
+The router needs to render the HTML first before UI components can attach to DOM elements. The `onRouteMount` hook is called automatically after the view is mounted, giving you a safe place to call `mountUI()`.
 
 **Example:**
 
@@ -438,7 +437,7 @@ export function loader() {
 }
 
 // Called after the view is mounted to the DOM
-export function onMount(root: HTMLElement, data: HomePageVM) {
+export function onRouteMount(root: HTMLElement, data: HomePageVM) {
   return mountUI(root, {
     dialogs: { infoDialog: data.infoDialog },
     events: []
@@ -446,7 +445,7 @@ export function onMount(root: HTMLElement, data: HomePageVM) {
 }
 
 // Optional extra hook called before route leave/replace
-export function onUnmount(_root: HTMLElement) {
+export function onRouteUnmount(_root: HTMLElement) {
   // custom teardown if needed
 }
 ```
@@ -476,11 +475,11 @@ export function onUnmount(_root: HTMLElement) {
 
 **Key points:**
 
-- `onMount(root, data, ctx)` receives the mounted root, leaf loader data, and route context
-- `onMount` may return a cleanup function; the router calls it automatically on route leave/replace
-- `onUnmount(root, data, ctx)` is optional and runs before route content is replaced/cleared
+- `onRouteMount(root, data, ctx)` receives the mounted root, leaf loader data, and route context
+- `onRouteMount` may return a cleanup function; the router calls it automatically on route leave/replace
+- `onRouteUnmount(root, data, ctx)` is optional and runs before route content is replaced/cleared
 - Keep route state in a VM returned by `loader()` (e.g. `return new HomePageVM()`)
-- Create UI instances in the route VM (`loader`) and connect them in `onMount` using loader data
+- Create UI instances in the route VM (`loader`) and connect them in `onRouteMount` using loader data
 - The `d-ui` attribute connects HTML elements to component instances
 - Works with both eager and lazy-loaded routes
 

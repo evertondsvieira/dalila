@@ -79,8 +79,8 @@ interface RouteTable {
   layout?: (ctx: RouteCtx, child: Node | DocumentFragment | Node[], data: any) => Node | DocumentFragment | Node[];
   loader?: (ctx: RouteCtx) => Promise<any>;
   preload?: (ctx: RouteCtx) => Promise<any>;
-  onMount?: (root: HTMLElement, data: any, ctx: RouteCtx) => void | (() => void) | Promise<void | (() => void)>;
-  onUnmount?: (root: HTMLElement, data: any, ctx: RouteCtx) => void | Promise<void>;
+  onRouteMount?: (root: HTMLElement, data: any, ctx: RouteCtx) => void | (() => void) | Promise<void | (() => void)>;
+  onRouteUnmount?: (root: HTMLElement, data: any, ctx: RouteCtx) => void | Promise<void>;
   pending?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
   error?: (ctx: RouteCtx, error: unknown) => Node | DocumentFragment | Node[];
   notFound?: (ctx: RouteCtx) => Node | DocumentFragment | Node[];
@@ -223,6 +223,44 @@ Validates params/query before loaders execute (router built-in rule format):
 ```
 
 ## Data Loading
+
+### Loader vs Preload vs onRouteMount
+
+Dalila offers **three ways** to load data. Here's when to use each:
+
+| Option | When it runs | Best for | Example |
+|--------|--------------|----------|---------|
+| `loader` | Before rendering | "I need data TO render" - shows loading first | User profile, dashboard |
+| `preload` | Pre-loads for future | "I'll navigate here soon" - loads before click | Links in viewport |
+| `onRouteMount` | After rendering | "Show UI first, then fetch" - UI-first approach | Non-critical data |
+
+**Quick decision guide:**
+
+```ts
+// Use LOADER when: user can't see page without data
+{
+  path: '/users/:id',
+  loader: async (ctx) => fetchUser(ctx.params.id),
+  view: (ctx, user) => html`<h1>${user.name}</h1>`
+}
+
+// Use PRELOAD when: data should be ready before user clicks
+{
+  path: '/dashboard',
+  preload: async () => fetchDashboardStats(),
+  view: (ctx, stats) => html`<div>${stats}</div>`
+}
+
+// Use onRouteMount when: UI can render without data (loading spinners OK)
+{
+  path: '/recommendations',
+  onRouteMount: (root, data, ctx) => {
+    // Fetch additional data after initial render
+    fetchRecommendations().then(setRecommendations);
+  },
+  view: (ctx) => html`<div>Recommendations...</div>`
+}
+```
 
 ### Loader and Preload
 
@@ -434,7 +472,7 @@ src/app/
 | File | Purpose |
 |------|---------|
 | `page.html` | Route view template |
-| `page.ts` | Route logic: `loader`, `guard`, `redirect`, `preload`, `tags`, `score`, `validation`, `onMount`, `onUnmount` |
+| `page.ts` | Route logic: `loader`, `guard`, `redirect`, `preload`, `tags`, `score`, `validation`, `onRouteMount`, `onRouteUnmount` |
 | `layout.html` | Layout template (wraps children via `data-slot="children"`) |
 | `layout.ts` | Layout logic: `guard`, `redirect`, `middleware`, `tags` |
 | `middleware.ts` | Route middleware (exports `middleware` array) |
@@ -462,12 +500,12 @@ export async function loader(ctx) {
   return res.json();
 }
 
-export function onMount(root, data, ctx) {
+export function onRouteMount(root, data, ctx) {
   const cleanup = setupSomething(root, data, ctx);
   return cleanup; // optional cleanup called automatically on route leave/replace
 }
 
-export function onUnmount(root, data, ctx) {
+export function onRouteUnmount(root, data, ctx) {
   // optional extra cleanup hook
 }
 

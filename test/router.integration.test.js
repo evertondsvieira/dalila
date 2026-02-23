@@ -140,7 +140,7 @@ test('Router - layout-only segment root does not keep stale DOM', { concurrency:
   });
 });
 
-test('Router - route lifecycle supports onMount cleanup return and onUnmount', { concurrency: false }, async () => {
+test('Router - route lifecycle supports onRouteMount cleanup return and onRouteUnmount', { concurrency: false }, async () => {
   await withDom('/a', async () => {
     const outlet = document.createElement('main');
     document.body.appendChild(outlet);
@@ -159,13 +159,13 @@ test('Router - route lifecycle supports onMount cleanup return and onUnmount', {
             el.textContent = 'route-a';
             return el;
           },
-          onMount: () => {
+          onRouteMount: () => {
             mountCalls += 1;
             return () => {
               cleanupCalls += 1;
             };
           },
-          onUnmount: () => {
+          onRouteUnmount: () => {
             unmountCalls += 1;
           }
         },
@@ -215,10 +215,10 @@ test('Router - stop() triggers route lifecycle cleanup', { concurrency: false },
             el.textContent = 'cleanup';
             return el;
           },
-          onMount: () => () => {
+          onRouteMount: () => () => {
             cleanupCalls += 1;
           },
-          onUnmount: () => {
+          onRouteUnmount: () => {
             unmountCalls += 1;
           }
         }
