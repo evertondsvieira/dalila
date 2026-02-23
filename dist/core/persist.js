@@ -47,6 +47,13 @@ export function persist(baseSignal, options) {
     }
     const storageKey = name;
     const versionKey = version !== undefined ? `${name}:version` : undefined;
+    const handleError = (err, ctx) => {
+        const e = toError(err);
+        if (onError)
+            onError(e);
+        else
+            console.error(`[Dalila] persist(): ${ctx} "${name}"`, e);
+    };
     // ---- Tab Sync (BroadcastChannel) ----
     const { syncTabs = false } = options;
     let channel = null;
@@ -57,39 +64,20 @@ export function persist(baseSignal, options) {
         try {
             channel = new BroadcastChannel(`dalila:${name}`);
             channel.onmessage = (event) => {
-                const { type, value, version: remoteVersion } = event.data;
                 // Ignore our own messages (prevent echo loop)
                 if (isHandlingRemoteChange)
                     return;
-                // Only handle update events
-                if (type !== 'update')
-                    return;
-                // Mark as handling remote to prevent echo
-                isHandlingRemoteChange = true;
                 try {
-                    // Deserialize and apply the remote value
-                    const deserialized = serializer.deserialize(value);
-                    // Apply with merge strategy
-                    if (merge === 'shallow' && isPlainObject(deserialized)) {
-                        const current = baseSignal.peek();
-                        if (isPlainObject(current)) {
-                            baseSignal.set({ ...current, ...deserialized });
-                        }
-                        else {
-                            baseSignal.set(deserialized);
-                        }
-                    }
-                    else {
-                        baseSignal.set(deserialized);
-                    }
-                    // Update local tracking
-                    lastSaved = value;
-                    pendingSaved = null;
-                    // Handle version sync
-                    if (versionKey && remoteVersion !== undefined) {
-                        lastSavedVersion = String(remoteVersion);
-                        pendingSavedVersion = null;
-                    }
+                    const { type, value, version: remoteVersion } = event.data;
+                    // Only handle update events
+                    if (type !== 'update')
+                        return;
+                    // Mark as handling remote to prevent echo
+                    isHandlingRemoteChange = true;
+                    applyRemoteStoredValue(value, versionKey && remoteVersion !== undefined ? String(remoteVersion) : null);
+                }
+                catch (err) {
+                    handleError(err, 'failed to apply remote sync payload');
                 }
                 finally {
                     isHandlingRemoteChange = false;
@@ -110,23 +98,17 @@ export function persist(baseSignal, options) {
                 // Ignore our own changes
                 if (isHandlingRemoteChange)
                     return;
-                isHandlingRemoteChange = true;
                 try {
-                    const deserialized = serializer.deserialize(e.newValue);
-                    if (merge === 'shallow' && isPlainObject(deserialized)) {
-                        const current = baseSignal.peek();
-                        if (isPlainObject(current)) {
-                            baseSignal.set({ ...current, ...deserialized });
-                        }
-                        else {
-                            baseSignal.set(deserialized);
-                        }
+                    isHandlingRemoteChange = true;
+                    let remoteVersionRaw = null;
+                    if (versionKey) {
+                        const v = storage.getItem(versionKey);
+                        remoteVersionRaw = isPromiseLike(v) ? null : typeof v === 'string' ? v : null;
                     }
-                    else {
-                        baseSignal.set(deserialized);
-                    }
-                    lastSaved = e.newValue;
-                    pendingSaved = null;
+                    applyRemoteStoredValue(e.newValue, remoteVersionRaw);
+                }
+                catch (err) {
+                    handleError(err, 'failed to apply remote sync payload');
                 }
                 finally {
                     isHandlingRemoteChange = false;
@@ -165,14 +147,10 @@ export function persist(baseSignal, options) {
     // Same idea for version key (when enabled)
     let lastSavedVersion = null;
     let pendingSavedVersion = null;
-    const handleError = (err, ctx) => {
-        const e = toError(err);
-        if (onError)
-            onError(e);
-        else
-            console.error(`[Dalila] persist(): ${ctx} "${name}"`, e);
-    };
+    let disposed = false;
     const applyHydration = (value) => {
+        if (disposed)
+            return;
         // Ensure dirty listener does not treat hydration as user mutation.
         const setHydratedValue = (next) => {
             isHydrationWrite = true;
@@ -273,7 +251,7 @@ export function persist(baseSignal, options) {
     };
     const persistValue = (value) => {
         // Don't write until hydration finishes (prevents overwriting stored state).
-        if (!hydrated)
+        if (disposed || !hydrated)
             return;
         let serialized;
         try {
@@ -319,6 +297,9 @@ export function persist(baseSignal, options) {
         }
         applyHydration(deserialized);
     };
+    const applyRemoteStoredValue = (storedValue, storedVersionRaw) => {
+        hydrateFromStored(storedValue, storedVersionRaw);
+    };
     const finalizeHydration = (didUserChangeBefore) => {
         hydrated = true;
         // Remove temporary dirty listener (no longer needed after hydration)
@@ -326,6 +307,8 @@ export function persist(baseSignal, options) {
             removeDirtyListener();
             removeDirtyListener = null;
         }
+        if (disposed)
+            return;
         // If user changed before hydrate finished, we must persist current value at least once,
         // because the change already happened while hydrated=false and won't re-trigger.
         if (didUserChangeBefore) {
@@ -447,7 +430,12 @@ export function persist(baseSignal, options) {
         // Add dispose method for manual cleanup
         const persistedSignal = baseSignal;
         persistedSignal.dispose = () => {
+            disposed = true;
             removeSubscription();
+            if (removeDirtyListener) {
+                removeDirtyListener();
+                removeDirtyListener = null;
+            }
             cleanup();
         };
         return persistedSignal;

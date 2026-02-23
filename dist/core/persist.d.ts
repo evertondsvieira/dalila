@@ -49,7 +49,7 @@ export interface PersistedSignal<T> extends Signal<T> {
 /**
  * Create a persisted signal that automatically syncs with storage.
  */
-export declare function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): Signal<T> | PersistedSignal<T>;
+export declare function persist<T>(baseSignal: Signal<T>, options: PersistOptions<T>): PersistedSignal<T>;
 /**
  * Helper to create JSON storage wrapper
  */
