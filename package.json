@@ -1,6 +1,6 @@
 {
   "name": "dalila",
-  "version": "1.9.17",
+  "version": "1.9.18",
   "description": "DOM-first reactive framework based on signals",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
