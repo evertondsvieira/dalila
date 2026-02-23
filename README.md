@@ -15,11 +15,13 @@ npm run dev
 
 Open http://localhost:4242 to see your app.
 
-## Manual Installation
+## Install
 
 ```bash
 npm install dalila
 ```
+
+## Minimal Example
 
 ```html
 <div id="app">
@@ -44,313 +46,61 @@ bind(document.getElementById('app')!, ctx);
 
 ## Docs
 
-### Getting Started
+### Start here
 
-- [Overview](./docs/index.md) — Philosophy and quick start
-- [Template Spec](./docs/template-spec.md) — Binding syntax reference
+- [Overview](./docs/index.md)
+- [Template Spec](./docs/template-spec.md)
+- [Router](./docs/router.md)
+- [Forms](./docs/forms.md)
+- [UI Components](./docs/ui.md)
+- [HTTP Client](./docs/http.md)
 
 ### Core
 
-- [Signals](./docs/core/signals.md) — `signal`, `computed`, `effect`
-- [Scopes](./docs/core/scope.md) — Lifecycle management and cleanup
-- [Persist](./docs/core/persist.md) — Automatic storage sync for signals
-- [Context](./docs/context.md) — Dependency injection
+- [Signals](./docs/core/signals.md)
+- [Scopes](./docs/core/scope.md)
+- [Persist](./docs/core/persist.md)
+- [Context](./docs/context.md)
+- [Scheduler](./docs/core/scheduler.md)
+- [Keys](./docs/core/key.md)
+- [Dev Mode](./docs/core/dev.md)
 
 ### Runtime
 
-- [Template Binding](./docs/runtime/bind.md) — `bind()`, `mount()`, `configure()`, transitions, portal, text interpolation, events
-- [Components](./docs/runtime/component.md) — `defineComponent`, typed props/emits/refs, slots
-- [Lazy Loading](./docs/runtime/lazy.md) — `createLazyComponent`, `d-lazy`, `createSuspense` wrapper, code splitting
-- [Error Boundary](./docs/runtime/boundary.md) — `createErrorBoundary`, `createErrorBoundaryState`, `withErrorBoundary`, `d-boundary`
-- [FOUC Prevention](./docs/runtime/fouc-prevention.md) — Automatic token hiding
+- [Template Binding](./docs/runtime/bind.md)
+- [Components](./docs/runtime/component.md)
+- [Lazy Loading](./docs/runtime/lazy.md)
+- [Error Boundary](./docs/runtime/boundary.md)
+- [FOUC Prevention](./docs/runtime/fouc-prevention.md)
 
-### Routing
+### Rendering & Data
 
-- [Router](./docs/router.md) — Client-side routing with nested layouts, preloading, and file-based route generation
-- [Template Check CLI](./docs/cli/check.md) — `dalila check` static analysis for template/context consistency
+- [when](./docs/core/when.md)
+- [match](./docs/core/match.md)
+- [for](./docs/core/for.md)
+- [Virtual Lists](./docs/core/virtual.md)
+- [Resources](./docs/core/resource.md)
+- [Query](./docs/core/query.md)
+- [Mutations](./docs/core/mutation.md)
 
-### UI Components
+### Tooling
 
-- [UI Components](./docs/ui.md) — Interactive components (Dialog, Drawer, Toast, Tabs, Calendar, etc.) with native HTML and full ARIA support
-
-### Rendering
-
-- [when](./docs/core/when.md) — Conditional visibility
-- [match](./docs/core/match.md) — Switch-style rendering
-- [for](./docs/core/for.md) — List rendering with keyed diffing
-- [Virtual Lists](./docs/core/virtual.md) — Fixed and dynamic-height windowed rendering with infinite-scroll hooks
-
-### Data
-
-- [Resources](./docs/core/resource.md) — Async data with loading/error states
-- [Query](./docs/core/query.md) — Cached queries
-- [Mutations](./docs/core/mutation.md) — Write operations
-
-### HTTP
-
-- [HTTP Client](./docs/http.md) — Native fetch-based client with XSRF protection and interceptors
-
-### Forms
-
-- [Forms](./docs/forms.md) — DOM-first form management with validation, field arrays, and accessibility
-
-### Utilities
-
-- [Scheduler](./docs/core/scheduler.md) — Batching and coordination
-- [Keys](./docs/core/key.md) — Cache key encoding
-- [Dev Mode](./docs/core/dev.md) — Warnings and helpers
-- [Devtools Extension](./devtools-extension/README.md) — Browser panel for reactive graph and scopes
+- [Template Check CLI](./docs/cli/check.md)
+- [Devtools Extension](./devtools-extension/README.md)
 
 Firefox extension workflows:
 
 - `npm run devtools:firefox:run` — launch Firefox with extension loaded for dev
 - `npm run devtools:firefox:build` — package extension artifact for submission/signing
 
-## Features
-
-```
-dalila           → signal, computed, effect, batch, ...
-dalila/runtime   → bind(), mount(), configure(), createPortalTarget(), defineComponent()
-dalila/context   → createContext, provide, inject
-dalila/http      → createHttpClient with XSRF protection
-```
-
-### Signals
-
-```ts
-import { signal, computed, effect, readonly, debounceSignal, throttleSignal } from 'dalila';
-
-const count = signal(0);
-const doubled = computed(() => count() * 2);
-const countRO = readonly(count);
-const search = signal('');
-const debouncedSearch = debounceSignal(search, 250);
-const scrollY = signal(0);
-const throttledScrollY = throttleSignal(scrollY, 16);
-
-effect(() => {
-  console.log('Count is', countRO());
-  console.log('Search after pause', debouncedSearch());
-  console.log('Scroll sample', throttledScrollY());
-});
-
-count.set(5); // logs: Count is 5
-```
-
-### Template Binding
-
-```ts
-import { configure, mount } from 'dalila/runtime';
-
-// Global component registry and options
-configure({ components: [MyComponent] });
-
-// Bind a selector to a reactive view-model
-const dispose = mount('.app', { count: signal(0) });
-
-// Cleanup when done
-dispose();
-```
-
-### Transitions and Portal
-
-```html
-<div d-when="open" d-transition="fade">Panel</div>
-<div d-portal="showModal ? '#modal-root' : null">Modal content</div>
-```
-
-```ts
-import { configure, createPortalTarget } from 'dalila/runtime';
-
-const modalTarget = createPortalTarget('modal-root');
-
-configure({
-  transitions: [{ name: 'fade', duration: 250 }],
-});
-```
-
-### Scopes
-
-```ts
-import { createScope, withScope, effect } from 'dalila';
-
-const scope = createScope();
-
-withScope(scope, () => {
-  effect(() => { /* auto-cleaned when scope disposes */ });
-});
-
-scope.dispose(); // stops all effects
-```
-
-### Context
-
-```ts
-import { createContext, provide, inject } from 'dalila';
-
-const ThemeContext = createContext<'light' | 'dark'>('theme');
-
-// In parent scope
-provide(ThemeContext, 'dark');
-
-// In child scope
-const theme = inject(ThemeContext); // 'dark'
-```
-
-### Persist
-
-```ts
-import { signal, persist } from 'dalila';
-
-// Auto-saves to localStorage
-const theme = persist(signal('dark'), { name: 'app-theme' });
-
-theme.set('light'); // Saved automatically
-// On reload: theme starts as 'light'
-```
-
-### HTTP Client
-
-```ts
-import { createHttpClient } from 'dalila/http';
-
-const http = createHttpClient({
-  baseURL: 'https://api.example.com',
-  xsrf: true, // XSRF protection
-  onError: (error) => {
-    if (error.status === 401) window.location.href = '/login';
-    throw error;
-  }
-});
-
-// GET request
-const response = await http.get('/users');
-console.log(response.data);
-
-// POST with auto JSON serialization
-await http.post('/users', { name: 'John', email: 'john@example.com' });
-```
-
-### File-Based Routing
+## Packages
 
 ```txt
-src/app/
-├── layout.html
-├── page.html
-├── about/
-│   └── page.html
-└── users/
-    └── [id]/
-        └── page.html
-```
-
-```bash
-npx dalila routes generate
-```
-
-```ts
-import { createRouter } from 'dalila/router';
-import { routes } from './routes.generated.js';
-import { routeManifest } from './routes.generated.manifest.js';
-
-const router = createRouter({
-  outlet: document.getElementById('app')!,
-  routes,
-  routeManifest
-});
-
-router.start();
-```
-
-### Forms
-
-```ts
-import { createForm } from 'dalila';
-
-const userForm = createForm({
-  defaultValues: { name: '', email: '' },
-  validate: (data) => {
-    const errors: Record<string, string> = {};
-    if (!data.name) errors.name = 'Name is required';
-    if (!data.email?.includes('@')) errors.email = 'Invalid email';
-    return errors;
-  }
-});
-
-async function handleSubmit(data, { signal }) {
-  await fetch('/api/users', {
-    method: 'POST',
-    body: JSON.stringify(data),
-    signal
-  });
-}
-```
-
-```html
-<form d-form="userForm" d-on-submit="handleSubmit">
-  <label>
-    Name
-    <input d-field="name" />
-  </label>
-  <span d-error="name"></span>
-
-  <label>
-    Email
-    <input d-field="email" type="email" />
-  </label>
-  <span d-error="email"></span>
-
-  <button type="submit">Save</button>
-  <span d-form-error="userForm"></span>
-</form>
-```
-
-### UI Components with Router
-
-```ts
-// page.ts
-import { computed, signal } from 'dalila';
-import { createDialog, mountUI } from 'dalila/components/ui';
-
-class HomePageVM {
-  count = signal(0);
-  status = computed(() => `Count: ${this.count()}`);
-  dialog = createDialog({ closeOnBackdrop: true, closeOnEscape: true });
-  increment = () => this.count.update(n => n + 1);
-  openModal = () => this.dialog.show();
-  closeModal = () => this.dialog.close();
-}
-
-export function loader() {
-  return new HomePageVM();
-}
-
-// Called after view is mounted
-export function onMount(root: HTMLElement, data: HomePageVM) {
-  return mountUI(root, {
-    dialogs: { dialog: data.dialog },
-    events: []
-  });
-}
-
-// Optional extra hook on route leave
-export function onUnmount(_root: HTMLElement) {}
-```
-
-```html
-<!-- page.html -->
-<d-button d-on-click="increment">Increment</d-button>
-<d-button d-on-click="openModal">Open Dialog</d-button>
-
-<d-dialog d-ui="dialog">
-  <d-dialog-header>
-    <d-dialog-title>{status}</d-dialog-title>
-    <d-dialog-close d-on-click="closeModal">&times;</d-dialog-close>
-  </d-dialog-header>
-  <d-dialog-body>
-    <p>Modal controlled by the official route + UI pattern.</p>
-  </d-dialog-body>
-</d-dialog>
+dalila           → signals, scope, persist, forms, resources, query, mutations
+dalila/runtime   → bind(), mount(), configure(), components, lazy, transitions
+dalila/context   → createContext(), provide(), inject()
+dalila/router    → createRouter(), file-based routes, preloading
+dalila/http      → createHttpClient()
 ```
 
 ## Development
