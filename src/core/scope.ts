@@ -102,7 +102,7 @@ function resolveCreateScopeArgs(
 export function createScope(): Scope;
 export function createScope(parentOverride?: Scope | null): Scope;
 export function createScope(options: CreateScopeOptions): Scope;
-export function createScope(parentOverride: Scope | null, options?: CreateScopeOptions): Scope;
+export function createScope(parentOverride: Scope | null | undefined, options?: CreateScopeOptions): Scope;
 export function createScope(
   parentOrOptions?: Scope | null | CreateScopeOptions,
   maybeOptions?: CreateScopeOptions

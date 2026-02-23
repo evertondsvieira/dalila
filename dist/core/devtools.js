@@ -322,6 +322,14 @@ export function getSnapshot() {
 export function registerScope(scopeRef, parentScopeRef, name) {
     if (!enabled)
         return;
+    const scopeId = getNodeId(scopeRef);
+    const existingNode = nodes.get(scopeId);
+    if (existingNode) {
+        if (name) {
+            existingNode.label = name;
+        }
+        return;
+    }
     createNode(scopeRef, "scope", name || "scope", {
         parentScopeRef,
     });

@@ -43,7 +43,7 @@ export declare function isScopeDisposed(scope: Scope): boolean;
 export declare function createScope(): Scope;
 export declare function createScope(parentOverride?: Scope | null): Scope;
 export declare function createScope(options: CreateScopeOptions): Scope;
-export declare function createScope(parentOverride: Scope | null, options?: CreateScopeOptions): Scope;
+export declare function createScope(parentOverride: Scope | null | undefined, options?: CreateScopeOptions): Scope;
 /** Returns the current active scope (or null if none). */
 export declare function getCurrentScope(): Scope | null;
 /**
