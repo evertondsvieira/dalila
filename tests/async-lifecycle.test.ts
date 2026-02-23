@@ -153,7 +153,7 @@ test("mutation onSettled does not run when aborted", async () => {
   withScope(scope, () => {
     m = q.mutation({
       mutate: async (sig, input) => {
-        await new Promise((resolve, reject) => {
+        await new Promise<any>((resolve, reject) => {
           const t = setTimeout(() => resolve({ ok: true, input }), 50);
 
           sig.addEventListener("abort", () => {
@@ -215,7 +215,7 @@ test("resource refresh() waits for final fetch even with rerun during refresh", 
       runs++;
       const currentRun = runs;
 
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const t = setTimeout(() => resolve(), 30);
 
         sig.addEventListener("abort", () => {

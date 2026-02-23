@@ -18,12 +18,12 @@ async function withDomAsync(fn) {
     url: "http://localhost/",
   });
 
-  globalThis.window = dom.window;
-  globalThis.document = dom.window.document;
-  globalThis.Node = dom.window.Node;
-  globalThis.NodeFilter = dom.window.NodeFilter;
-  globalThis.DocumentFragment = dom.window.DocumentFragment;
-  globalThis.Comment = dom.window.Comment;
+  (globalThis as any).window = dom.window;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).Node = dom.window.Node;
+  (globalThis as any).NodeFilter = dom.window.NodeFilter;
+  (globalThis as any).DocumentFragment = dom.window.DocumentFragment;
+  (globalThis as any).Comment = dom.window.Comment;
 
   try {
     await fn();
@@ -32,12 +32,12 @@ async function withDomAsync(fn) {
     // to complete before cleaning up globals
     await tick(20);
 
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.Node;
-    delete globalThis.NodeFilter;
-    delete globalThis.DocumentFragment;
-    delete globalThis.Comment;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).NodeFilter;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).Comment;
   }
 }
 

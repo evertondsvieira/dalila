@@ -6,7 +6,7 @@ import { createScope, withScope } from '../dist/core/scope.js';
 import { setDevMode, isInDevMode } from '../dist/core/dev.js';
 import { createList, forEach, computeVirtualRange } from '../dist/core/for.js';
 
-const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
 // Flush RAF + microtasks. More robust than a single Promise.resolve()
 // because Dalila may schedule >1 microtask and/or RAF.
@@ -15,7 +15,7 @@ const flush = async (ticks = 4, frames = 1) => {
   for (let i = 0; i < ticks; i++) {
     // cover both promise-microtasks and explicit queueMicrotask scheduling
     await Promise.resolve();
-    await new Promise((r) => queueMicrotask(r));
+    await new Promise<void>((r) => queueMicrotask(r));
   }
 };
 
@@ -27,22 +27,22 @@ describe('List Rendering (for)', () => {
     dom = new JSDOM('<!DOCTYPE html><body></body>', { pretendToBeVisual: true });
     document = dom.window.document;
 
-    globalThis.window = dom.window;
-    globalThis.document = document;
-    globalThis.Node = dom.window.Node;
-    globalThis.Comment = dom.window.Comment;
-    globalThis.DocumentFragment = dom.window.DocumentFragment;
-    globalThis.HTMLElement = dom.window.HTMLElement;
-    globalThis.MutationObserver = dom.window.MutationObserver;
+    (globalThis as any).window = dom.window;
+    (globalThis as any).document = document;
+    (globalThis as any).Node = dom.window.Node;
+    (globalThis as any).Comment = dom.window.Comment;
+    (globalThis as any).DocumentFragment = dom.window.DocumentFragment;
+    (globalThis as any).HTMLElement = dom.window.HTMLElement;
+    (globalThis as any).MutationObserver = dom.window.MutationObserver;
 
     // JSDOM may not always provide RAF (or it may be non-bindable in some envs).
     // Provide a safe fallback.
     const raf = dom.window.requestAnimationFrame?.bind(dom.window);
     const caf = dom.window.cancelAnimationFrame?.bind(dom.window);
 
-    globalThis.requestAnimationFrame =
+    (globalThis as any).requestAnimationFrame =
       raf ?? ((cb) => setTimeout(() => cb(Date.now()), 0));
-    globalThis.cancelAnimationFrame =
+    (globalThis as any).cancelAnimationFrame =
       caf ?? ((id) => clearTimeout(id));
   });
 
@@ -55,15 +55,15 @@ describe('List Rendering (for)', () => {
     }
 
     // cleanup globals to avoid cross-test leakage
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.Node;
-    delete globalThis.Comment;
-    delete globalThis.DocumentFragment;
-    delete globalThis.HTMLElement;
-    delete globalThis.MutationObserver;
-    delete globalThis.requestAnimationFrame;
-    delete globalThis.cancelAnimationFrame;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).Comment;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).HTMLElement;
+    delete (globalThis as any).MutationObserver;
+    delete (globalThis as any).requestAnimationFrame;
+    delete (globalThis as any).cancelAnimationFrame;
 
     dom?.window?.close?.();
     dom = null;
@@ -83,7 +83,7 @@ describe('List Rendering (for)', () => {
             { id: 3, text: 'Item 3' }
           ]);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -120,7 +120,7 @@ describe('List Rendering (for)', () => {
       try {
         withScope(scope, () => {
           items = signal([{ id: 1, text: 'Item 1' }]);
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -167,7 +167,7 @@ describe('List Rendering (for)', () => {
             { id: 3, text: 'Item 3' }
           ]);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -217,7 +217,7 @@ describe('List Rendering (for)', () => {
           item3 = { id: 3, text: 'Item 3' };
 
           items = signal([item1, item2, item3]);
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               renderCount++;
@@ -236,13 +236,13 @@ describe('List Rendering (for)', () => {
 
         await flush();
 
-        const initialDivs = Array.from(container.querySelectorAll('div'));
+        const initialDivs = Array.from(container.querySelectorAll('div')) as HTMLDivElement[];
         const initialRenderCount = renderCount;
 
         items.set([item3, item2, item1]);
         await flush();
 
-        const newDivs = Array.from(container.querySelectorAll('div'));
+        const newDivs = Array.from(container.querySelectorAll('div')) as HTMLDivElement[];
 
         assert.strictEqual(renderCount, initialRenderCount);
         assert.strictEqual(newDivs[0].textContent, 'Item 3');
@@ -270,7 +270,7 @@ describe('List Rendering (for)', () => {
             { id: 2, text: 'Item 2' }
           ]);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -312,7 +312,7 @@ describe('List Rendering (for)', () => {
         withScope(scope, () => {
           const items = signal([]);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             // not called when empty
             (item) => {
@@ -346,7 +346,7 @@ describe('List Rendering (for)', () => {
       try {
         withScope(scope, () => {
           items = signal([]);
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -392,7 +392,7 @@ describe('List Rendering (for)', () => {
             { id: 2, text: 'Item 2' }
           ]);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -431,7 +431,7 @@ describe('List Rendering (for)', () => {
             { id: 2, text: 'B' }
           ]);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item, index) => {
               const div = document.createElement('div');
@@ -470,7 +470,7 @@ describe('List Rendering (for)', () => {
             { id: 3, text: 'Item 3' }
           ]);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -514,7 +514,7 @@ describe('List Rendering (for)', () => {
         withScope(scope, () => {
           const items = signal(['A', 'B', 'C']);
 
-          const fragment = createList(
+          const fragment = createList<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -555,7 +555,7 @@ describe('List Rendering (for)', () => {
             { id: 2, text: 'B' }
           ]);
 
-          const fragment = forEach(
+          const fragment = forEach<any>(
             () => items(),
             (item, index) => {
               const div = document.createElement('div');
@@ -597,7 +597,7 @@ describe('List Rendering (for)', () => {
           item3 = { id: 3, text: 'C' };
 
           items = signal([item1, item2, item3]);
-          const fragment = forEach(
+          const fragment = forEach<any>(
             () => items(),
             (item, index) => {
               renderCount++;
@@ -624,7 +624,7 @@ describe('List Rendering (for)', () => {
 
         await flush();
 
-        const initialDivs = Array.from(container.querySelectorAll('div'));
+        const initialDivs = Array.from(container.querySelectorAll('div')) as HTMLDivElement[];
         const initialRenderCount = renderCount;
 
         assert.strictEqual(initialDivs[0].textContent, '0: A');
@@ -634,7 +634,7 @@ describe('List Rendering (for)', () => {
         items.set([item3, item2, item1]);
         await flush();
 
-        const newDivs = Array.from(container.querySelectorAll('div'));
+        const newDivs = Array.from(container.querySelectorAll('div')) as HTMLDivElement[];
 
         assert.strictEqual(renderCount, initialRenderCount, 'Should not re-render on reorder');
 
@@ -664,7 +664,7 @@ describe('List Rendering (for)', () => {
 
       try {
         withScope(scope, () => {
-          const fragment = forEach(
+          const fragment = forEach<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -721,7 +721,7 @@ describe('List Rendering (for)', () => {
           ]);
 
           try {
-            const fragment = forEach(
+            const fragment = forEach<any>(
               () => items(),
               (item) => {
                 const div = document.createElement('div');
@@ -766,7 +766,7 @@ describe('List Rendering (for)', () => {
             { id: 2, text: 'C' }
           ]);
 
-          const fragment = forEach(
+          const fragment = forEach<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');
@@ -805,7 +805,7 @@ describe('List Rendering (for)', () => {
       try {
         const items = signal([{ id: 1, text: 'A' }]);
 
-        const fragment = forEach(
+        const fragment = forEach<any>(
           () => items(),
           (item) => {
             const div = document.createElement('div');
@@ -839,7 +839,7 @@ describe('List Rendering (for)', () => {
         { id: 2, text: 'B' }
       ]);
 
-      const fragment = forEach(
+      const fragment = forEach<any>(
         () => items(),
         (item) => {
           const div = document.createElement('div');
@@ -885,7 +885,7 @@ describe('List Rendering (for)', () => {
 
       let renderCount = 0;
 
-      const fragment = forEach(
+      const fragment = forEach<any>(
         () => items(),
         (item) => {
           renderCount++;
@@ -933,7 +933,7 @@ describe('List Rendering (for)', () => {
 
       try {
         withScope(scope, () => {
-          fragment = forEach(
+          fragment = forEach<any>(
             () => items(),
             (item) => {
               const div = document.createElement('div');

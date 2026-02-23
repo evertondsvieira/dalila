@@ -36,39 +36,39 @@ async function withDom(fn) {
     url: 'http://localhost/',
   });
 
-  globalThis.window = dom.window;
-  globalThis.document = dom.window.document;
-  globalThis.Node = dom.window.Node;
-  globalThis.NodeFilter = dom.window.NodeFilter;
-  globalThis.Element = dom.window.Element;
-  globalThis.HTMLElement = dom.window.HTMLElement;
-  globalThis.HTMLFormElement = dom.window.HTMLFormElement;
-  globalThis.HTMLInputElement = dom.window.HTMLInputElement;
-  globalThis.HTMLSelectElement = dom.window.HTMLSelectElement;
-  globalThis.DocumentFragment = dom.window.DocumentFragment;
-  globalThis.Comment = dom.window.Comment;
-  globalThis.FormData = dom.window.FormData;
-  globalThis.Event = dom.window.Event;
-  globalThis.CSS = dom.window.CSS || { escape: (s) => s.replace(/([^\w-])/g, '\\$1') };
+  (globalThis as any).window = dom.window;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).Node = dom.window.Node;
+  (globalThis as any).NodeFilter = dom.window.NodeFilter;
+  (globalThis as any).Element = dom.window.Element;
+  (globalThis as any).HTMLElement = dom.window.HTMLElement;
+  (globalThis as any).HTMLFormElement = dom.window.HTMLFormElement;
+  (globalThis as any).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as any).HTMLSelectElement = dom.window.HTMLSelectElement;
+  (globalThis as any).DocumentFragment = dom.window.DocumentFragment;
+  (globalThis as any).Comment = dom.window.Comment;
+  (globalThis as any).FormData = dom.window.FormData;
+  (globalThis as any).Event = dom.window.Event;
+  (globalThis as any).CSS = dom.window.CSS || { escape: (s) => s.replace(/([^\w-])/g, '\\$1') };
 
   try {
     await fn(dom.window.document, dom);
   } finally {
     await tick(20);
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.Node;
-    delete globalThis.NodeFilter;
-    delete globalThis.Element;
-    delete globalThis.HTMLElement;
-    delete globalThis.HTMLFormElement;
-    delete globalThis.HTMLInputElement;
-    delete globalThis.HTMLSelectElement;
-    delete globalThis.DocumentFragment;
-    delete globalThis.Comment;
-    delete globalThis.FormData;
-    delete globalThis.Event;
-    delete globalThis.CSS;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).NodeFilter;
+    delete (globalThis as any).Element;
+    delete (globalThis as any).HTMLElement;
+    delete (globalThis as any).HTMLFormElement;
+    delete (globalThis as any).HTMLInputElement;
+    delete (globalThis as any).HTMLSelectElement;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).Comment;
+    delete (globalThis as any).FormData;
+    delete (globalThis as any).Event;
+    delete (globalThis as any).CSS;
   }
 }
 
@@ -317,8 +317,8 @@ test('d-form auto-wraps submit handler through handleSubmit', async () => {
     const scope = createScope();
     const myForm = withScope(scope, () =>
       createForm({
-        validate: (data) => {
-          const errors = {};
+        validate: (data: any) => {
+          const errors: Record<string, string> = {};
           if (!data.email) errors.email = 'Required';
           return errors;
         },

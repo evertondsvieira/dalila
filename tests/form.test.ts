@@ -8,13 +8,16 @@ import { JSDOM } from 'jsdom';
 import { createForm, parseFormData, zodAdapter, valibotAdapter, yupAdapter } from '../dist/form/index.js';
 import { createScope, withScope } from '../dist/core/scope.js';
 
+type AnyFn = (...args: any[]) => any;
+type MockFn<T extends AnyFn> = T & { calls: Parameters<T>[]; callCount: number };
+
 // Simple mock function helper
-function mockFn(impl) {
-  const calls = [];
-  const fn = (...args) => {
+function mockFn<T extends AnyFn = AnyFn>(impl?: T): MockFn<T> {
+  const calls: Parameters<T>[] = [];
+  const fn = ((...args: Parameters<T>) => {
     calls.push(args);
     return impl ? impl(...args) : undefined;
-  };
+  }) as MockFn<T>;
 
   Object.defineProperty(fn, 'calls', { get: () => calls });
   Object.defineProperty(fn, 'callCount', { get: () => calls.length });
@@ -492,8 +495,8 @@ describe('createForm', () => {
   it('should validate on submit', async () => {
     const form = withScope(scope, () =>
       createForm({
-        validate: (data) => {
-          const errors = {};
+        validate: (data: any) => {
+          const errors: Record<string, string> = {};
           if (!data.email) {
             errors.email = 'Email is required';
           }
@@ -525,8 +528,8 @@ describe('createForm', () => {
   it('should call handler on valid submit', async () => {
     const form = withScope(scope, () =>
       createForm({
-        validate: (data) => {
-          const errors = {};
+        validate: (data: any) => {
+          const errors: Record<string, string> = {};
           if (!data.email) {
             errors.email = 'Email is required';
           }
@@ -539,7 +542,7 @@ describe('createForm', () => {
     formElement.innerHTML = '<input name="email" value="test@example.com" />';
     form._setFormElement(formElement);
 
-    const handler = mockFn((data) => {
+    const handler = mockFn((data: any) => {
       assert.deepStrictEqual(data, { email: 'test@example.com' });
     });
     const submitHandler = form.handleSubmit(handler);
@@ -558,7 +561,7 @@ describe('createForm', () => {
 
   it('should validate with zod adapter and map nested issues to field paths', async () => {
     const schema = {
-      safeParse: (data) => {
+      safeParse: (data: any) => {
         const email = data?.user?.email;
         if (typeof email === 'string' && email.includes('@')) {
           return { success: true, data };
@@ -589,7 +592,7 @@ describe('createForm', () => {
 
   it('should pass schema-transformed values to submit handler', async () => {
     const schema = {
-      safeParse: (data) => ({
+      safeParse: (data: any) => ({
         success: true,
         data: {
           ...data,
@@ -607,7 +610,7 @@ describe('createForm', () => {
     `;
     form._setFormElement(formElement);
 
-    const handler = mockFn((data) => {
+    const handler = mockFn((data: any) => {
       assert.strictEqual(data.age, 42);
       assert.strictEqual(data.email, 'user@example.com');
     });
@@ -621,7 +624,7 @@ describe('createForm', () => {
 
   it('should run custom validate with schema-transformed values', async () => {
     const schema = {
-      safeParse: (data) => ({
+      safeParse: (data: any) => ({
         success: true,
         data: {
           ...data,
@@ -633,7 +636,7 @@ describe('createForm', () => {
     const form = withScope(scope, () =>
       createForm({
         schema: zodAdapter(schema),
-        validate: (data) => {
+        validate: (data: any) => {
           if (typeof data.age !== 'number') {
             return { age: 'Age must be number' };
           }
@@ -659,7 +662,7 @@ describe('createForm', () => {
   it('should validate with valibot adapter and map key-segment paths', async () => {
     const schema = { kind: 'valibot-schema' };
     const runtime = {
-      safeParse: (_schema, data) => {
+      safeParse: (_schema: any, data: any) => {
         if (data?.age >= 18) return { success: true, output: data };
         return {
           success: false,
@@ -692,8 +695,8 @@ describe('createForm', () => {
 
   it('should resolve valibot runtime when omitted', async () => {
     const previous = globalThis.valibot;
-    globalThis.valibot = {
-      safeParse: (_schema, data) => {
+    (globalThis as any).valibot = {
+      safeParse: (_schema: any, data: any) => {
         if (data?.age >= 18) return { success: true, output: data };
         return {
           success: false,
@@ -722,9 +725,9 @@ describe('createForm', () => {
       assert.strictEqual(form.error('age'), 'Must be adult');
     } finally {
       if (previous === undefined) {
-        delete globalThis.valibot;
+        delete (globalThis as any).valibot;
       } else {
-        globalThis.valibot = previous;
+        (globalThis as any).valibot = previous;
       }
     }
   });
@@ -735,7 +738,7 @@ describe('createForm', () => {
         if (typeof data.email === 'string' && data.email.includes('@')) return data;
         const error = new Error('ValidationError');
         error.name = 'ValidationError';
-        error.inner = [{ path: 'email', message: 'Invalid email' }];
+        (error as any).inner = [{ path: 'email', message: 'Invalid email' }];
         throw error;
       },
     };
@@ -795,7 +798,7 @@ describe('createForm', () => {
     let validateFieldCalls = 0;
     const schema = {
       validate: () => ({ issues: [] }),
-      validateField: (path, value) => {
+      validateField: (path: any, value: any) => {
         validateFieldCalls++;
         if (path === 'email' && !String(value ?? '').includes('@')) {
           return { issues: [{ path: 'email', message: 'Invalid email' }] };
@@ -837,7 +840,7 @@ describe('createForm', () => {
   it('should ignore stale async validateField results on rapid change events', async () => {
     const schema = {
       validate: () => ({ issues: [] }),
-      validateField: async (path, value) => {
+      validateField: async (path: any, value: any) => {
         if (path !== 'email') return { issues: [] };
         if (value === 'bad') {
           await new Promise((resolve) => setTimeout(resolve, 30));
@@ -944,7 +947,7 @@ describe('createForm', () => {
         }
         return { issues: [] };
       },
-      validateField: async (path, value) => {
+      validateField: async (path: any, value: any) => {
         if (path !== 'email') return { issues: [] };
         await new Promise((resolve) => setTimeout(resolve, 5));
         if (!String(value ?? '').includes('@')) {
@@ -998,7 +1001,7 @@ describe('createForm', () => {
       const form = withScope(scope, () =>
         createForm({
           validateOn: 'change',
-          validate: async (data) => {
+          validate: async (data: any) => {
             if (data?.email === 'boom') {
               throw new Error('validator exploded');
             }
@@ -1037,7 +1040,7 @@ describe('createForm', () => {
   it('should keep async field validations independent across different paths', async () => {
     const schema = {
       validate: () => ({ issues: [] }),
-      validateField: async (path, value) => {
+      validateField: async (path: any, value: any) => {
         if (path === 'email') {
           await new Promise((resolve) => setTimeout(resolve, 40));
           if (!String(value ?? '').includes('@')) {
@@ -1136,7 +1139,7 @@ describe('createForm', () => {
   it('should preserve unrelated field errors on path validation when schema.validateField and validate coexist', async () => {
     const schema = {
       validate: () => ({ issues: [] }),
-      validateField: async (path, value) => {
+      validateField: async (path: any, value: any) => {
         if (path === 'email' && !String(value ?? '').includes('@')) {
           return { issues: [{ path: 'email', message: 'Invalid email' }] };
         }
@@ -1191,7 +1194,7 @@ describe('createForm', () => {
     let firstCallAborted = false;
     const handler = mockFn(async (data, { signal }) => {
       // Simulate slow async work
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise<void>(resolve => setTimeout(resolve, 100));
       if (signal.aborted) {
         firstCallAborted = true;
       }
@@ -1249,7 +1252,7 @@ describe('createForm', () => {
     );
 
     // Wait for defaults to initialize
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
 
     assert.strictEqual(form.dirty('email'), false);
 
@@ -1316,7 +1319,7 @@ describe('createForm', () => {
     const form = withScope(scope, () =>
       createForm({
         parse: (formEl, fd) => {
-          const raw = parseFormData(formEl, fd);
+          const raw = parseFormData(formEl, fd) as any;
           return {
             email: String(raw.email ?? '').trim().toLowerCase(),
           };
@@ -1875,7 +1878,7 @@ describe('Form reset with field arrays', () => {
     );
 
     // Wait for defaults to initialize
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
 
     const array = form.fieldArray('phones');
 
@@ -1943,7 +1946,7 @@ describe('Async defaultValues with field arrays', () => {
       createForm({
         defaultValues: async () => {
           // Simulate async fetch
-          await new Promise(resolve => setTimeout(resolve, 10));
+          await new Promise<void>(resolve => setTimeout(resolve, 10));
           return {
             phones: [
               { number: '555-1234', type: 'mobile' },
@@ -1959,7 +1962,7 @@ describe('Async defaultValues with field arrays', () => {
     assert.strictEqual(array.fields().length, 0);
 
     // Wait for async defaults to resolve + hydration
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise<void>(resolve => setTimeout(resolve, 50));
 
     // Array should now be populated from defaults
     assert.strictEqual(array.fields().length, 2);
@@ -1971,7 +1974,7 @@ describe('Async defaultValues with field arrays', () => {
     const form = withScope(scope, () =>
       createForm({
         defaultValues: async () => {
-          await new Promise(resolve => setTimeout(resolve, 10));
+          await new Promise<void>(resolve => setTimeout(resolve, 10));
           return {
             phones: [
               { number: 'default-1' },
@@ -1987,7 +1990,7 @@ describe('Async defaultValues with field arrays', () => {
     assert.strictEqual(array.fields().length, 1);
 
     // Wait for async defaults to resolve
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise<void>(resolve => setTimeout(resolve, 50));
 
     // Array should NOT be overwritten because it already has items
     assert.strictEqual(array.fields().length, 1);

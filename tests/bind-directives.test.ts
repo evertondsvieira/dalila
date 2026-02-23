@@ -27,53 +27,54 @@ import { bind, configure, createPortalTarget, scrollToVirtualIndex }    from '..
 
 // ─── shared helpers ─────────────────────────────────────────────────────────
 
-const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+const tick = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
  * Spin up a fresh JSDOM for the duration of one test.
  * Globals are set before `fn` runs and torn down afterwards.
  */
-async function withDom(fn) {
+async function withDom(fn: (doc: Document) => void | Promise<void>) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     url: 'http://localhost/',
   });
 
-  globalThis.window            = dom.window;
-  globalThis.document          = dom.window.document;
-  globalThis.Node              = dom.window.Node;
-  globalThis.NodeFilter        = dom.window.NodeFilter;
-  globalThis.Element           = dom.window.Element;
-  globalThis.HTMLElement       = dom.window.HTMLElement;
-  globalThis.DocumentFragment  = dom.window.DocumentFragment;
-  globalThis.Comment           = dom.window.Comment;
+  (globalThis as any).window            = dom.window;
+  (globalThis as any).document          = dom.window.document;
+  (globalThis as any).Node              = dom.window.Node;
+  (globalThis as any).NodeFilter        = dom.window.NodeFilter;
+  (globalThis as any).Element           = dom.window.Element;
+  (globalThis as any).HTMLElement       = dom.window.HTMLElement;
+  (globalThis as any).DocumentFragment  = dom.window.DocumentFragment;
+  (globalThis as any).Comment           = dom.window.Comment;
 
   try {
     await fn(dom.window.document);
   } finally {
     await tick(20); // let any trailing microtasks settle
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.Node;
-    delete globalThis.NodeFilter;
-    delete globalThis.Element;
-    delete globalThis.HTMLElement;
-    delete globalThis.DocumentFragment;
-    delete globalThis.Comment;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).NodeFilter;
+    delete (globalThis as any).Element;
+    delete (globalThis as any).HTMLElement;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).Comment;
   }
 }
 
 /** Parse HTML, append first element child to body, return it. */
-function el(doc, html) {
+function el(doc: Document, html: string): HTMLElement {
   const wrapper = doc.createElement('div');
   wrapper.innerHTML = html.trim();
   const root = wrapper.firstElementChild;
+  assert.ok(root);
   doc.body.appendChild(root);
-  return root;
+  return root as HTMLElement;
 }
 
 /** Run fn, collect every console.warn call, return the array of messages. */
-async function captureWarns(fn) {
-  const warns = [];
+async function captureWarns(fn: () => void | Promise<void>): Promise<string[]> {
+  const warns: string[] = [];
   const orig  = console.warn;
   console.warn = (...args) => warns.push(args.map(String).join(' '));
   try { await fn(); }
@@ -431,7 +432,7 @@ test('d-when rejects braced attribute bindings', async () => {
 test('d-attr-value sets .value property – survives simulated user input', async () => {
   await withDom(async (doc) => {
     const val = signal('initial');
-    const root = el(doc, '<input d-attr-value="val" />');
+    const root = el(doc, '<input d-attr-value="val" />') as HTMLInputElement;
     bind(root, { val });
     await tick(10);
     assert.equal(root.value, 'initial');
@@ -446,7 +447,7 @@ test('d-attr-value sets .value property – survives simulated user input', asyn
 test('d-attr-checked toggles .checked reactively', async () => {
   await withDom(async (doc) => {
     const checked = signal(true);
-    const root = el(doc, '<input type="checkbox" d-attr-checked="checked" />');
+    const root = el(doc, '<input type="checkbox" d-attr-checked="checked" />') as HTMLInputElement;
     bind(root, { checked });
     await tick(10);
     assert.equal(root.checked, true);
@@ -460,7 +461,7 @@ test('d-attr-checked toggles .checked reactively', async () => {
 test('d-attr-disabled toggles .disabled reactively', async () => {
   await withDom(async (doc) => {
     const disabled = signal(false);
-    const root = el(doc, '<button d-attr-disabled="disabled">go</button>');
+    const root = el(doc, '<button d-attr-disabled="disabled">go</button>') as HTMLButtonElement;
     bind(root, { disabled });
     await tick(10);
     assert.equal(root.disabled, false);
@@ -485,8 +486,8 @@ test('d-match – dynamically appended [case] is found on next signal change', a
     bind(root, { mode });
     await tick(10);
 
-    assert.equal(root.querySelector('[case="a"]').style.display, '');
-    assert.equal(root.querySelector('[case="b"]').style.display, 'none');
+    assert.equal((root.querySelector('[case="a"]') as HTMLElement).style.display, '');
+    assert.equal((root.querySelector('[case="b"]') as HTMLElement).style.display, 'none');
 
     // Dynamically add a new case after initial bind
     const caseC = doc.createElement('div');
@@ -498,8 +499,8 @@ test('d-match – dynamically appended [case] is found on next signal change', a
     await tick(10);
 
     assert.equal(caseC.style.display, '',     'new case visible');
-    assert.equal(root.querySelector('[case="a"]').style.display, 'none');
-    assert.equal(root.querySelector('[case="b"]').style.display, 'none');
+    assert.equal((root.querySelector('[case="a"]') as HTMLElement).style.display, 'none');
+    assert.equal((root.querySelector('[case="b"]') as HTMLElement).style.display, 'none');
   });
 });
 
@@ -717,10 +718,11 @@ test('d-virtual-each – supports dynamic measured heights via d-virtual-measure
     const OriginalResizeObserver = globalThis.ResizeObserver;
 
     class TestResizeObserver {
-      constructor(callback) {
+      callback: (entries: Array<{ target: Element; contentRect: { height: number } }>) => void;
+      constructor(callback: (entries: Array<{ target: Element; contentRect: { height: number } }>) => void) {
         this.callback = callback;
       }
-      observe(target) {
+      observe(target: Element) {
         const index = Number(target.getAttribute('data-dalila-virtual-index') ?? '0');
         const height = index === 0 ? 60 : 20;
         this.callback([{ target, contentRect: { height } }]);
@@ -729,7 +731,7 @@ test('d-virtual-each – supports dynamic measured heights via d-virtual-measure
       disconnect() {}
     }
 
-    globalThis.ResizeObserver = TestResizeObserver;
+    (globalThis as any).ResizeObserver = TestResizeObserver;
 
     try {
       const items = signal(
@@ -766,7 +768,7 @@ test('d-virtual-each – supports dynamic measured heights via d-virtual-measure
       const windowRows = root.querySelectorAll('.row[data-dalila-internal-bound]');
       assert.equal(windowRows[0].textContent.trim(), 'Item 1');
     } finally {
-      globalThis.ResizeObserver = OriginalResizeObserver;
+      (globalThis as any).ResizeObserver = OriginalResizeObserver;
     }
   });
 });
@@ -777,10 +779,11 @@ test('d-virtual-each – dynamic heights are reset/remapped when dataset changes
     let emitMeasurements = true;
 
     class TestResizeObserver {
-      constructor(callback) {
+      callback: (entries: Array<{ target: Element; contentRect: { height: number } }>) => void;
+      constructor(callback: (entries: Array<{ target: Element; contentRect: { height: number } }>) => void) {
         this.callback = callback;
       }
-      observe(target) {
+      observe(target: Element) {
         if (!emitMeasurements) return;
         const index = Number(target.getAttribute('data-dalila-virtual-index') ?? '0');
         const height = index === 0 ? 80 : 20;
@@ -790,7 +793,7 @@ test('d-virtual-each – dynamic heights are reset/remapped when dataset changes
       disconnect() {}
     }
 
-    globalThis.ResizeObserver = TestResizeObserver;
+    (globalThis as any).ResizeObserver = TestResizeObserver;
 
     try {
       const items = signal([
@@ -833,7 +836,7 @@ test('d-virtual-each – dynamic heights are reset/remapped when dataset changes
 
       assert.equal(topSpacer.getAttribute('data-dalila-virtual-total'), '40');
     } finally {
-      globalThis.ResizeObserver = OriginalResizeObserver;
+      (globalThis as any).ResizeObserver = OriginalResizeObserver;
     }
   });
 });
@@ -866,7 +869,7 @@ test('d-virtual-each – exposes __dalilaVirtualList.scrollToIndex()', async () 
     bind(root, { items });
     await tick(20);
 
-    const api = root.__dalilaVirtualList;
+    const api = (root as any).__dalilaVirtualList;
     assert.ok(api && typeof api.scrollToIndex === 'function');
 
     api.scrollToIndex(10);
@@ -1006,17 +1009,18 @@ test('d-virtual-each – dynamic mode does not trigger infinite at exact viewpor
     const OriginalResizeObserver = globalThis.ResizeObserver;
 
     class TestResizeObserver {
-      constructor(callback) {
+      callback: (entries: Array<{ target: Element; contentRect: { height: number } }>) => void;
+      constructor(callback: (entries: Array<{ target: Element; contentRect: { height: number } }>) => void) {
         this.callback = callback;
       }
-      observe(target) {
+      observe(target: Element) {
         this.callback([{ target, contentRect: { height: 20 } }]);
       }
       unobserve() {}
       disconnect() {}
     }
 
-    globalThis.ResizeObserver = TestResizeObserver;
+    (globalThis as any).ResizeObserver = TestResizeObserver;
 
     try {
       const items = signal(
@@ -1063,7 +1067,7 @@ test('d-virtual-each – dynamic mode does not trigger infinite at exact viewpor
       await tick(20);
       assert.equal(calls, 1);
     } finally {
-      globalThis.ResizeObserver = OriginalResizeObserver;
+      (globalThis as any).ResizeObserver = OriginalResizeObserver;
     }
   });
 });
@@ -1275,8 +1279,8 @@ test('text interpolation – ternary is right-associative', async () => {
 
 test('text interpolation – bench stats track fast-path hit and plan-cache reuse', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_bind_bench = true;
-    delete globalThis.__dalila_bind_bench_stats;
+    (globalThis as any).__dalila_bind_bench = true;
+    delete (globalThis as any).__dalila_bind_bench_stats;
 
     try {
       const mount = () => el(doc, `
@@ -1304,16 +1308,16 @@ test('text interpolation – bench stats track fast-path hit and plan-cache reus
       assert.equal(second.fastPathExpressions, 2);
       assert.equal(second.planCacheHit, true);
     } finally {
-      delete globalThis.__dalila_bind_bench;
-      delete globalThis.__dalila_bind_bench_stats;
+      delete (globalThis as any).__dalila_bind_bench;
+      delete (globalThis as any).__dalila_bind_bench_stats;
     }
   });
 });
 
 test('text interpolation – template plan cache can be disabled per bind options', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_bind_bench = true;
-    delete globalThis.__dalila_bind_bench_stats;
+    (globalThis as any).__dalila_bind_bench = true;
+    delete (globalThis as any).__dalila_bind_bench_stats;
 
     try {
       const mount = () => el(doc, '<div><span>{count}</span><span>{user.name}</span></div>');
@@ -1331,17 +1335,17 @@ test('text interpolation – template plan cache can be disabled per bind option
       const second = globalThis.__dalila_bind_bench_stats?.last;
       assert.equal(second.planCacheHit, false);
     } finally {
-      delete globalThis.__dalila_bind_bench;
-      delete globalThis.__dalila_bind_bench_stats;
+      delete (globalThis as any).__dalila_bind_bench;
+      delete (globalThis as any).__dalila_bind_bench_stats;
     }
   });
 });
 
 test('text interpolation – template plan cache can be disabled globally', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_bind_bench = true;
-    globalThis.__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 60_000 };
-    delete globalThis.__dalila_bind_bench_stats;
+    (globalThis as any).__dalila_bind_bench = true;
+    (globalThis as any).__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 60_000 };
+    delete (globalThis as any).__dalila_bind_bench_stats;
 
     try {
       const mount = () => el(doc, '<div><span>{count}</span><span>{user.name}</span></div>');
@@ -1358,18 +1362,18 @@ test('text interpolation – template plan cache can be disabled globally', asyn
       const second = globalThis.__dalila_bind_bench_stats?.last;
       assert.equal(second.planCacheHit, false);
     } finally {
-      delete globalThis.__dalila_bind_bench;
-      delete globalThis.__dalila_bind_bench_stats;
-      delete globalThis.__dalila_bind_template_cache;
+      delete (globalThis as any).__dalila_bind_bench;
+      delete (globalThis as any).__dalila_bind_bench_stats;
+      delete (globalThis as any).__dalila_bind_template_cache;
     }
   });
 });
 
 test('text interpolation – bind options cache config overrides global cache config', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_bind_bench = true;
-    globalThis.__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 60_000 };
-    delete globalThis.__dalila_bind_bench_stats;
+    (globalThis as any).__dalila_bind_bench = true;
+    (globalThis as any).__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 60_000 };
+    delete (globalThis as any).__dalila_bind_bench_stats;
 
     try {
       const mount = () => el(doc, '<div><span>{optOverrideCount}</span><span>{optOverrideUser.name}</span></div>');
@@ -1385,9 +1389,9 @@ test('text interpolation – bind options cache config overrides global cache co
       const second = globalThis.__dalila_bind_bench_stats?.last;
       assert.equal(second.planCacheHit, true);
     } finally {
-      delete globalThis.__dalila_bind_bench;
-      delete globalThis.__dalila_bind_bench_stats;
-      delete globalThis.__dalila_bind_template_cache;
+      delete (globalThis as any).__dalila_bind_bench;
+      delete (globalThis as any).__dalila_bind_bench_stats;
+      delete (globalThis as any).__dalila_bind_template_cache;
     }
   });
 });
@@ -1481,8 +1485,8 @@ test('d-match – null signal normalises to empty string, matches case=""', asyn
     bind(root, { mode });
     await tick(10);
 
-    assert.equal(root.querySelector('[case=""]').style.display, '');
-    assert.equal(root.querySelector('[case="a"]').style.display, 'none');
+    assert.equal((root.querySelector('[case=""]') as HTMLElement).style.display, '');
+    assert.equal((root.querySelector('[case="a"]') as HTMLElement).style.display, 'none');
   });
 });
 
@@ -1818,7 +1822,7 @@ test('d-bind-value – warns when binding is not a signal', async () => {
 
 test('d-bind-value – read-only signal keeps outbound and disables inbound', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const source = signal('derived');
     const readonly = computed(() => source());
@@ -1845,7 +1849,7 @@ test('d-bind-value – read-only signal keeps outbound and disables inbound', as
     await tick(10);
     assert.equal(input.value, 'updated');
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 

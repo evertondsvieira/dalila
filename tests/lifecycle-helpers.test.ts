@@ -12,14 +12,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 // Mock requestAnimationFrame (some scheduling utilities may rely on it)
-globalThis.requestAnimationFrame =
-  globalThis.requestAnimationFrame ||
+(globalThis as any).requestAnimationFrame =
+  (globalThis as any).requestAnimationFrame ||
   ((cb) => {
     return setTimeout(cb, 0);
   });
 
 // Minimal DOM mock (only what the helpers may touch)
-globalThis.document = {
+(globalThis as any).document = {
   createElement: () => ({
     addEventListener() {},
     removeEventListener() {},
@@ -31,10 +31,14 @@ import { createScope, withScope } from '../dist/core/scope.js';
 import { resetWarnings } from '../dist/internal/watch-testing.js';
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+type MockTarget = EventTarget & {
+  addEventListener: (...args: any[]) => void;
+  removeEventListener: (...args: any[]) => void;
+};
 
 test('useEvent - returns idempotent dispose()', () => {
   const scope = createScope();
-  const target = { addEventListener() {}, removeEventListener() {} };
+  const target = { addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } } as MockTarget;
   let removeCalls = 0;
 
   target.removeEventListener = () => {
@@ -56,7 +60,7 @@ test('useEvent - returns idempotent dispose()', () => {
 
 test('useEvent - cleanup via scope.dispose()', () => {
   const scope = createScope();
-  const target = { addEventListener() {}, removeEventListener() {} };
+  const target = { addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } } as MockTarget;
   let removeCalls = 0;
 
   target.removeEventListener = () => {
@@ -75,7 +79,7 @@ test('useEvent - cleanup via scope.dispose()', () => {
 test('useEvent - works without scope (with warning)', () => {
   resetWarnings(); // Reset to make the warning deterministic for this test
 
-  const target = { addEventListener() {}, removeEventListener() {} };
+  const target = { addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } } as MockTarget;
   let addCalls = 0;
   let removeCalls = 0;
 

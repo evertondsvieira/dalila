@@ -8,7 +8,7 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 const flush = () => Promise.resolve();
 
 // Mock requestAnimationFrame for Node.js environment
-globalThis.requestAnimationFrame = globalThis.requestAnimationFrame || ((cb) => {
+(globalThis as any).requestAnimationFrame = globalThis.requestAnimationFrame || ((cb) => {
   return setTimeout(cb, 0);
 });
 
@@ -173,7 +173,7 @@ test("timeSlice(): aborts cooperative execution via AbortSignal", async () => {
     }
   }, { budgetMs: 0, signal: controller.signal });
 
-  await assert.rejects(run, (error) => {
+  await assert.rejects(run, (error: any) => {
     assert.equal(error?.name, "AbortError");
     return true;
   });

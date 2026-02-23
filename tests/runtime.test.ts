@@ -13,14 +13,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 // Mock requestAnimationFrame for deterministic tests
-globalThis.requestAnimationFrame =
-  globalThis.requestAnimationFrame ||
+(globalThis as any).requestAnimationFrame =
+  (globalThis as any).requestAnimationFrame ||
   ((cb) => {
     return setTimeout(cb, 0);
   });
 
 // Mock DOM APIs
-globalThis.MutationObserver = class {
+(globalThis as any).MutationObserver = class {
+  callback: MutationCallback;
   constructor(callback) {
     this.callback = callback;
   }
@@ -28,11 +29,12 @@ globalThis.MutationObserver = class {
   disconnect() {}
 };
 
-globalThis.document = {
+(globalThis as any).document = {
   createElement: () => ({
     isConnected: true,
     addEventListener() {},
-    removeEventListener() {}
+    removeEventListener() {},
+    dispatchEvent() { return true; }
   })
 };
 

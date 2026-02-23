@@ -68,7 +68,7 @@ test('resetGlobalScope removes beforeunload listener when registered', () => {
   let registeredHandler;
   const originalWarn = console.warn;
 
-  globalThis.window = {
+  (globalThis as any).window = {
     addEventListener(event, handler) {
       if (event === 'beforeunload') {
         calls.add++;
@@ -95,7 +95,7 @@ test('resetGlobalScope removes beforeunload listener when registered', () => {
     assert.equal(calls.remove, 1);
   } finally {
     console.warn = originalWarn;
-    globalThis.window = originalWindow;
+    (globalThis as any).window = originalWindow;
     setAutoScopePolicy("throw"); // Reset to default
   }
 });

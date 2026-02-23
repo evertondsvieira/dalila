@@ -11,12 +11,12 @@ import { JSDOM } from 'jsdom';
 
 // Setup DOM
 const { window } = new JSDOM(`<!DOCTYPE html><html><body></body></html>`);
-global.window = window;
-global.document = window.document;
-global.Element = window.Element;
-global.HTMLElement = window.HTMLElement;
-global.NodeFilter = window.NodeFilter;
-global.MutationObserver = window.MutationObserver;
+(globalThis as any).window = window;
+(globalThis as any).document = window.document;
+(globalThis as any).Element = window.Element;
+(globalThis as any).HTMLElement = window.HTMLElement;
+(globalThis as any).NodeFilter = window.NodeFilter;
+(globalThis as any).MutationObserver = window.MutationObserver;
 
 // Import after DOM is set up
 import { bind } from '../dist/runtime/bind.js';
@@ -35,7 +35,7 @@ test('bind: removes d-loading when present', async () => {
   bind(root, ctx);
 
   // Wait for microtask
-  await new Promise(resolve => queueMicrotask(resolve));
+  await new Promise<void>(resolve => queueMicrotask(resolve));
 
   // After bind completes, d-loading is removed
   assert.equal(root.hasAttribute('d-loading'), false);
@@ -54,7 +54,7 @@ test('bind: adds d-ready after bindings complete', async () => {
   assert.equal(root.hasAttribute('d-ready'), false);
 
   // Wait for microtask
-  await new Promise(resolve => queueMicrotask(resolve));
+  await new Promise<void>(resolve => queueMicrotask(resolve));
 
   // After microtask, should have d-ready
   assert.equal(root.hasAttribute('d-ready'), true);
@@ -69,7 +69,7 @@ test('bind: text interpolation works correctly', async () => {
   bind(root, ctx);
 
   // Wait for effects to run
-  await new Promise(resolve => setTimeout(resolve, 10));
+  await new Promise<void>(resolve => setTimeout(resolve, 10));
 
   const p = root.querySelector('p');
   assert.ok(p);
@@ -87,7 +87,7 @@ test('bind: multiple interpolations', async () => {
 
   bind(root, ctx);
 
-  await new Promise(resolve => setTimeout(resolve, 10));
+  await new Promise<void>(resolve => setTimeout(resolve, 10));
 
   const p = root.querySelector('p');
   assert.ok(p);
@@ -106,7 +106,7 @@ test('bind: works without d-loading attribute', async () => {
   const dispose = bind(root, ctx);
 
   // Wait for ready
-  await new Promise(resolve => queueMicrotask(resolve));
+  await new Promise<void>(resolve => queueMicrotask(resolve));
 
   // Should still add d-ready
   assert.equal(root.hasAttribute('d-ready'), true);
@@ -123,7 +123,7 @@ test('bind: reactive updates after ready', async () => {
 
   bind(root, ctx);
 
-  await new Promise(resolve => setTimeout(resolve, 10));
+  await new Promise<void>(resolve => setTimeout(resolve, 10));
 
   // Should be ready
   assert.equal(root.hasAttribute('d-ready'), true);
@@ -131,7 +131,7 @@ test('bind: reactive updates after ready', async () => {
   // Update signal
   count.set(10);
 
-  await new Promise(resolve => setTimeout(resolve, 10));
+  await new Promise<void>(resolve => setTimeout(resolve, 10));
 
   const p = root.querySelector('p');
   assert.equal(p.textContent, '10');

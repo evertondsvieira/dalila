@@ -102,11 +102,11 @@ test("readonly signal mirrors reads/subscriptions and blocks mutation", async ()
   off();
 
   assert.throws(
-    () => ro.set(10),
+    () => (ro as any).set(10),
     /Cannot mutate a readonly signal/
   );
   assert.throws(
-    () => ro.update((v) => v + 1),
+    () => (ro as any).update((v: number) => v + 1),
     /Cannot mutate a readonly signal/
   );
 });
@@ -177,7 +177,7 @@ test("key() warns when object is passed (dev mode)", () => {
   setKeyDevMode(true);
 
   // This should trigger a warning
-  key("user", { id: 1 });
+  key("user", { id: 1 } as any);
 
   console.warn = originalWarn;
 
@@ -206,7 +206,7 @@ test("key() does not warn when dev mode is disabled", () => {
 
   setKeyDevMode(false);
 
-  key("user", { id: 1 });
+  key("user", { id: 1 } as any);
 
   console.warn = originalWarn;
   setKeyDevMode(true); // Reset

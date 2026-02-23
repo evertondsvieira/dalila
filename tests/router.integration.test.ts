@@ -14,37 +14,37 @@ async function withDom(urlPath, fn) {
 
   const { window } = dom;
 
-  globalThis.window = window;
-  globalThis.document = window.document;
-  globalThis.history = window.history;
-  globalThis.location = window.location;
-  globalThis.Node = window.Node;
-  globalThis.Element = window.Element;
-  globalThis.HTMLElement = window.HTMLElement;
-  globalThis.NodeFilter = window.NodeFilter;
-  globalThis.DocumentFragment = window.DocumentFragment;
-  globalThis.MouseEvent = window.MouseEvent;
-  globalThis.requestAnimationFrame = window.requestAnimationFrame.bind(window);
-  globalThis.cancelAnimationFrame = window.cancelAnimationFrame.bind(window);
-  globalThis.scrollTo = () => {};
+  (globalThis as any).window = window;
+  (globalThis as any).document = window.document;
+  (globalThis as any).history = window.history;
+  (globalThis as any).location = window.location;
+  (globalThis as any).Node = window.Node;
+  (globalThis as any).Element = window.Element;
+  (globalThis as any).HTMLElement = window.HTMLElement;
+  (globalThis as any).NodeFilter = window.NodeFilter;
+  (globalThis as any).DocumentFragment = window.DocumentFragment;
+  (globalThis as any).MouseEvent = window.MouseEvent;
+  (globalThis as any).requestAnimationFrame = window.requestAnimationFrame.bind(window);
+  (globalThis as any).cancelAnimationFrame = window.cancelAnimationFrame.bind(window);
+  (globalThis as any).scrollTo = () => {};
   window.scrollTo = () => {};
 
   try {
     await fn();
   } finally {
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.history;
-    delete globalThis.location;
-    delete globalThis.Node;
-    delete globalThis.Element;
-    delete globalThis.HTMLElement;
-    delete globalThis.NodeFilter;
-    delete globalThis.DocumentFragment;
-    delete globalThis.MouseEvent;
-    delete globalThis.requestAnimationFrame;
-    delete globalThis.cancelAnimationFrame;
-    delete globalThis.scrollTo;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).history;
+    delete (globalThis as any).location;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).Element;
+    delete (globalThis as any).HTMLElement;
+    delete (globalThis as any).NodeFilter;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).MouseEvent;
+    delete (globalThis as any).requestAnimationFrame;
+    delete (globalThis as any).cancelAnimationFrame;
+    delete (globalThis as any).scrollTo;
   }
 }
 
@@ -100,7 +100,7 @@ test('Router - layout-only segment root does not keep stale DOM', { concurrency:
           layout: (_ctx, children) => {
             const shell = document.createElement('section');
             shell.className = 'dashboard-shell';
-            shell.append(...children);
+            shell.append(...(Array.isArray(children) ? children : [children]));
             return shell;
           },
           children: [

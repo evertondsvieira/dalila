@@ -7,7 +7,7 @@ import { createQueryClient } from "../dist/core/query.js";
 import { clearResourceCache, createResource } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 test("query caches results by encoded key within a scope", async () => {
   clearResourceCache();
@@ -117,13 +117,13 @@ test("query client supports getQueryData/setQueryData for optimistic cache updat
   await flush();
   await sleep(10);
 
-  const before = q.getQueryData(["todos"]);
+  const before = q.getQueryData(["todos"]) as any[];
   assert.equal(Array.isArray(before), true);
   assert.equal(before.length, 1);
 
-  q.setQueryData(["todos"], (current) => [...(current ?? []), { id: 2, title: "B" }]);
+  q.setQueryData(["todos"], (current: any) => [...(current ?? []), { id: 2, title: "B" }]);
 
-  const after = q.getQueryData(["todos"]);
+  const after = q.getQueryData(["todos"]) as any[];
   assert.equal(after.length, 2);
   assert.equal(todos.data().length, 2);
   scope.dispose();
@@ -165,7 +165,7 @@ test("query.select recomputes on explicit cache writes for the same key", async 
     fetch: async () => ({ name: "Initial" }),
   });
 
-  const selectName = q.select(["user", 1], (data) => {
+  const selectName = q.select(["user", 1], (data: any) => {
     selectorRuns++;
     return data?.name ?? null;
   });
@@ -202,7 +202,7 @@ test("query.select tracks reactive key changes", async () => {
     fetch: async () => ({ id: 2, name: "Bia" }),
   });
 
-  const selectedName = q.select(() => q.key("user", userId()), (data) => data?.name ?? null);
+  const selectedName = q.select(() => q.key("user", userId()), (data: any) => data?.name ?? null);
 
   assert.equal(selectedName(), "Ana");
   userId.set(2);
@@ -219,7 +219,7 @@ test("query.select preserves external reactive dependencies", async () => {
     fetch: async () => ({ total: 10 }),
   });
 
-  const selectedTotal = q.select(["price", 1], (data) => (data?.total ?? 0) * multiplier());
+  const selectedTotal = q.select(["price", 1], (data: any) => (data?.total ?? 0) * multiplier());
   assert.equal(selectedTotal(), 20);
 
   multiplier.set(3);
@@ -237,7 +237,7 @@ test("query.select shares memoization by key and selector identity", async () =>
     fetch: async () => ({ name: "Shared" }),
   });
 
-  const selector = (data) => {
+  const selector = (data: any) => {
     selectorRuns++;
     return data?.name ?? null;
   };
@@ -272,11 +272,11 @@ test("invalidateTag only bumps versions for matching tagged keys", async () => {
     fetch: async () => ({ id: 1 }),
   });
 
-  const userSel = q.select(["user", 1], (data) => {
+  const userSel = q.select(["user", 1], (data: any) => {
     userRuns++;
     return data?.id ?? null;
   });
-  const todoSel = q.select(["todo", 1], (data) => {
+  const todoSel = q.select(["todo", 1], (data: any) => {
     todoRuns++;
     return data?.id ?? null;
   });
@@ -298,7 +298,7 @@ test("query.select updates when unscoped queryGlobal populates a previously miss
   clearResourceCache();
   const q = createQueryClient();
 
-  const selected = q.select(["late", 1], (data) => data?.value ?? null);
+  const selected = q.select(["late", 1], (data: any) => data?.value ?? null);
   assert.equal(selected(), null);
 
   const state = q.queryGlobal({
@@ -328,7 +328,7 @@ test("query.select does not recompute on unrelated registry lifecycle changes", 
   await flush();
   await sleep(10);
 
-  const selected = q.select(["stable", 1], (data) => {
+  const selected = q.select(["stable", 1], (data: any) => {
     selectorRuns++;
     return data?.value ?? null;
   });
@@ -586,7 +586,7 @@ test("cancelQueries with string keyPrefix cancels unscoped string-key query", as
   q.queryGlobal({
     key: () => "todos",
     fetch: async (sig) => {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const t = setTimeout(() => resolve({ ok: true }), 80);
         sig.addEventListener("abort", () => {
           aborted++;
@@ -612,7 +612,7 @@ test("cancelQueries without filters cancels unscoped in-flight queries", async (
   q.queryGlobal({
     key: () => q.key("cancel-all", 1),
     fetch: async (sig) => {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const t = setTimeout(() => resolve({ ok: true }), 80);
         sig.addEventListener("abort", () => {
           aborted++;
@@ -638,7 +638,7 @@ test("cancelQueries with array keyPrefix cancels unscoped array-key query", asyn
   q.queryGlobal({
     key: () => q.key("todos", 1),
     fetch: async (sig) => {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const t = setTimeout(() => resolve({ ok: true }), 80);
         sig.addEventListener("abort", () => {
           aborted++;
@@ -664,7 +664,7 @@ test("cancelQueries with empty array keyPrefix cancels unscoped array-key query"
   q.queryGlobal({
     key: () => q.key("todos", 1),
     fetch: async (sig) => {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const t = setTimeout(() => resolve({ ok: true }), 80);
         sig.addEventListener("abort", () => {
           aborted++;
@@ -690,7 +690,7 @@ test("cancelQueries respects predicate with keyPrefix filters", async () => {
   q.queryGlobal({
     key: () => q.key("todos", 1),
     fetch: async (sig) => {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const t = setTimeout(() => resolve({ ok: true }), 80);
         sig.addEventListener("abort", () => {
           aborted++;
@@ -763,7 +763,7 @@ test("cancelQueries without filters does not cancel non-query cached resources",
   q.queryGlobal({
     key: () => q.key("query", 1),
     fetch: async (sig) => {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const t = setTimeout(() => resolve({ ok: true }), 80);
         sig.addEventListener("abort", () => {
           queryAborted++;
@@ -775,7 +775,7 @@ test("cancelQueries without filters does not cancel non-query cached resources",
   });
 
   createResource(async (sig) => {
-    return await new Promise((resolve, reject) => {
+    return await new Promise<any>((resolve, reject) => {
       const t = setTimeout(() => resolve({ ok: true }), 80);
       sig.addEventListener("abort", () => {
         resourceAborted++;
@@ -927,7 +927,7 @@ test("empty-string key filters do not broaden to global operations", async () =>
   q.queryGlobal({
     key: () => q.key("array", 1),
     fetch: async (sig) => {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<any>((resolve, reject) => {
         const t = setTimeout(() => {
           arrayRuns++;
           resolve({ arrayRuns });

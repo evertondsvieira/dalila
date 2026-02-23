@@ -43,29 +43,29 @@ async function withDom(fn) {
     url: 'http://localhost/',
   });
 
-  globalThis.window            = dom.window;
-  globalThis.document          = dom.window.document;
-  globalThis.Node              = dom.window.Node;
-  globalThis.NodeFilter        = dom.window.NodeFilter;
-  globalThis.Element           = dom.window.Element;
-  globalThis.HTMLElement       = dom.window.HTMLElement;
-  globalThis.HTMLTemplateElement = dom.window.HTMLTemplateElement;
-  globalThis.DocumentFragment  = dom.window.DocumentFragment;
-  globalThis.Comment           = dom.window.Comment;
+  (globalThis as any).window            = dom.window;
+  (globalThis as any).document          = dom.window.document;
+  (globalThis as any).Node              = dom.window.Node;
+  (globalThis as any).NodeFilter        = dom.window.NodeFilter;
+  (globalThis as any).Element           = dom.window.Element;
+  (globalThis as any).HTMLElement       = dom.window.HTMLElement;
+  (globalThis as any).HTMLTemplateElement = dom.window.HTMLTemplateElement;
+  (globalThis as any).DocumentFragment  = dom.window.DocumentFragment;
+  (globalThis as any).Comment           = dom.window.Comment;
 
   try {
     await fn(dom.window.document);
   } finally {
     await tick(20);
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.Node;
-    delete globalThis.NodeFilter;
-    delete globalThis.Element;
-    delete globalThis.HTMLElement;
-    delete globalThis.HTMLTemplateElement;
-    delete globalThis.DocumentFragment;
-    delete globalThis.Comment;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).NodeFilter;
+    delete (globalThis as any).Element;
+    delete (globalThis as any).HTMLElement;
+    delete (globalThis as any).HTMLTemplateElement;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).Comment;
   }
 }
 
@@ -526,7 +526,7 @@ test('component – mount() imperative API', async () => {
 
 test('component – warning for missing required prop', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Strict = defineComponent({
       tag: 'x-strict',
@@ -545,7 +545,7 @@ test('component – warning for missing required prop', async () => {
 
     assert.ok(warns.some(w => w.includes('required') && w.includes('title')));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
@@ -553,7 +553,7 @@ test('component – warning for missing required prop', async () => {
 
 test('component – warning for d-props-* with missing key', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Comp = defineComponent({
       tag: 'x-missing',
@@ -570,13 +570,13 @@ test('component – warning for d-props-* with missing key', async () => {
 
     assert.ok(warns.some(w => w.includes('nonExistent') && w.includes('not found')));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
 test('component – warning for undeclared d-props-* in schema', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Comp = defineComponent({
       tag: 'x-typed',
@@ -592,7 +592,7 @@ test('component – warning for undeclared d-props-* in schema', async () => {
 
     assert.ok(warns.some(w => w.includes('not declared in props schema') && w.includes('d-props-valeu')));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
@@ -954,7 +954,7 @@ test('component – d-emit-focus works without bind events configuration', async
 
 test('component – warning for empty d-emit value', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Btn = defineComponent({
       tag: 'x-empty-emit',
@@ -974,7 +974,7 @@ test('component – warning for empty d-emit value', async () => {
 
     assert.ok(warns.some(w => w.includes('d-emit-click') && w.includes('empty value')));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
@@ -1137,9 +1137,13 @@ test('bind({ components }) preserves inherited context values', async () => {
     });
 
     const selected = signal('');
-    class ProtoCtx {}
+    class ProtoCtx {
+      [key: string]: unknown;
+      declare items: any;
+      declare onSelect: (value: unknown) => void;
+    }
     ProtoCtx.prototype.items = signal(['A', 'B']);
-    ProtoCtx.prototype.onSelect = (value) => selected.set(value);
+    ProtoCtx.prototype.onSelect = (value) => selected.set(String(value));
 
     const root = el(doc, `
       <div>
@@ -1165,7 +1169,7 @@ test('bind({ components }) preserves inherited context values', async () => {
 
 test('component – warning when setup overrides prop binding name', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Comp = defineComponent({
       tag: 'x-shadow-prop',
@@ -1184,13 +1188,13 @@ test('component – warning when setup overrides prop binding name', async () =>
 
     assert.ok(warns.some(w => w.includes('setup() returned') && w.includes('overrides a prop binding')));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
 test('bind({ components }) warns when registry key differs from component tag', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Comp = defineComponent({
       tag: 'x-real-key',
@@ -1206,7 +1210,7 @@ test('bind({ components }) warns when registry key differs from component tag', 
     assert.ok(root.querySelector('span'));
     assert.ok(warns.some(w => w.includes('components key') && w.includes('x-alias-key') && w.includes('x-real-key')));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
@@ -1365,7 +1369,7 @@ test('component – multi-root template uses dalila-c wrapper', async () => {
 
 test('component – warning for empty template', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Empty = defineComponent({
       tag: 'x-empty-tpl',
@@ -1381,7 +1385,7 @@ test('component – warning for empty template', async () => {
 
     assert.ok(warns.some(w => w.includes('x-empty-tpl') && w.includes('template is empty')));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
@@ -1389,7 +1393,7 @@ test('component – warning for empty template', async () => {
 
 test('component – warning for Array prop as static attribute', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const List = defineComponent({
       tag: 'x-arr-warn',
@@ -1411,13 +1415,13 @@ test('component – warning for Array prop as static attribute', async () => {
       w.includes('static string attribute')
     ));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });
 
 test('component – warning for Object prop as static attribute', async () => {
   await withDom(async (doc) => {
-    globalThis.__dalila_dev = true;
+    (globalThis as any).__dalila_dev = true;
 
     const Config = defineComponent({
       tag: 'x-obj-warn',
@@ -1439,6 +1443,6 @@ test('component – warning for Object prop as static attribute', async () => {
       w.includes('static string attribute')
     ));
 
-    delete globalThis.__dalila_dev;
+    delete (globalThis as any).__dalila_dev;
   });
 });

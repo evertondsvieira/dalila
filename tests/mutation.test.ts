@@ -7,7 +7,7 @@ import { createQueryClient } from "../dist/core/query.js";
 import { clearResourceCache } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 test("mutation invalidates tags and keeps last success result", async () => {
   clearResourceCache();
@@ -32,7 +32,7 @@ test("mutation invalidates tags and keeps last success result", async () => {
     });
 
     saveUser = q.mutation({
-      mutate: async (_sig, input) => {
+      mutate: async (_sig, input: any) => {
         await sleep(10);
         return { ok: true, saved: input };
       },
@@ -68,7 +68,7 @@ test("mutation deduplicates concurrent runs unless force is used", async () => {
 
   withScope(scope, () => {
     m = q.mutation({
-      mutate: async (_sig, input) => {
+      mutate: async (_sig, input: any) => {
         started++;
         await sleep(40);
         return { ok: true, input };
@@ -119,9 +119,9 @@ test("mutation supports optimistic update with rollback context", async () => {
         await sleep(10);
         throw new Error("boom");
       },
-      onMutate: async (newTodo) => {
+      onMutate: async (newTodo: any) => {
         const previous = q.getQueryData(["todos"]);
-        q.setQueryData(["todos"], (old) => [...(old ?? []), newTodo]);
+        q.setQueryData(["todos"], (old: any) => [...(old ?? []), newTodo]);
         return { previous };
       },
       onError: (_err, _input, ctx) => {
@@ -284,9 +284,9 @@ test("mutation supports optimistic shorthand with automatic rollback", async () 
         throw new Error("boom");
       },
       optimistic: {
-        apply: (cache, newTodo) => {
+        apply: (cache: any, newTodo: any) => {
           const previous = cache.getQueryData(["todos-shorthand"]);
-          cache.setQueryData(["todos-shorthand"], (old) => [...(old ?? []), newTodo]);
+          cache.setQueryData(["todos-shorthand"], (old: any) => [...(old ?? []), newTodo]);
           return () => {
             cache.setQueryData(["todos-shorthand"], previous ?? []);
           };
@@ -317,7 +317,7 @@ test("mutation retries transient failures", async () => {
 
   withScope(scope, () => {
     m = q.mutation({
-      mutationFn: async (_sig, input) => {
+      mutationFn: async (_sig, input: any) => {
         attempts++;
         if (attempts < 3) throw new Error("temporary");
         return { ok: true, input, attempts };
@@ -342,7 +342,7 @@ test("mutation queue serial runs calls in order", async () => {
 
   withScope(scope, () => {
     m = q.mutation({
-      mutationFn: async (_sig, input) => {
+      mutationFn: async (_sig, input: any) => {
         starts.push(input.id);
         await sleep(10);
         return { id: input.id };
@@ -372,7 +372,7 @@ test("mutation queue serial maxQueue counts only waiting jobs", async () => {
 
   withScope(scope, () => {
     m = q.mutation({
-      mutationFn: async (_sig, input) => {
+      mutationFn: async (_sig, input: any) => {
         starts.push(input.id);
         await sleep(10);
         return { id: input.id };
@@ -402,10 +402,10 @@ test("mutation queue serial allows first run when maxQueue is 0", async () => {
 
   withScope(scope, () => {
     m = q.mutation({
-      mutationFn: async (_sig, input) => {
+      mutationFn: async (_sig, input: any) => {
         starts.push(input.id);
         if (input.id === 1) {
-          await new Promise((resolve) => {
+          await new Promise<void>((resolve) => {
             releaseFirst = resolve;
           });
         }
@@ -439,9 +439,9 @@ test("mutation queue serial force reset ignores stale epoch completion bookkeepi
 
   withScope(scope, () => {
     m = q.mutation({
-      mutationFn: async (_sig, input) => {
+      mutationFn: async (_sig, input: any) => {
         starts.push(input.id);
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
           releases.set(input.id, resolve);
         });
         return { id: input.id };

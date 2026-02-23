@@ -29,7 +29,7 @@ test("createResource aborts previous fetch when dependencies change", async () =
       const v = dep(); // tracked dependency
       started++;
 
-      return await new Promise((resolve, reject) => {
+      return await new Promise<void>((resolve, reject) => {
         const t = setTimeout(() => resolve(v), 60);
 
         sig.addEventListener(
@@ -439,7 +439,7 @@ test("createResource deps+key does not resolve refresh early while fetching in S
       deps: {
         get: () => ({ id: id(), noisy: noisy() }),
         key: () => id(),
-      },
+      } as any,
       staleWhileRevalidate: true,
     });
   });

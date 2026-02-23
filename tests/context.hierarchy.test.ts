@@ -198,5 +198,3 @@ test('context survives across multiple withScope calls', () => {
 
   assert.deepEqual(result, { apiUrl: 'https://api.example.com' });
 });
-
-console.log('✅ All context hierarchy tests passed!');

@@ -5,6 +5,8 @@ import { createScope, withScope } from '../dist/core/scope.js';
 test('scope.dispose runs all cleanups even if one throws', () => {
   const scope = createScope();
   const ran = [];
+  const originalError = console.error;
+  const errorsLogged: string[] = [];
 
   scope.onCleanup(() => ran.push('a'));
   scope.onCleanup(() => {
@@ -12,8 +14,16 @@ test('scope.dispose runs all cleanups even if one throws', () => {
   });
   scope.onCleanup(() => ran.push('c'));
 
-  assert.doesNotThrow(() => scope.dispose());
+  console.error = (...args) => {
+    errorsLogged.push(args.map(String).join(' '));
+  };
+  try {
+    assert.doesNotThrow(() => scope.dispose());
+  } finally {
+    console.error = originalError;
+  }
   assert.deepEqual(ran, ['a', 'c']);
+  assert.ok(errorsLogged.some((w) => w.includes('scope.dispose() had cleanup errors')));
 });
 
 test('onCleanup after dispose runs immediately', () => {

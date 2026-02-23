@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 
 let dom, document, window;
 
-const flush = () => new Promise(r => setTimeout(r, 10));
+const flush = () => new Promise<void>(r => setTimeout(r, 10));
 
 function setupDOM() {
   dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {

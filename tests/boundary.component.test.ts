@@ -12,29 +12,29 @@ async function withDom(fn) {
     url: 'http://localhost/',
   });
 
-  globalThis.window = dom.window;
-  globalThis.document = dom.window.document;
-  globalThis.Node = dom.window.Node;
-  globalThis.NodeFilter = dom.window.NodeFilter;
-  globalThis.Element = dom.window.Element;
-  globalThis.HTMLElement = dom.window.HTMLElement;
-  globalThis.HTMLTemplateElement = dom.window.HTMLTemplateElement;
-  globalThis.DocumentFragment = dom.window.DocumentFragment;
-  globalThis.Comment = dom.window.Comment;
+  (globalThis as any).window = dom.window;
+  (globalThis as any).document = dom.window.document;
+  (globalThis as any).Node = dom.window.Node;
+  (globalThis as any).NodeFilter = dom.window.NodeFilter;
+  (globalThis as any).Element = dom.window.Element;
+  (globalThis as any).HTMLElement = dom.window.HTMLElement;
+  (globalThis as any).HTMLTemplateElement = dom.window.HTMLTemplateElement;
+  (globalThis as any).DocumentFragment = dom.window.DocumentFragment;
+  (globalThis as any).Comment = dom.window.Comment;
 
   try {
     await fn(dom.window.document);
   } finally {
     await tick(20);
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.Node;
-    delete globalThis.NodeFilter;
-    delete globalThis.Element;
-    delete globalThis.HTMLElement;
-    delete globalThis.HTMLTemplateElement;
-    delete globalThis.DocumentFragment;
-    delete globalThis.Comment;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).NodeFilter;
+    delete (globalThis as any).Element;
+    delete (globalThis as any).HTMLElement;
+    delete (globalThis as any).HTMLTemplateElement;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).Comment;
   }
 }
 

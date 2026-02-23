@@ -41,31 +41,31 @@ async function withDom(fn) {
     url: 'http://localhost/',
   });
 
-  globalThis.window            = dom.window;
-  globalThis.document          = dom.window.document;
-  globalThis.Node              = dom.window.Node;
-  globalThis.NodeFilter        = dom.window.NodeFilter;
-  globalThis.Element           = dom.window.Element;
-  globalThis.HTMLElement       = dom.window.HTMLElement;
-  globalThis.HTMLTemplateElement = dom.window.HTMLTemplateElement;
-  globalThis.DocumentFragment  = dom.window.DocumentFragment;
-  globalThis.Comment           = dom.window.Comment;
-  globalThis.IntersectionObserver = dom.window.IntersectionObserver;
+  (globalThis as any).window            = dom.window;
+  (globalThis as any).document          = dom.window.document;
+  (globalThis as any).Node              = dom.window.Node;
+  (globalThis as any).NodeFilter        = dom.window.NodeFilter;
+  (globalThis as any).Element           = dom.window.Element;
+  (globalThis as any).HTMLElement       = dom.window.HTMLElement;
+  (globalThis as any).HTMLTemplateElement = dom.window.HTMLTemplateElement;
+  (globalThis as any).DocumentFragment  = dom.window.DocumentFragment;
+  (globalThis as any).Comment           = dom.window.Comment;
+  (globalThis as any).IntersectionObserver = dom.window.IntersectionObserver;
 
   try {
     await fn(dom.window.document);
   } finally {
     await tick(20);
-    delete globalThis.window;
-    delete globalThis.document;
-    delete globalThis.Node;
-    delete globalThis.NodeFilter;
-    delete globalThis.Element;
-    delete globalThis.HTMLElement;
-    delete globalThis.HTMLTemplateElement;
-    delete globalThis.DocumentFragment;
-    delete globalThis.Comment;
-    delete globalThis.IntersectionObserver;
+    delete (globalThis as any).window;
+    delete (globalThis as any).document;
+    delete (globalThis as any).Node;
+    delete (globalThis as any).NodeFilter;
+    delete (globalThis as any).Element;
+    delete (globalThis as any).HTMLElement;
+    delete (globalThis as any).HTMLTemplateElement;
+    delete (globalThis as any).DocumentFragment;
+    delete (globalThis as any).Comment;
+    delete (globalThis as any).IntersectionObserver;
   }
 }
 
@@ -235,7 +235,7 @@ test('lazy – load() dedupes concurrent calls during loadingDelay', async () =>
     const LazyComp = createLazyComponent(
       () => {
         calls++;
-        return new Promise((resolve) => {
+        return new Promise<any>((resolve) => {
           setTimeout(() => resolve(TestComp), 30);
         });
       },
@@ -295,8 +295,21 @@ test('lazy – supports loading delay', async () => {
 // Skipped: JSDOM doesn't fully support IntersectionObserver
 // In a real browser environment, this would test loading when element enters viewport
 
-test.skip('lazy – d-lazy directive loads component', async () => {
+test('lazy – d-lazy directive loads component', async () => {
   await withDom(async (doc) => {
+    const OriginalIntersectionObserver = (globalThis as any).IntersectionObserver;
+    class FakeIntersectionObserver {
+      callback;
+      constructor(callback) { this.callback = callback; }
+      observe(target) {
+        this.callback([{ isIntersecting: true, target }], this);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
+
+    try {
     const TestComp = defineComponent({
       tag: 'test-lazy-dir',
       template: '<p>Lazy Loaded!</p>',
@@ -321,6 +334,9 @@ test.skip('lazy – d-lazy directive loads component', async () => {
     assert.equal(lazyEl, null);
 
     handle();
+    } finally {
+      (globalThis as any).IntersectionObserver = OriginalIntersectionObserver;
+    }
   });
 });
 
@@ -328,8 +344,21 @@ test.skip('lazy – d-lazy directive loads component', async () => {
 // ─── 8  d-lazy shows loading template ─────────────────────────────────────────
 // Skipped: JSDOM doesn't fully support IntersectionObserver
 
-test.skip('lazy – d-lazy shows loading template', async () => {
+test('lazy – d-lazy shows loading template', async () => {
   await withDom(async (doc) => {
+    const OriginalIntersectionObserver = (globalThis as any).IntersectionObserver;
+    class FakeIntersectionObserver {
+      callback;
+      constructor(callback) { this.callback = callback; }
+      observe(target) {
+        this.callback([{ isIntersecting: true, target }], this);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
+
+    try {
     const TestComp = defineComponent({
       tag: 'test-loading-tpl',
       template: '<p>Content</p>',
@@ -337,7 +366,7 @@ test.skip('lazy – d-lazy shows loading template', async () => {
 
     // Create lazy component with delay
     const LazyComp = createLazyComponent(
-      () => Promise.resolve(TestComp),
+      () => new Promise((resolve) => setTimeout(() => resolve(TestComp), 120)),
       { loadingDelay: 50 }
     );
 
@@ -351,7 +380,7 @@ test.skip('lazy – d-lazy shows loading template', async () => {
     `);
     
     const handle = bind(root, {});
-    await tick(30);
+    await tick(70);
 
     // Loading template should be shown
     const loadingEl = root.querySelector('span');
@@ -361,15 +390,31 @@ test.skip('lazy – d-lazy shows loading template', async () => {
     // Wait for load to complete
     await tick(100);
 
-    handle();
+      handle();
+    } finally {
+      (globalThis as any).IntersectionObserver = OriginalIntersectionObserver;
+    }
   });
 });
 
 // ─── 9  d-lazy shows error template ─────────────────────────────────────────
 // Skipped: JSDOM doesn't fully support IntersectionObserver
 
-test.skip('lazy – d-lazy shows error template', async () => {
+test('lazy – d-lazy shows error template', async () => {
   await withDom(async (doc) => {
+    const OriginalIntersectionObserver = (globalThis as any).IntersectionObserver;
+    class FakeIntersectionObserver {
+      callback;
+      constructor(callback) { this.callback = callback; }
+      observe(target) {
+        this.callback([{ isIntersecting: true, target }], this);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
+
+    try {
     // Create lazy component that fails
     const LazyComp = createLazyComponent(
       () => Promise.reject(new Error('Load failed'))
@@ -393,6 +438,9 @@ test.skip('lazy – d-lazy shows error template', async () => {
     assert.equal(errorEl.textContent, 'Error!');
 
     handle();
+    } finally {
+      (globalThis as any).IntersectionObserver = OriginalIntersectionObserver;
+    }
   });
 });
 
@@ -407,7 +455,7 @@ test('lazy – d-lazy replaces original placeholder element', async () => {
       unobserve() {}
       disconnect() {}
     }
-    globalThis.IntersectionObserver = FakeIntersectionObserver;
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
 
     const TestComp = defineComponent({
       tag: 'test-lazy-replace',
@@ -439,7 +487,7 @@ test('lazy – d-lazy replaces original placeholder element', async () => {
 
 test('lazy – d-ref points to connected rendered node after d-lazy load', async () => {
   await withDom(async (doc) => {
-    globalThis.IntersectionObserver = undefined;
+    (globalThis as any).IntersectionObserver = undefined;
 
     const TestComp = defineComponent({
       tag: 'test-lazy-ref',
@@ -478,7 +526,7 @@ test('lazy – shared lazy component does not render offscreen instances before 
       unobserve() {}
       disconnect() {}
     }
-    globalThis.IntersectionObserver = FakeIntersectionObserver;
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
 
     const TestComp = defineComponent({
       tag: 'test-lazy-shared-visible',
@@ -518,7 +566,7 @@ test('lazy – shared lazy component does not render offscreen instances before 
 
 test('lazy – forwards custom events option to lazy component bind', async () => {
   await withDom(async (doc) => {
-    globalThis.IntersectionObserver = undefined;
+    (globalThis as any).IntersectionObserver = undefined;
 
     let presses = 0;
     const Pressable = defineComponent({
@@ -554,7 +602,7 @@ test('lazy – forwards custom events option to lazy component bind', async () =
 
 test('lazy – uses createLazyComponent loading option as d-lazy fallback', async () => {
   await withDom(async (doc) => {
-    globalThis.IntersectionObserver = undefined;
+    (globalThis as any).IntersectionObserver = undefined;
 
     const LazyComp = createLazyComponent(
       () => new Promise(() => {}),
@@ -577,7 +625,7 @@ test('lazy – uses createLazyComponent loading option as d-lazy fallback', asyn
 
 test('lazy – uses createLazyComponent error option as d-lazy fallback', async () => {
   await withDom(async (doc) => {
-    globalThis.IntersectionObserver = undefined;
+    (globalThis as any).IntersectionObserver = undefined;
 
     const LazyComp = createLazyComponent(
       () => Promise.reject(new Error('load failed')),
@@ -600,7 +648,7 @@ test('lazy – uses createLazyComponent error option as d-lazy fallback', async 
 
 test('lazy – observeLazyElement degrades gracefully without IntersectionObserver', async () => {
   await withDom(async (doc) => {
-    globalThis.IntersectionObserver = undefined;
+    (globalThis as any).IntersectionObserver = undefined;
 
     const target = doc.createElement('div');
     doc.body.appendChild(target);
@@ -620,7 +668,7 @@ test('lazy – observeLazyElement degrades gracefully without IntersectionObserv
 
 test('lazy – observeLazyElement fallback cleanup cancels pending load', async () => {
   await withDom(async (doc) => {
-    globalThis.IntersectionObserver = undefined;
+    (globalThis as any).IntersectionObserver = undefined;
 
     const target = doc.createElement('div');
     doc.body.appendChild(target);
@@ -640,7 +688,7 @@ test('lazy – observeLazyElement fallback cleanup cancels pending load', async 
 
 test('lazy – does not load d-lazy removed by d-if in fallback environments', async () => {
   await withDom(async (doc) => {
-    globalThis.IntersectionObserver = undefined;
+    (globalThis as any).IntersectionObserver = undefined;
 
     let calls = 0;
     const TestComp = defineComponent({
@@ -857,9 +905,21 @@ test('lazy – ES module default export', async () => {
 // ─── observeLazyElement helper ─────────────────────────────────────────────────
 // Skipped: JSDOM doesn't fully support IntersectionObserver
 
-test.skip('lazy – observeLazyElement triggers callback', async () => {
+test('lazy – observeLazyElement triggers callback', async () => {
   await withDom(async (doc) => {
     let triggered = false;
+    const OriginalIntersectionObserver = (globalThis as any).IntersectionObserver;
+
+    class FakeIntersectionObserver {
+      callback;
+      constructor(callback) { this.callback = callback; }
+      observe(target) {
+        this.callback([{ isIntersecting: true, target }], this);
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
     
     const testEl = doc.createElement('div');
     doc.body.appendChild(testEl);
@@ -872,12 +932,13 @@ test.skip('lazy – observeLazyElement triggers callback', async () => {
       0
     );
 
-    // Manually trigger for testing (in real use, IntersectionObserver does this)
-    // The cleanup function should work
+    await tick(0);
+    assert.equal(triggered, true);
     assert.ok(typeof cleanup === 'function');
     
     cleanup();
     
     testEl.remove();
+    (globalThis as any).IntersectionObserver = OriginalIntersectionObserver;
   });
 });

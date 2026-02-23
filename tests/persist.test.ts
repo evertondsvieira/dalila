@@ -21,19 +21,20 @@ import { createScope, withScope, withScopeAsync } from '../dist/core/scope.js';
 // ============================================
 
 class MockStorage {
+  store: Map<string, string>;
   constructor() {
     this.store = new Map();
   }
 
-  getItem(key) {
+  getItem(key: string) {
     return this.store.get(key) ?? null;
   }
 
-  setItem(key, value) {
+  setItem(key: string, value: string) {
     this.store.set(key, value);
   }
 
-  removeItem(key) {
+  removeItem(key: string) {
     this.store.delete(key);
   }
 
@@ -47,22 +48,23 @@ class MockStorage {
 // ============================================
 
 class AsyncMockStorage {
+  store: Map<string, string>;
   constructor() {
     this.store = new Map();
   }
 
-  async getItem(key) {
-    await new Promise((r) => setTimeout(r, 1));
+  async getItem(key: string) {
+    await new Promise<void>((r) => setTimeout(r, 1));
     return this.store.get(key) ?? null;
   }
 
-  async setItem(key, value) {
-    await new Promise((r) => setTimeout(r, 1));
+  async setItem(key: string, value: string) {
+    await new Promise<void>((r) => setTimeout(r, 1));
     this.store.set(key, value);
   }
 
-  async removeItem(key) {
-    await new Promise((r) => setTimeout(r, 1));
+  async removeItem(key: string) {
+    await new Promise<void>((r) => setTimeout(r, 1));
     this.store.delete(key);
   }
 
@@ -90,7 +92,7 @@ test('persist: basic save and load (sync storage)', async () => {
     count.set(5);
 
     // Wait for effect + queued write
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Check storage
     const stored = storage.getItem('test-count');
@@ -141,13 +143,13 @@ test('persist: handles async storage', async () => {
     assert.equal(count.peek(), 0);
 
     // Wait for async hydration to complete first
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Change value (after hydration completes)
     count.set(10);
 
     // Wait for async save
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Check storage
     const stored = await storage.getItem('async-count');
@@ -179,13 +181,13 @@ test('persist: no rollback when changing before async hydration completes', asyn
     count.set(10);
 
     // Wait for hydration to complete
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Signal should be 10 (NOT rolled back to 50 from storage)
     assert.equal(count.peek(), 10, 'Signal should keep value 10, not rollback to 50');
 
     // Wait for async save
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Storage should have 10 (not 50)
     const stored = await storage.getItem('race-test');
@@ -213,7 +215,7 @@ test('persist: version and migrate', async () => {
       name: 'user',
       storage,
       version: 2,
-      migrate: (persisted, version) => {
+      migrate: (persisted: any, version) => {
         if (version < 2) {
           return {
             name: persisted.name,
@@ -231,7 +233,7 @@ test('persist: version and migrate', async () => {
     });
 
     // Version should be updated
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
     assert.equal(storage.getItem('user:version'), '2');
   });
 
@@ -279,7 +281,7 @@ test('persist: migrated data is saved to storage', async () => {
       name: 'settings',
       storage,
       version: 2,
-      migrate: (persisted, version) => {
+      migrate: (persisted: any, version) => {
         if (version < 2) {
           return {
             theme: persisted.theme,
@@ -297,7 +299,7 @@ test('persist: migrated data is saved to storage', async () => {
     });
 
     // Wait for async save of migrated data
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Storage should have migrated data (not just version)
     const stored = storage.getItem('settings');
@@ -374,7 +376,7 @@ test('persist: custom serializer', async () => {
 
     date.set(new Date('2025-06-15'));
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     const stored = storage.getItem('date');
     assert.equal(stored, '2025-06-15T00:00:00.000Z');
@@ -478,7 +480,7 @@ test('persist: works without scope (fallback to signal.on)', async () => {
   count.set(99);
 
   // Wait for subscription to fire
-  await new Promise((r) => setTimeout(r, 10));
+  await new Promise<void>((r) => setTimeout(r, 10));
 
   const stored = storage.getItem('no-scope');
   assert.equal(stored, '99', 'Should persist even without scope');
@@ -496,7 +498,7 @@ test('persist: clearPersisted removes data', () => {
 });
 
 test('persist: requires name option', () => {
-  assert.throws(() => persist(signal(0), {}), /requires a "name" option/, 'Should throw when name is missing');
+  assert.throws(() => persist(signal(0), {} as any), /requires a "name" option/, 'Should throw when name is missing');
 });
 
 test('persist: returns original signal when storage unavailable', () => {
@@ -534,12 +536,12 @@ test('persist: persisted signal remains reactive', async () => {
       effectRuns++;
     });
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Change value
     count.set(5);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     assert.equal(effectRuns, 2, 'Effect should run on change');
     assert.equal(lastValue, 5);
@@ -567,7 +569,7 @@ test('persist: multiple persisted signals with different keys', async () => {
     count.set(10);
     name.set('Alice');
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     assert.equal(storage.getItem('count'), '10');
     assert.equal(storage.getItem('name'), '"Alice"');
@@ -615,15 +617,15 @@ test('preload script: executes without errors', async () => {
   const { createThemeScript } = await import('../dist/core/persist.js');
 
   // Mock localStorage
-  global.localStorage = new MockStorage();
-  global.document = {
+  global.localStorage = new MockStorage() as any;
+  global.document = ({
     documentElement: {
       setAttribute: (key, value) => {
         assert.equal(key, 'data-theme');
         assert.equal(value, 'dark');
       },
     },
-  };
+  } as any);
 
   const script = createThemeScript('test-theme', 'dark');
 
@@ -677,7 +679,7 @@ test('persist: preload flag does not affect runtime behavior', async () => {
     });
 
     theme.set('dark');
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     // Should persist regardless of preload flag
     assert.equal(storage.getItem('theme-preload'), '"dark"');
@@ -722,7 +724,7 @@ test('persist: syncTabs defaults to false', async () => {
     count.set(10);
 
     // Wait for effect + queued write
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     assert.equal(storage.getItem('no-sync-tabs'), '10');
   });
@@ -761,9 +763,9 @@ test('persist: syncTabs with version', async () => {
       storage,
       syncTabs: true,
       version: 2,
-      migrate: (persisted, version) => {
+      migrate: (persisted: any, version) => {
         if (version < 2) {
-          return { ...persisted, extra: 'field' };
+          return { ...(persisted as any), extra: 'field' };
         }
         return persisted;
       },
@@ -773,7 +775,7 @@ test('persist: syncTabs with version', async () => {
     assert.deepEqual(data.peek(), { value: 1, extra: 'field' });
 
     // Wait for migration save
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise<void>((r) => setTimeout(r, 10));
 
     assert.equal(storage.getItem('versioned-sync:version'), '2');
   });
@@ -791,7 +793,7 @@ test('persist: returns dispose for manual cleanup when no scope', async () => {
   });
 
   count.set(10);
-  await new Promise((r) => setTimeout(r, 10));
+  await new Promise<void>((r) => setTimeout(r, 10));
   assert.equal(storage.getItem('manual-cleanup-test'), '10');
 
   assert.equal(typeof count.dispose, 'function');
@@ -799,7 +801,7 @@ test('persist: returns dispose for manual cleanup when no scope', async () => {
   count.dispose();
 
   count.set(20);
-  await new Promise((r) => setTimeout(r, 10));
+  await new Promise<void>((r) => setTimeout(r, 10));
 
   assert.equal(storage.getItem('manual-cleanup-test'), '10');
 });

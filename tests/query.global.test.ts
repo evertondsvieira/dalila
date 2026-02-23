@@ -7,7 +7,7 @@ import { createQueryClient } from "../dist/core/query.js";
 import { clearResourceCache } from "../dist/core/resource.js";
 
 const flush = () => Promise.resolve();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 test("non-scoped queries do not cache shared results", async () => {
   clearResourceCache();
@@ -59,9 +59,9 @@ test("queryGlobal staleTime still revalidates within a scope", async () => {
 
   const originalSetTimeout = globalThis.setTimeout;
   const originalClearTimeout = globalThis.clearTimeout;
-  const timers = new Set();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
 
-  globalThis.setTimeout = (fn, ms, ...args) => {
+  (globalThis as any).setTimeout = (fn, ms, ...args) => {
     const id = originalSetTimeout(() => {
       timers.delete(id);
       fn(...args);
@@ -70,7 +70,7 @@ test("queryGlobal staleTime still revalidates within a scope", async () => {
     return id;
   };
 
-  globalThis.clearTimeout = (id) => {
+  (globalThis as any).clearTimeout = (id: ReturnType<typeof setTimeout>) => {
     timers.delete(id);
     return originalClearTimeout(id);
   };
@@ -104,7 +104,7 @@ test("queryGlobal staleTime still revalidates within a scope", async () => {
     for (const timer of timers) {
       originalClearTimeout(timer);
     }
-    globalThis.setTimeout = originalSetTimeout;
-    globalThis.clearTimeout = originalClearTimeout;
+    (globalThis as any).setTimeout = originalSetTimeout;
+    (globalThis as any).clearTimeout = originalClearTimeout;
   }
 });
