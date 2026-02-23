@@ -67,6 +67,12 @@ export interface Component {
 }
 export declare function defineComponent<P extends PropsSchema = PropsSchema, E extends EmitsSchema = EmitsSchema, R extends RefsSchema = RefsSchema>(def: ComponentDefinition<P, E, R>): Component;
 export declare function isComponent(value: unknown): value is Component;
+export interface SimpleComponentOptions<P extends PropsSchema = PropsSchema> {
+    props?: P;
+}
+export declare function defineSimpleComponent<P extends PropsSchema = PropsSchema>(tag: string, template: string, options?: SimpleComponentOptions<P>): Component;
+/** Alias for defineSimpleComponent - shorter syntax */
+export declare const component: typeof defineSimpleComponent;
 export declare function normalizePropDef(option: PropOption): PropDefinition;
 export declare function coercePropValue(raw: string, type: PropConstructor): unknown;
 export declare function kebabToCamel(str: string): string;

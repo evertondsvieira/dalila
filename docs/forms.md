@@ -2,6 +2,37 @@
 
 DOM-first reactive form management with minimal meta-state, validation, and field arrays.
 
+## Quick Start — Simple Form in 5 Lines
+
+```ts
+import { createForm } from 'dalila';
+
+const form = createForm({
+  validate: (data) => {
+    if (!data.email?.includes('@')) return { email: 'Invalid email' };
+  }
+});
+```
+
+```html
+<form d-form="form">
+  <input d-field="email" />
+  <span d-error="email"></span>
+  <button>Submit</button>
+</form>
+```
+
+That's it! No extra config needed for simple forms.
+
+## When to Use What
+
+| Need | Use |
+|------|-----|
+| Simple validation | Just `validate` function |
+| Complex schemas | `schema` with Zod/Valibot/Yup |
+| Field arrays | `d-array` directive |
+| Custom parsing | `parse` function |
+
 ## Core Concepts
 
 ```

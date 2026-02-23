@@ -4,17 +4,63 @@ The component system enables declarative, reusable UI building blocks. Define a 
 
 ## onMount Naming Note
 
-Dalila has three different `onMount` APIs with different scopes:
+Dalila has two different `onMount` APIs with different scopes:
 
 | API | Scope | Purpose |
 |-----|-------|---------|
 | `ctx.onMount(() => {})` | Component `setup()` context | Run after component host swap in DOM |
-| `onMount(() => {})` from `dalila` | Current reactive scope | Run setup-time logic in the active scope |
-| `export function onMount(root)` (router) | Route module lifecycle | Run after route view mount |
+| `onRouteMount(root)` (router) | Route module lifecycle | Run after route view mount |
 
 This page documents **`ctx.onMount()`** (component lifecycle).
 
-## Quick Start
+## Quick Start — Simple Components
+
+For simple components without complex setup logic, use the shorthand:
+
+```ts
+import { component } from 'dalila/runtime';
+import template from './my-card.html';
+
+export const MyCard = component('my-card', template);
+```
+
+Or with props:
+
+```ts
+import { component } from 'dalila/runtime';
+import template from './user-card.html';
+
+export const UserCard = component('user-card', template, {
+  props: {
+    name: String,
+    avatar: String,
+  }
+});
+```
+
+This is equivalent to:
+
+```ts
+import { defineComponent } from 'dalila/runtime';
+import template from './user-card.html';
+
+export const UserCard = defineComponent({
+  tag: 'user-card',
+  template,
+  props: { name: String, avatar: String },
+});
+```
+
+### When to use each form
+
+| Form | Best for |
+|------|----------|
+| `component()` | Simple components with just props, no setup |
+| `defineComponent()` | Complex components with setup, emits, refs, lifecycle |
+
+---
+
+## Quick Start — Full Components
 
 **fruit-picker.html**
 ```html

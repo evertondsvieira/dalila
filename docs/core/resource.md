@@ -3,6 +3,44 @@
 Resources are Dalila's async state primitive for data fetching and other asynchronous flows.
 They provide cancellation, refresh semantics, optional cache, and stale-while-revalidate behavior.
 
+## Quick Reference: When to Use What?
+
+Dalila has **3 ways** to handle async data. Here's when to use each:
+
+| API | When to use | Example |
+|-----|-------------|---------|
+| `createResource` | Simple async fetching with abort support | Fetch user profile, search results |
+| `query` | Cache-first data with invalidation | Server state that needs cache, pagination |
+| `mutation` | Write operations (POST, PUT, DELETE) | Login, save form, delete item |
+
+### Decision Guide
+
+```ts
+// Use createResource for SIMPLE async fetching
+const user = createResource(async (signal) => {
+  const res = await fetch(`/api/user/${id()}`, { signal });
+  return res.json();
+});
+
+// Use query for CACHED server state with invalidation
+const client = createQueryClient();
+const users = client.query({
+  key: () => client.key("users"),
+  fetch: async (signal) => fetch("/api/users").then(r => r.json()),
+});
+// Later: client.invalidateTag("users") to refresh
+
+// Use mutation for WRITE operations
+const client = createQueryClient();
+const login = client.mutation({
+  mutationFn: async (creds) => {
+    const res = await fetch("/api/login", { method: "POST", body: JSON.stringify(creds) });
+    return res.json();
+  },
+  onSuccess: () => client.invalidateTag("users"),
+});
+```
+
 ## Core Concepts
 
 ```txt

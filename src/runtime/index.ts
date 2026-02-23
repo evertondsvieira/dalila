@@ -31,10 +31,11 @@ export type {
 export { fromHtml } from './fromHtml.js';
 export type { FromHtmlOptions } from './fromHtml.js';
 
-export { defineComponent } from './component.js';
+export { defineComponent, defineSimpleComponent, component } from './component.js';
 export type {
   Component, ComponentDefinition, PropsSchema, PropSignals, SetupContext,
   TypedPropSignals, TypedSetupContext, EmitsSchema, RefsSchema, TypedEmit, TypedRef,
+  SimpleComponentOptions,
 } from './component.js';
 
 export {

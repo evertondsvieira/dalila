@@ -2,6 +2,42 @@
 
 The `persist()` function enables signals to automatically synchronize with storage (localStorage, sessionStorage, etc.), eliminating boilerplate for data persistence.
 
+## Quick Start — Minimal Example
+
+```ts
+import { signal, persist } from 'dalila';
+
+// Just name is enough!
+const count = persist(signal(0), { name: 'count' });
+
+count.set(5); // → localStorage['count'] = "5"
+```
+
+## When to Use What
+
+| Need | Options needed |
+|------|----------------|
+| Just save it | `name` only |
+| Prevent flash (theme) | `name + preload: true` |
+| Custom storage (session) | `name + storage: sessionStorage` |
+| Complex data (Dates) | `name + serializer` |
+| Schema migration | `name + version + migrate` |
+| Cross-tab sync | `name + syncTabs: true` |
+
+```ts
+// Minimal - just name
+persist(signal(0), { name: 'counter' });
+
+// Theme with preload (no flash)
+persist(signal('dark'), { name: 'theme', preload: true });
+
+// Session storage
+persist(signal({}), { name: 'data', storage: sessionStorage });
+
+// With versioning
+persist(signal([]), { name: 'todos', version: 2, migrate: ... });
+```
+
 ## Quick Start
 
 ```ts

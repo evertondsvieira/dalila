@@ -19,13 +19,6 @@ export declare function __resetWarningsForTests(): void;
  */
 export declare function watch(node: Node, fn: () => void): () => void;
 /**
- * onMount(fn)
- *
- * Executes fn immediately. Minimal semantic helper to document mount-time logic in DOM-first code.
- * Unlike React, there's no deferred execution or batching — it runs synchronously.
- */
-export declare function onMount(fn: () => void): void;
-/**
  * onCleanup(fn)
  *
  * Registers fn to run when the current scope is disposed.

@@ -3,6 +3,84 @@
 Scopes are lightweight lifecycle containers. They group cleanups and define the
 parent-child hierarchy used by Context.
 
+## Why Do You Need Scopes?
+
+Think of a scope as a **"bag of cleanup"**. When you create a scope:
+
+1. **You can register cleanup functions** that run automatically when you dispose
+2. **Effects and resources are tied to it** — when scope is disposed, everything inside is cleaned up
+3. **Parent-child hierarchy** — disposing parent disposes all children
+
+```ts
+const scope = createScope();
+
+withScope(scope, () => {
+  const interval = setInterval(() => console.log("tick"), 1000);
+  
+  // Register cleanup - runs automatically when scope.dispose() is called
+  onCleanup(() => clearInterval(interval));
+});
+
+// Later: dispose cleans up everything
+scope.dispose(); // → clears the interval!
+```
+
+**Why not just call `clearInterval` manually?**
+- With scopes, you don't need to track every timer/event listener
+- If an error happens, cleanup still runs
+- Nested components clean up automatically when parent cleans up
+
+## Lifecycle: mount → run → dispose
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Scope Lifecycle                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  createScope() ──► withScope(scope, () => {                 │
+│       │                          │                          │
+│       │                          ▼                          │
+│       │                    Your code runs                   │
+│       │                    (effects, events)                │
+│       │                          │                          │
+│       ▼                          ▼                          │
+│  onCleanup(fn) ◄────── Registers cleanup function           │
+│                          │                                  │
+│                          ▼                                  │
+│                     scope.dispose()                         │
+│                          │                                  │
+│                          ▼                                  │
+│                   All cleanups run                          │
+│                   (intervals cleared,                       │
+│                    listeners removed, etc)                  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Quick Reference: createScope vs withScope
+
+| Function | What it does | When to use |
+|---------|--------------|-------------|
+| `createScope()` | Creates a NEW scope container | When you need to manage cleanup |
+| `withScope(scope, fn)` | Runs `fn` WITH scope as current | When executing code inside a scope |
+| `onCleanup(fn)` | Registers cleanup to run on dispose | Inside `withScope` to register cleanup |
+
+```ts
+// Simple pattern
+const scope = createScope();
+withScope(scope, () => {
+  onCleanup(() => console.log("cleaned up!"));
+});
+scope.dispose();
+
+// Or: automatic cleanup with bind()
+bind(element, {
+  // bind() already creates and manages scope for you
+  // Just use onCleanup() to register cleanup
+  onCleanup(() => console.log("element unbound!"));
+});
+```
+
 ## Core Concepts
 
 ```

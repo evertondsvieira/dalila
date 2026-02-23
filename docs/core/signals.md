@@ -2,6 +2,74 @@
 
 Signals are the foundation of Dalila's reactivity system. They hold values that automatically notify subscribers when changed.
 
+## Quick Reference: signal() vs signal
+
+```ts
+const count = signal(0);  // Create a signal
+
+count();      // READ the value - call like a function!
+count.set(5); // WRITE - use .set() method
+```
+
+**Why call `count()` instead of just `count`?**
+- Calling `count()` tells Dalila "I'm reading this value, track me as a dependency"
+- This is how Dalila knows which effects to re-run when the value changes
+
+## Understanding Lazy Computed
+
+One of the most powerful (and confusing) features: **computed is lazy**.
+
+```ts
+const count = signal(0);
+const doubled = computed(() => {
+  console.log("Computing doubled...");
+  return count() * 2;
+});
+
+console.log("Before reading doubled");
+// ❌ "Computing doubled..." is NOT logged yet!
+
+console.log(doubled());  
+// ✅ NOW it computes - "Computing doubled..." is logged
+
+console.log(doubled());  
+// ✅ Cached! No computation, returns 2 immediately
+
+count.set(5);
+// ✅ Computed is dirty, next read recomputes
+console.log(doubled());  
+// Logs: "Computing doubled..." → returns 10
+```
+
+**Why is lazy good?**
+- If you create 10 computed values but only read 3, only 3 compute
+- Computations are deferred until actually needed
+- Results are cached until dependencies change
+
+## signal vs computed vs effect
+
+| What | When it runs | Returns |
+|------|--------------|---------|
+| `signal` | Stores a value | The value |
+| `computed` | Only when read (lazy) | Derived value |
+| `effect` | On every dependency change | Nothing (side effects) |
+
+```ts
+// signal - just stores and returns a value
+const age = signal(25);
+age();        // → 25
+
+// computed - derives from other signals, lazy
+const birthYear = computed(() => 2024 - age());
+birthYear();  // → 1999 (computes NOW, caches)
+
+// effect - runs automatically when dependencies change
+effect(() => {
+  console.log("Age changed to:", age());
+});
+age.set(30);  // → logs "Age changed to: 30"
+```
+
 ## Core Concepts
 
 ```

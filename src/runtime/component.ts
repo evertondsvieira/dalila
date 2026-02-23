@@ -128,6 +128,31 @@ export function isComponent(value: unknown): value is Component {
 }
 
 // ============================================================================
+// defineSimpleComponent - Shorthand for simple components
+// ============================================================================
+
+export interface SimpleComponentOptions<P extends PropsSchema = PropsSchema> {
+  props?: P;
+}
+
+export function defineSimpleComponent<
+  P extends PropsSchema = PropsSchema
+>(
+  tag: string,
+  template: string,
+  options?: SimpleComponentOptions<P>
+): Component {
+  return defineComponent({
+    tag,
+    template,
+    props: options?.props,
+  });
+}
+
+/** Alias for defineSimpleComponent - shorter syntax */
+export const component = defineSimpleComponent;
+
+// ============================================================================
 // Prop Helpers
 // ============================================================================
 

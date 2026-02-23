@@ -19,6 +19,15 @@ export function defineComponent(def) {
 export function isComponent(value) {
     return typeof value === 'object' && value !== null && value.__dalila_component === true;
 }
+export function defineSimpleComponent(tag, template, options) {
+    return defineComponent({
+        tag,
+        template,
+        props: options?.props,
+    });
+}
+/** Alias for defineSimpleComponent - shorter syntax */
+export const component = defineSimpleComponent;
 // ============================================================================
 // Prop Helpers
 // ============================================================================

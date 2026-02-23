@@ -38,7 +38,6 @@ Runs `fn` as an effect while `node` is connected to the document. Returns a disp
 ### Lifecycle hooks
 
 ```ts
-function onMount(fn: () => void): void      // Run once when scope activates
 function onCleanup(fn: () => void): void    // Run when scope disposes
 ```
 
@@ -130,33 +129,6 @@ effect(() => {
 
 ## Lifecycle Hooks
 
-### Naming note
-
-There are multiple `onMount` APIs in Dalila:
-
-- `onMount(() => {})` from `dalila` (this page): scope-level helper.
-- `ctx.onMount(() => {})` in `defineComponent(...).setup(...)`: component lifecycle helper.
-- `export function onMount(root)` in route modules: router lifecycle hook.
-
-This page documents the **scope-level** `onMount` from `dalila`.
-
-### onMount
-
-Runs once when the scope becomes active:
-
-```ts
-import { createScope, withScope, onMount } from "dalila";
-
-const scope = createScope();
-
-withScope(scope, () => {
-  onMount(() => {
-    console.log("Component initialized");
-    // Good for: one-time setup, analytics, focus management
-  });
-});
-```
-
 ### onCleanup
 
 Runs when the scope is disposed:
@@ -181,7 +153,7 @@ scope.dispose();  // Logs: "Cleaned up"
 ### Combined Example
 
 ```ts
-import { createScope, withScope, onMount, onCleanup, signal, watch } from "dalila";
+import { createScope, withScope, onCleanup, signal, watch } from "dalila";
 
 function createTimer() {
   const scope = createScope();
@@ -189,13 +161,10 @@ function createTimer() {
 
   withScope(scope, () => {
     let intervalId: number;
-
-    onMount(() => {
-      console.log("Timer started");
-      intervalId = setInterval(() => {
-        seconds.update(s => s + 1);
-      }, 1000);
-    });
+    console.log("Timer started");
+    intervalId = setInterval(() => {
+      seconds.update(s => s + 1);
+    }, 1000);
 
     onCleanup(() => {
       console.log("Timer stopped");
@@ -427,33 +396,7 @@ watch(element, () => {
 document.body.append(element);  // Now watch runs
 ```
 
-### Pitfall 3: Mixing onMount with async
-
-```ts
-// WRONG: onMount callback shouldn't be async
-onMount(async () => {
-  const data = await fetchData();
-  // By now, scope might be disposed!
-  setState(data);
-});
-
-// RIGHT: Start async work, handle disposal
-onMount(() => {
-  fetchData().then(data => {
-    if (!isScopeDisposed(scope)) {
-      setState(data);
-    }
-  });
-});
-
-// BETTER: Use effectAsync
-effectAsync(async (signal) => {
-  const data = await fetchData(signal);
-  setState(data);  // Only runs if not aborted
-});
-```
-
-### Pitfall 4: Creating multiple watches for the same element
+### Pitfall 3: Creating multiple watches for the same element
 
 ```ts
 // INEFFICIENT: Multiple watches for same element

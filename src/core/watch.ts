@@ -259,16 +259,6 @@ export function watch(node: Node, fn: () => void): () => void {
 }
 
 /**
- * onMount(fn)
- *
- * Executes fn immediately. Minimal semantic helper to document mount-time logic in DOM-first code.
- * Unlike React, there's no deferred execution or batching — it runs synchronously.
- */
-export function onMount(fn: () => void): void {
-  fn();
-}
-
-/**
  * onCleanup(fn)
  *
  * Registers fn to run when the current scope is disposed.

@@ -51,6 +51,34 @@ withScope(app, () => {
 // app.dispose();
 ```
 
+## Templates in Separate Files
+
+You can keep templates in `.html` files and import them directly:
+
+```ts
+// my-component.ts
+import { defineComponent } from "dalila/runtime";
+import template from "./my-component.html";
+
+export const MyComponent = defineComponent({
+  tag: 'my-component',
+  template,
+});
+```
+
+```html
+<!-- my-component.html -->
+<div class="card">
+  <h2>{title}</h2>
+  <p>{description}</p>
+</div>
+```
+
+**How it works:**
+- Dev server serves `.html` files as string modules automatically
+- In production, use Vite with `?raw` suffix: `import template from './my-component.html?raw'`
+- Works with any bundler that supports `?raw` or `?inline`
+
 ## Installation
 
 ```bash
