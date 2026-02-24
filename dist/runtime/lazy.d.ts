@@ -9,6 +9,7 @@
  * @module dalila/runtime/lazy
  */
 import { signal } from '../core/index.js';
+import { type SchedulerPriority } from '../core/scheduler.js';
 import type { Component } from './component.js';
 export interface LazyComponentOptions {
     /** Loading fallback template */
@@ -26,7 +27,7 @@ export interface LazyComponentState {
     /** The loaded component (if successful) */
     component: ReturnType<typeof signal<Component | null>>;
     /** Function to trigger loading */
-    load: () => void;
+    load: (priority?: SchedulerPriority) => void;
     /** Function to retry after error */
     retry: () => void;
     /** Whether the component has been loaded */

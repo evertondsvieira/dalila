@@ -1,4 +1,5 @@
 import { Signal, signal } from '../core/signal.js';
+import { withSchedulerPriority, type SchedulerPriority } from '../core/scheduler.js';
 import { createScope, withScope, withScopeAsync, type Scope } from '../core/scope.js';
 import { normalizeRules, validateValue, type RuleFn } from './validation.js';
 import {
@@ -815,7 +816,10 @@ export function createRouter(config: RouterConfig): Router {
     return collectPrefetchCandidatesFromRoutes(routes);
   }
 
-  async function prefetchCandidates(candidates: PrefetchCandidate[]): Promise<void> {
+  async function prefetchCandidates(
+    candidates: PrefetchCandidate[],
+    priority: SchedulerPriority = 'medium'
+  ): Promise<void> {
     if (candidates.length === 0) return;
 
     const seenStaticPaths = new Set<string>();
@@ -828,7 +832,7 @@ export function createRouter(config: RouterConfig): Router {
         if (seenStaticPaths.has(staticPath)) continue;
         seenStaticPaths.add(staticPath);
         tasks.push(
-          preloadPath(staticPath).catch((error) => {
+          preloadPath(staticPath, priority).catch((error) => {
             console.warn('[Dalila] Route prefetch failed:', error);
           })
         );
@@ -1716,7 +1720,7 @@ export function createRouter(config: RouterConfig): Router {
    * functions. Awaits all pending entry promises before returning so that
    * callers like prefetchByTag can trust the data is ready.
    */
-  async function preloadPath(path: string): Promise<void> {
+  async function preloadPath(path: string, priority: SchedulerPriority = 'medium'): Promise<void> {
     const location = parseLocation(path);
     const stackResult = findCompiledRouteStackResult(location.pathname, compiledRoutes);
     if (!stackResult || !stackResult.exact) return;
@@ -1780,18 +1784,22 @@ export function createRouter(config: RouterConfig): Router {
 
       const settled = entry.promise
         .then((data) => {
-          if (!controller.signal.aborted) {
-            entry.status = 'fulfilled';
-            entry.data = data;
-          }
-          preloadScope.dispose();
+          withSchedulerPriority(priority, () => {
+            if (!controller.signal.aborted) {
+              entry.status = 'fulfilled';
+              entry.data = data;
+            }
+            preloadScope.dispose();
+          });
         })
         .catch((error) => {
-          if (!isAbortError(error)) {
-            entry.status = 'rejected';
-            entry.error = error;
-          }
-          preloadScope.dispose();
+          withSchedulerPriority(priority, () => {
+            if (!isAbortError(error)) {
+              entry.status = 'rejected';
+              entry.error = error;
+            }
+            preloadScope.dispose();
+          });
         });
       pending.push(settled);
     }
@@ -1802,31 +1810,35 @@ export function createRouter(config: RouterConfig): Router {
   }
 
   function preload(path: string): void {
-    void preloadPath(path).catch((error) => {
+    void preloadPath(path, 'low').catch((error) => {
       console.warn('[Dalila] Route prefetch failed:', error);
     });
   }
 
   async function prefetchByTag(tag: string): Promise<void> {
-    const normalizedTag = tag.trim();
-    if (!normalizedTag) return;
+    const candidates = withSchedulerPriority('low', () => {
+      const normalizedTag = tag.trim();
+      if (!normalizedTag) return null;
 
-    const candidates = collectPrefetchCandidates().filter((candidate) =>
-      candidate.tags.includes(normalizedTag)
-    );
-    await prefetchCandidates(candidates);
+      return collectPrefetchCandidates().filter((candidate) =>
+        candidate.tags.includes(normalizedTag)
+      );
+    });
+    if (!candidates) return;
+    await prefetchCandidates(candidates, 'low');
   }
 
   async function prefetchByScore(minScore: number): Promise<void> {
     if (!Number.isFinite(minScore)) return;
-    const threshold = Number(minScore);
+    const candidates = withSchedulerPriority('low', () => {
+      const threshold = Number(minScore);
 
-    const candidates = collectPrefetchCandidates().filter((candidate) => {
-      if (typeof candidate.score !== 'number') return false;
-      return candidate.score >= threshold;
+      return collectPrefetchCandidates().filter((candidate) => {
+        if (typeof candidate.score !== 'number') return false;
+        return candidate.score >= threshold;
+      });
     });
-
-    await prefetchCandidates(candidates);
+    await prefetchCandidates(candidates, 'low');
   }
 
   function start(): void {

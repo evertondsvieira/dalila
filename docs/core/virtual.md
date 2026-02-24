@@ -4,6 +4,15 @@ Dalila supports virtualized list rendering for very large collections.
 
 Use this when rendering thousands of rows and you want a bounded DOM size.
 
+If your list is still small or medium and renders comfortably, prefer regular `d-each` for simpler templates and behavior.
+
+Move to `d-virtual-each` when:
+
+- initial render becomes slow,
+- scroll starts to stutter,
+- click/input interactions feel delayed during list updates, or
+- the page is keeping too many rows mounted at once.
+
 ## 1. Runtime Directive: `d-virtual-each`
 
 ### Fixed height (fast-path)

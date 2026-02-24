@@ -20,6 +20,15 @@
  * - Flushes always drain with `splice(0)` to release references eagerly.
  */
 type Task = () => void;
+export type SchedulerPriority = 'high' | 'medium' | 'low';
+export interface ScheduleOptions {
+    /** Priority used by RAF/microtask queues. Default: 'medium'. */
+    priority?: SchedulerPriority;
+}
+interface SchedulerPriorityContextOptions {
+    /** Warn when `fn` returns a promise. Default: true. */
+    warnOnAsync?: boolean;
+}
 export interface TimeSliceOptions {
     /** Time budget per slice in milliseconds. Default: 8 */
     budgetMs?: number;
@@ -71,7 +80,7 @@ export declare function getSchedulerConfig(): Readonly<SchedulerConfig>;
  * Use this for DOM-affecting work you want grouped per frame.
  * (In Node tests, `requestAnimationFrame` is typically mocked.)
  */
-export declare function schedule(task: Task): void;
+export declare function schedule(task: Task, options?: ScheduleOptions): void;
 /**
  * Schedule work in a microtask.
  *
@@ -79,7 +88,7 @@ export declare function schedule(task: Task): void;
  * - run after the current call stack,
  * - but before the next frame.
  */
-export declare function scheduleMicrotask(task: Task): void;
+export declare function scheduleMicrotask(task: Task, options?: ScheduleOptions): void;
 /**
  * Returns true while inside a `batch()` call.
  *
@@ -108,6 +117,14 @@ export declare function queueInBatch(task: Task): void;
  * - We flush batched tasks in *one RAF* to group visible DOM work per frame.
  */
 export declare function batch(fn: () => void): void;
+/**
+ * Run work under a temporary scheduler priority context.
+ *
+ * Sync-only helper: tasks scheduled without explicit priority inside the
+ * synchronous body of `fn` inherit this priority.
+ * Useful for framework internals (e.g. user input event handlers).
+ */
+export declare function withSchedulerPriority<T>(priority: SchedulerPriority, fn: () => T, options?: SchedulerPriorityContextOptions): T;
 /**
  * DOM read discipline helper.
  *

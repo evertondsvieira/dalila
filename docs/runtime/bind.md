@@ -541,6 +541,21 @@ Each clone's context **inherits from the parent** via the prototype chain.  Hand
 </div>
 ```
 
+#### When to use `d-each` vs `d-virtual-each`
+
+Use `d-each` for simple lists where rendering the full collection is still cheap (small to medium lists, lightweight rows, straightforward DOM).
+
+Switch to `d-virtual-each` when the list is large or updates become visibly expensive.
+
+Typical signals that it is time to migrate:
+
+- Initial render becomes slow.
+- Scroll performance degrades.
+- Click/input handlers feel delayed while the list updates.
+- DOM size grows very large (hundreds/thousands of rendered rows).
+
+Rule of thumb: keep `d-each` for simplicity, and use `d-virtual-each` for performance-sensitive large lists.
+
 ---
 
 ### Virtual list rendering `d-virtual-each`
@@ -764,17 +779,6 @@ globalThis.__dalila_bind_template_cache = { maxEntries: 0, ttlMs: 0 }; // disabl
 ```
 
 `bind()` options override the global config when both are set.
-
-### Bench mode (dev only)
-
-Set `globalThis.__dalila_bind_bench = true` to collect per-bind timing stats in `globalThis.__dalila_bind_bench_stats`:
-
-```ts
-globalThis.__dalila_bind_bench_stats.last;
-// { scanMs, parseMs, totalExpressions, fastPathExpressions, fastPathHitPercent, planCacheHit }
-```
-
----
 
 ## resolve() — how values are read
 

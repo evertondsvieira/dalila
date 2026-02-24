@@ -23,6 +23,13 @@ const schedulerConfig = {
     maxMicrotaskIterations: 1000,
     maxRafIterations: 100,
 };
+const PRIORITY_ORDER = ['high', 'medium', 'low'];
+const FAIRNESS_QUOTAS = {
+    high: 8,
+    medium: 4,
+    low: 2,
+};
+const VALID_SCHEDULER_PRIORITIES = new Set(PRIORITY_ORDER);
 /**
  * Configure scheduler limits.
  *
@@ -44,11 +51,22 @@ export function getSchedulerConfig() {
 }
 let rafScheduled = false;
 let microtaskScheduled = false;
+let currentPriorityContext = null;
+const warnedInvalidPriorityValues = new Set();
+let warnedAsyncPriorityContextUsage = false;
 let isFlushingRaf = false;
 let isFlushingMicrotasks = false;
-/** FIFO queues. */
-const rafQueue = [];
-const microtaskQueue = [];
+/** FIFO queues split by priority. */
+const rafQueue = {
+    high: [],
+    medium: [],
+    low: [],
+};
+const microtaskQueue = {
+    high: [],
+    medium: [],
+    low: [],
+};
 const rafImpl = typeof globalThis !== 'undefined' && typeof globalThis.requestAnimationFrame === 'function'
     ? (cb) => globalThis.requestAnimationFrame(() => cb())
     : (cb) => setTimeout(cb, 0);
@@ -63,6 +81,21 @@ function createAbortError() {
 function assertNotAborted(signal) {
     if (signal?.aborted)
         throw createAbortError();
+}
+function isSchedulerPriority(value) {
+    return typeof value === 'string' && VALID_SCHEDULER_PRIORITIES.has(value);
+}
+function warnInvalidSchedulerPriority(value, source) {
+    const key = `${source}:${String(value)}`;
+    if (warnedInvalidPriorityValues.has(key))
+        return;
+    warnedInvalidPriorityValues.add(key);
+    console.warn(`[Dalila] Invalid scheduler priority from ${source}: "${String(value)}". Falling back to "medium".`);
+}
+function isPromiseLike(value) {
+    return (typeof value === 'object' &&
+        value !== null &&
+        typeof value.then === 'function');
 }
 /**
  * Batching state.
@@ -80,8 +113,8 @@ const batchQueueSet = new Set();
  * Use this for DOM-affecting work you want grouped per frame.
  * (In Node tests, `requestAnimationFrame` is typically mocked.)
  */
-export function schedule(task) {
-    rafQueue.push(task);
+export function schedule(task, options = {}) {
+    rafQueue[normalizePriority(options.priority)].push(task);
     if (!rafScheduled) {
         rafScheduled = true;
         rafImpl(flushRaf);
@@ -94,8 +127,8 @@ export function schedule(task) {
  * - run after the current call stack,
  * - but before the next frame.
  */
-export function scheduleMicrotask(task) {
-    microtaskQueue.push(task);
+export function scheduleMicrotask(task, options = {}) {
+    microtaskQueue[normalizePriority(options.priority)].push(task);
     if (!microtaskScheduled) {
         microtaskScheduled = true;
         Promise.resolve().then(flushMicrotasks);
@@ -160,7 +193,7 @@ function flushBatch() {
     schedule(() => {
         for (const t of tasks)
             t();
-    });
+    }, { priority: 'medium' });
 }
 /**
  * Drain the microtask queue.
@@ -177,23 +210,21 @@ function flushMicrotasks() {
     let iterations = 0;
     const maxIterations = schedulerConfig.maxMicrotaskIterations;
     try {
-        while (microtaskQueue.length > 0 && iterations < maxIterations) {
+        while (hasQueuedTasks(microtaskQueue) && iterations < maxIterations) {
             iterations++;
-            const tasks = microtaskQueue.splice(0);
-            for (const t of tasks)
-                t();
+            drainPriorityCycle(microtaskQueue);
         }
-        if (iterations >= maxIterations && microtaskQueue.length > 0) {
+        if (iterations >= maxIterations && hasQueuedTasks(microtaskQueue)) {
             console.error(`[Dalila] Scheduler exceeded ${maxIterations} microtask iterations. ` +
-                `Possible infinite loop detected. Remaining ${microtaskQueue.length} tasks discarded.`);
-            microtaskQueue.length = 0;
+                `Possible infinite loop detected. Remaining ${countQueuedTasks(microtaskQueue)} tasks discarded.`);
+            clearPriorityQueues(microtaskQueue);
         }
     }
     finally {
         isFlushingMicrotasks = false;
         microtaskScheduled = false;
         // If tasks were queued after we stopped flushing, reschedule a new microtask turn.
-        if (microtaskQueue.length > 0 && !microtaskScheduled) {
+        if (hasQueuedTasks(microtaskQueue) && !microtaskScheduled) {
             microtaskScheduled = true;
             Promise.resolve().then(flushMicrotasks);
         }
@@ -213,25 +244,107 @@ function flushRaf() {
     let iterations = 0;
     const maxIterations = schedulerConfig.maxRafIterations;
     try {
-        while (rafQueue.length > 0 && iterations < maxIterations) {
+        while (hasQueuedTasks(rafQueue) && iterations < maxIterations) {
             iterations++;
-            const tasks = rafQueue.splice(0);
-            for (const t of tasks)
-                t();
+            drainPriorityCycle(rafQueue);
         }
-        if (iterations >= maxIterations && rafQueue.length > 0) {
+        if (iterations >= maxIterations && hasQueuedTasks(rafQueue)) {
             console.error(`[Dalila] Scheduler exceeded ${maxIterations} RAF iterations. ` +
-                `Possible infinite loop detected. Remaining ${rafQueue.length} tasks discarded.`);
-            rafQueue.length = 0;
+                `Possible infinite loop detected. Remaining ${countQueuedTasks(rafQueue)} tasks discarded.`);
+            clearPriorityQueues(rafQueue);
         }
     }
     finally {
         isFlushingRaf = false;
         rafScheduled = false;
         // If tasks were queued during the flush, schedule another frame.
-        if (rafQueue.length > 0 && !rafScheduled) {
+        if (hasQueuedTasks(rafQueue) && !rafScheduled) {
             rafScheduled = true;
             rafImpl(flushRaf);
+        }
+    }
+}
+function normalizePriority(priority) {
+    const candidate = priority ?? currentPriorityContext;
+    if (candidate == null)
+        return 'medium';
+    if (isSchedulerPriority(candidate))
+        return candidate;
+    warnInvalidSchedulerPriority(candidate, priority != null ? 'schedule-options' : 'priority-context');
+    return 'medium';
+}
+/**
+ * Run work under a temporary scheduler priority context.
+ *
+ * Sync-only helper: tasks scheduled without explicit priority inside the
+ * synchronous body of `fn` inherit this priority.
+ * Useful for framework internals (e.g. user input event handlers).
+ */
+export function withSchedulerPriority(priority, fn, options = {}) {
+    const nextPriority = isSchedulerPriority(priority) ? priority : (warnInvalidSchedulerPriority(priority, 'withSchedulerPriority'), 'medium');
+    const prev = currentPriorityContext;
+    currentPriorityContext = nextPriority;
+    try {
+        const result = fn();
+        if ((options.warnOnAsync ?? true) && isPromiseLike(result) && !warnedAsyncPriorityContextUsage) {
+            warnedAsyncPriorityContextUsage = true;
+            console.warn('[Dalila] withSchedulerPriority() is sync-only and does not preserve priority across async boundaries.');
+        }
+        return result;
+    }
+    finally {
+        currentPriorityContext = prev;
+    }
+}
+function hasQueuedTasks(queues) {
+    return queues.high.length > 0 || queues.medium.length > 0 || queues.low.length > 0;
+}
+function hasPendingPriorityCounts(counts) {
+    return counts.high > 0 || counts.medium > 0 || counts.low > 0;
+}
+function countQueuedTasks(queues) {
+    return queues.high.length + queues.medium.length + queues.low.length;
+}
+function clearPriorityQueues(queues) {
+    queues.high.length = 0;
+    queues.medium.length = 0;
+    queues.low.length = 0;
+}
+/**
+ * Drain one fairness wave from the current queue snapshot:
+ * - prioritize `high`
+ * - still guarantee progress for `medium`/`low` if queued
+ *
+ * Tasks enqueued while draining are deferred to the next outer iteration so
+ * loop-protection still counts requeue waves instead of fairness slices.
+ */
+function drainPriorityCycle(queues) {
+    const snapshot = {
+        high: queues.high.splice(0),
+        medium: queues.medium.splice(0),
+        low: queues.low.splice(0)
+    };
+    const indices = {
+        high: 0,
+        medium: 0,
+        low: 0
+    };
+    const remaining = {
+        high: snapshot.high.length,
+        medium: snapshot.medium.length,
+        low: snapshot.low.length
+    };
+    while (hasPendingPriorityCounts(remaining)) {
+        for (const priority of PRIORITY_ORDER) {
+            if (remaining[priority] === 0)
+                continue;
+            const start = indices[priority];
+            const end = Math.min(start + FAIRNESS_QUOTAS[priority], snapshot[priority].length);
+            indices[priority] = end;
+            remaining[priority] -= end - start;
+            for (let i = start; i < end; i++) {
+                snapshot[priority][i]();
+            }
         }
     }
 }

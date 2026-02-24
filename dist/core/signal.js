@@ -84,7 +84,7 @@ function scheduleEffect(eff) {
     if (isBatching())
         queueInBatch(eff.runner);
     else
-        scheduleMicrotask(eff.runner);
+        scheduleMicrotask(eff.runner, { priority: 'medium' });
 }
 function trySubscribeActiveEffect(subscribers, signalRef) {
     if (!activeEffect || activeEffect.disposed)

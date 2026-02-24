@@ -9,6 +9,7 @@
  * @module dalila/runtime/lazy
  */
 import { signal } from '../core/index.js';
+import { withSchedulerPriority } from '../core/scheduler.js';
 import { defineComponent, isComponent } from './component.js';
 // ============================================================================
 // Lazy Component Registry
@@ -53,47 +54,57 @@ export function createLazyComponent(loader, options = {}) {
     const loadedSignal = signal(false);
     let loadingTimeout = null;
     let loadInFlight = false;
-    const load = () => {
+    const load = (priority = 'medium') => {
         if (loadedSignal() || loadInFlight)
             return;
         loadInFlight = true;
         // Handle loading delay
         if (loadingDelay > 0) {
             loadingTimeout = setTimeout(() => {
-                loadingSignal.set(true);
+                withSchedulerPriority(priority, () => {
+                    loadingSignal.set(true);
+                }, { warnOnAsync: false });
             }, loadingDelay);
         }
         else {
-            loadingSignal.set(true);
+            withSchedulerPriority(priority, () => {
+                loadingSignal.set(true);
+            }, { warnOnAsync: false });
         }
-        errorSignal.set(null);
+        withSchedulerPriority(priority, () => {
+            errorSignal.set(null);
+        }, { warnOnAsync: false });
         Promise.resolve()
-            .then(() => loader())
+            .then(() => withSchedulerPriority(priority, () => loader(), { warnOnAsync: false }))
             .then((module) => {
-            // Clear timeout if still pending
-            if (loadingTimeout) {
-                clearTimeout(loadingTimeout);
-                loadingTimeout = null;
-            }
-            const loadedComp = isComponent(module)
-                ? module
-                : ('default' in module ? module.default : null);
-            if (!loadedComp) {
-                throw new Error('Lazy component: failed to load component from module');
-            }
-            componentSignal.set(loadedComp);
-            loadingSignal.set(false);
-            loadedSignal.set(true);
-            loadInFlight = false;
+            withSchedulerPriority(priority, () => {
+                // Clear timeout if still pending
+                if (loadingTimeout) {
+                    clearTimeout(loadingTimeout);
+                    loadingTimeout = null;
+                }
+                const loadedComp = isComponent(module)
+                    ? module
+                    : ('default' in module ? module.default : null);
+                if (!loadedComp) {
+                    throw new Error('Lazy component: failed to load component from module');
+                }
+                componentSignal.set(loadedComp);
+                loadingSignal.set(false);
+                loadedSignal.set(true);
+                loadInFlight = false;
+            }, { warnOnAsync: false });
         })
             .catch((err) => {
-            if (loadingTimeout) {
-                clearTimeout(loadingTimeout);
-                loadingTimeout = null;
-            }
-            errorSignal.set(err instanceof Error ? err : new Error(String(err)));
-            loadingSignal.set(false);
-            loadInFlight = false;
+            withSchedulerPriority(priority, () => {
+                if (loadingTimeout) {
+                    clearTimeout(loadingTimeout);
+                    loadingTimeout = null;
+                }
+                errorSignal.set(err instanceof Error ? err : new Error(String(err)));
+                loadingSignal.set(false);
+                loadInFlight = false;
+            }, { warnOnAsync: false });
         });
     };
     const retry = () => {
@@ -177,7 +188,7 @@ export function createSuspense(options = {}) {
 export function preloadLazyComponent(tag) {
     const lazyResult = lazyComponentRegistry.get(tag);
     if (lazyResult) {
-        lazyResult.state.load();
+        lazyResult.state.load('low');
     }
 }
 /**

@@ -10,6 +10,7 @@
  */
 
 import { signal } from '../core/index.js';
+import { withSchedulerPriority, type SchedulerPriority } from '../core/scheduler.js';
 import { defineComponent, isComponent } from './component.js';
 import type { Component } from './component.js';
 
@@ -34,7 +35,7 @@ export interface LazyComponentState {
   /** The loaded component (if successful) */
   component: ReturnType<typeof signal<Component | null>>;
   /** Function to trigger loading */
-  load: () => void;
+  load: (priority?: SchedulerPriority) => void;
   /** Function to retry after error */
   retry: () => void;
   /** Whether the component has been loaded */
@@ -107,52 +108,62 @@ export function createLazyComponent(
   let loadingTimeout: ReturnType<typeof setTimeout> | null = null;
   let loadInFlight = false;
 
-  const load = (): void => {
+  const load = (priority: SchedulerPriority = 'medium'): void => {
     if (loadedSignal() || loadInFlight) return;
     loadInFlight = true;
 
     // Handle loading delay
     if (loadingDelay > 0) {
       loadingTimeout = setTimeout(() => {
-        loadingSignal.set(true);
+        withSchedulerPriority(priority, () => {
+          loadingSignal.set(true);
+        }, { warnOnAsync: false });
       }, loadingDelay);
     } else {
-      loadingSignal.set(true);
+      withSchedulerPriority(priority, () => {
+        loadingSignal.set(true);
+      }, { warnOnAsync: false });
     }
 
-    errorSignal.set(null);
+    withSchedulerPriority(priority, () => {
+      errorSignal.set(null);
+    }, { warnOnAsync: false });
 
     Promise.resolve()
-      .then(() => loader())
+      .then(() => withSchedulerPriority(priority, () => loader(), { warnOnAsync: false }))
       .then((module) => {
-        // Clear timeout if still pending
-        if (loadingTimeout) {
-          clearTimeout(loadingTimeout);
-          loadingTimeout = null;
-        }
+        withSchedulerPriority(priority, () => {
+          // Clear timeout if still pending
+          if (loadingTimeout) {
+            clearTimeout(loadingTimeout);
+            loadingTimeout = null;
+          }
 
-        const loadedComp = isComponent(module)
-          ? module
-          : ('default' in module ? module.default : null);
+          const loadedComp = isComponent(module)
+            ? module
+            : ('default' in module ? module.default : null);
 
-        if (!loadedComp) {
-          throw new Error('Lazy component: failed to load component from module');
-        }
+          if (!loadedComp) {
+            throw new Error('Lazy component: failed to load component from module');
+          }
 
-        componentSignal.set(loadedComp as Component);
-        loadingSignal.set(false);
-        loadedSignal.set(true);
-        loadInFlight = false;
+          componentSignal.set(loadedComp as Component);
+          loadingSignal.set(false);
+          loadedSignal.set(true);
+          loadInFlight = false;
+        }, { warnOnAsync: false });
       })
       .catch((err) => {
-        if (loadingTimeout) {
-          clearTimeout(loadingTimeout);
-          loadingTimeout = null;
-        }
+        withSchedulerPriority(priority, () => {
+          if (loadingTimeout) {
+            clearTimeout(loadingTimeout);
+            loadingTimeout = null;
+          }
 
-        errorSignal.set(err instanceof Error ? err : new Error(String(err)));
-        loadingSignal.set(false);
-        loadInFlight = false;
+          errorSignal.set(err instanceof Error ? err : new Error(String(err)));
+          loadingSignal.set(false);
+          loadInFlight = false;
+        }, { warnOnAsync: false });
       });
   };
 
@@ -254,7 +265,7 @@ export function createSuspense(options: {
 export function preloadLazyComponent(tag: string): void {
   const lazyResult = lazyComponentRegistry.get(tag);
   if (lazyResult) {
-    lazyResult.state.load();
+    lazyResult.state.load('low');
   }
 }
 

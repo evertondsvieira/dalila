@@ -1,4 +1,5 @@
 import { signal } from '../core/signal.js';
+import { withSchedulerPriority } from '../core/scheduler.js';
 import { createScope, withScope, withScopeAsync } from '../core/scope.js';
 import { normalizeRules, validateValue } from './validation.js';
 import { compileRoutes, findCompiledRouteStackResult, normalizePath } from './route-tables.js';
@@ -568,7 +569,7 @@ export function createRouter(config) {
         }
         return collectPrefetchCandidatesFromRoutes(routes);
     }
-    async function prefetchCandidates(candidates) {
+    async function prefetchCandidates(candidates, priority = 'medium') {
         if (candidates.length === 0)
             return;
         const seenStaticPaths = new Set();
@@ -580,7 +581,7 @@ export function createRouter(config) {
                 if (seenStaticPaths.has(staticPath))
                     continue;
                 seenStaticPaths.add(staticPath);
-                tasks.push(preloadPath(staticPath).catch((error) => {
+                tasks.push(preloadPath(staticPath, priority).catch((error) => {
                     console.warn('[Dalila] Route prefetch failed:', error);
                 }));
                 continue;
@@ -1402,7 +1403,7 @@ export function createRouter(config) {
      * functions. Awaits all pending entry promises before returning so that
      * callers like prefetchByTag can trust the data is ready.
      */
-    async function preloadPath(path) {
+    async function preloadPath(path, priority = 'medium') {
         const location = parseLocation(path);
         const stackResult = findCompiledRouteStackResult(location.pathname, compiledRoutes);
         if (!stackResult || !stackResult.exact)
@@ -1461,18 +1462,22 @@ export function createRouter(config) {
             }
             const settled = entry.promise
                 .then((data) => {
-                if (!controller.signal.aborted) {
-                    entry.status = 'fulfilled';
-                    entry.data = data;
-                }
-                preloadScope.dispose();
+                withSchedulerPriority(priority, () => {
+                    if (!controller.signal.aborted) {
+                        entry.status = 'fulfilled';
+                        entry.data = data;
+                    }
+                    preloadScope.dispose();
+                });
             })
                 .catch((error) => {
-                if (!isAbortError(error)) {
-                    entry.status = 'rejected';
-                    entry.error = error;
-                }
-                preloadScope.dispose();
+                withSchedulerPriority(priority, () => {
+                    if (!isAbortError(error)) {
+                        entry.status = 'rejected';
+                        entry.error = error;
+                    }
+                    preloadScope.dispose();
+                });
             });
             pending.push(settled);
         }
@@ -1481,27 +1486,33 @@ export function createRouter(config) {
         }
     }
     function preload(path) {
-        void preloadPath(path).catch((error) => {
+        void preloadPath(path, 'low').catch((error) => {
             console.warn('[Dalila] Route prefetch failed:', error);
         });
     }
     async function prefetchByTag(tag) {
-        const normalizedTag = tag.trim();
-        if (!normalizedTag)
+        const candidates = withSchedulerPriority('low', () => {
+            const normalizedTag = tag.trim();
+            if (!normalizedTag)
+                return null;
+            return collectPrefetchCandidates().filter((candidate) => candidate.tags.includes(normalizedTag));
+        });
+        if (!candidates)
             return;
-        const candidates = collectPrefetchCandidates().filter((candidate) => candidate.tags.includes(normalizedTag));
-        await prefetchCandidates(candidates);
+        await prefetchCandidates(candidates, 'low');
     }
     async function prefetchByScore(minScore) {
         if (!Number.isFinite(minScore))
             return;
-        const threshold = Number(minScore);
-        const candidates = collectPrefetchCandidates().filter((candidate) => {
-            if (typeof candidate.score !== 'number')
-                return false;
-            return candidate.score >= threshold;
+        const candidates = withSchedulerPriority('low', () => {
+            const threshold = Number(minScore);
+            return collectPrefetchCandidates().filter((candidate) => {
+                if (typeof candidate.score !== 'number')
+                    return false;
+                return candidate.score >= threshold;
+            });
         });
-        await prefetchCandidates(candidates);
+        await prefetchCandidates(candidates, 'low');
     }
     function start() {
         if (started)

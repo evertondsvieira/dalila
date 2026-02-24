@@ -12,8 +12,9 @@ coalesces effects, and provides optional DOM read/write helpers.
 ## API Reference
 
 ```ts
-function schedule(task: () => void): void
-function scheduleMicrotask(task: () => void): void
+type SchedulerPriority = 'high' | 'medium' | 'low'
+function schedule(task: () => void, options?: { priority?: SchedulerPriority }): void
+function scheduleMicrotask(task: () => void, options?: { priority?: SchedulerPriority }): void
 function batch(fn: () => void): void
 function queueInBatch(task: () => void): void
 function isBatching(): boolean
@@ -30,8 +31,26 @@ function mutate(fn: () => void): void
 Notes:
 - `schedule()` groups work into the next animation frame.
 - `scheduleMicrotask()` runs before the next frame.
+- Both support optional priorities (`high`, `medium`, `low`); default is `medium`.
+- Framework internals may infer priority automatically (ex: work scheduled inside DOM event handlers inherits `high`).
+- Reactive effect re-runs from signal updates are scheduled as `medium`.
+- FIFO order is preserved within the same priority queue.
+- The scheduler uses fairness cycles so `medium/low` tasks still make progress under heavy `high` load.
 - `queueInBatch()` is mainly for internal coalescing; most apps only need `batch()`.
 - `timeSlice()` lets long loops cooperatively yield to keep UI/event loop responsive.
+
+## Priority Scheduling (Optional)
+
+Use this sparingly. Most app code should rely on framework defaults/inference.
+
+```ts
+import { schedule, scheduleMicrotask } from "dalila/core/scheduler";
+
+schedule(() => repaintHeavyList(), { priority: "low" });
+schedule(() => applyCriticalUiFix(), { priority: "high" });
+
+scheduleMicrotask(() => syncReactiveFollowup(), { priority: "high" });
+```
 
 ## batch
 

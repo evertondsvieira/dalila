@@ -7,6 +7,7 @@
  * @module dalila/runtime
  */
 import { effect, createScope, withScope, isInDevMode, signal, computeVirtualRange } from '../core/index.js';
+import { schedule, withSchedulerPriority } from '../core/scheduler.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
 import { isComponent, normalizePropDef, coercePropValue, kebabToCamel, camelToKebab } from './component.js';
@@ -244,12 +245,13 @@ const templateInterpolationPlanCache = new Map();
 const TEMPLATE_PLAN_CACHE_MAX_ENTRIES = 250;
 const TEMPLATE_PLAN_CACHE_TTL_MS = 10 * 60 * 1000;
 const TEMPLATE_PLAN_CACHE_CONFIG_KEY = '__dalila_bind_template_cache';
-const BENCH_FLAG = '__dalila_bind_bench';
-const BENCH_STATS_KEY = '__dalila_bind_bench_stats';
 function nowMs() {
     return typeof performance !== 'undefined' && typeof performance.now === 'function'
         ? performance.now()
         : Date.now();
+}
+function resolveListRenderPriority() {
+    return 'low';
 }
 function coerceCacheSetting(value, fallback) {
     if (typeof value !== 'number' || !Number.isFinite(value))
@@ -262,40 +264,6 @@ function resolveTemplatePlanCacheConfig(options) {
     const maxEntries = coerceCacheSetting(fromOptions?.maxEntries ?? globalRaw?.maxEntries, TEMPLATE_PLAN_CACHE_MAX_ENTRIES);
     const ttlMs = coerceCacheSetting(fromOptions?.ttlMs ?? globalRaw?.ttlMs, TEMPLATE_PLAN_CACHE_TTL_MS);
     return { maxEntries, ttlMs };
-}
-function createBindBenchSession() {
-    const enabled = isInDevMode() && globalThis[BENCH_FLAG] === true;
-    return {
-        enabled,
-        scanMs: 0,
-        parseMs: 0,
-        totalExpressions: 0,
-        fastPathExpressions: 0,
-        planCacheHit: false,
-    };
-}
-function flushBindBenchSession(session) {
-    if (!session.enabled)
-        return;
-    const stats = {
-        scanMs: Number(session.scanMs.toFixed(3)),
-        parseMs: Number(session.parseMs.toFixed(3)),
-        totalExpressions: session.totalExpressions,
-        fastPathExpressions: session.fastPathExpressions,
-        fastPathHitPercent: session.totalExpressions === 0
-            ? 0
-            : Number(((session.fastPathExpressions / session.totalExpressions) * 100).toFixed(2)),
-        planCacheHit: session.planCacheHit,
-    };
-    const globalObj = globalThis;
-    const bucket = globalObj[BENCH_STATS_KEY] ?? {};
-    const runs = Array.isArray(bucket.runs) ? bucket.runs : [];
-    runs.push(stats);
-    if (runs.length > 200)
-        runs.shift();
-    bucket.runs = runs;
-    bucket.last = stats;
-    globalObj[BENCH_STATS_KEY] = bucket;
 }
 function compileFastPathExpression(expression) {
     let i = 0;
@@ -788,22 +756,15 @@ function compileInterpolationExpression(expression) {
     }
     return { kind: 'parser', expression };
 }
-function parseInterpolationExpression(expression, benchSession) {
+function parseInterpolationExpression(expression) {
     let ast = expressionCache.get(expression);
     if (ast === undefined) {
-        const parseStart = benchSession?.enabled ? nowMs() : 0;
         try {
             ast = parseExpression(expression);
             expressionCache.set(expression, ast);
-            if (benchSession?.enabled) {
-                benchSession.parseMs += nowMs() - parseStart;
-            }
         }
         catch (err) {
             expressionCache.set(expression, null);
-            if (benchSession?.enabled) {
-                benchSession.parseMs += nowMs() - parseStart;
-            }
             return {
                 ok: false,
                 message: `Text interpolation parse error in "{${expression}}": ${err.message}`,
@@ -1029,11 +990,11 @@ function createInterpolationTemplatePlan(root, rawTextSelectors) {
         fastPathExpressions,
     };
 }
-function resolveCompiledExpression(compiled, benchSession) {
+function resolveCompiledExpression(compiled) {
     if (compiled.kind === 'fast_path') {
         return { ok: true, ast: compiled.ast };
     }
-    return parseInterpolationExpression(compiled.expression, benchSession);
+    return parseInterpolationExpression(compiled.expression);
 }
 function pruneTemplatePlanCache(now, config) {
     // 1) Remove expired plans first.
@@ -1079,7 +1040,7 @@ function setCachedTemplatePlan(signature, plan, now, config) {
     });
     pruneTemplatePlanCache(now, config);
 }
-function bindTextNodeFromPlan(node, plan, ctx, benchSession) {
+function bindTextNodeFromPlan(node, plan, ctx) {
     const frag = document.createDocumentFragment();
     for (const segment of plan.segments) {
         if (segment.type === 'text') {
@@ -1114,7 +1075,7 @@ function bindTextNodeFromPlan(node, plan, ctx, benchSession) {
             }
             textNode.data = result.value == null ? '' : String(result.value);
         };
-        const parsed = resolveCompiledExpression(segment.compiled, benchSession);
+        const parsed = resolveCompiledExpression(segment.compiled);
         if (!parsed.ok) {
             applyResult({ ok: false, reason: 'parse', message: parsed.message });
             frag.appendChild(textNode);
@@ -1134,22 +1095,13 @@ function bindTextNodeFromPlan(node, plan, ctx, benchSession) {
         node.parentNode.replaceChild(frag, node);
     }
 }
-function bindTextInterpolation(root, ctx, rawTextSelectors, cacheConfig, benchSession) {
+function bindTextInterpolation(root, ctx, rawTextSelectors, cacheConfig) {
     const signature = createInterpolationTemplateSignature(root, rawTextSelectors);
     const now = nowMs();
     let plan = getCachedTemplatePlan(signature, now, cacheConfig);
-    const scanStart = benchSession?.enabled ? nowMs() : 0;
     if (!plan) {
         plan = createInterpolationTemplatePlan(root, rawTextSelectors);
         setCachedTemplatePlan(signature, plan, now, cacheConfig);
-    }
-    else if (benchSession) {
-        benchSession.planCacheHit = true;
-    }
-    if (benchSession?.enabled) {
-        benchSession.scanMs += nowMs() - scanStart;
-        benchSession.totalExpressions = plan.totalExpressions;
-        benchSession.fastPathExpressions = plan.fastPathExpressions;
     }
     if (plan.bindings.length === 0)
         return;
@@ -1161,7 +1113,7 @@ function bindTextInterpolation(root, ctx, rawTextSelectors, cacheConfig, benchSe
         }
     }
     for (const item of nodesToBind) {
-        bindTextNodeFromPlan(item.node, item.binding, ctx, benchSession);
+        bindTextNodeFromPlan(item.node, item.binding, ctx);
     }
 }
 // ============================================================================
@@ -1187,8 +1139,11 @@ function bindEvents(root, ctx, events, cleanups) {
                 warn(`Event handler "${handlerName}" is not a function`);
                 continue;
             }
-            el.addEventListener(eventName, handler);
-            cleanups.push(() => el.removeEventListener(eventName, handler));
+            const wrappedHandler = function (event) {
+                return withSchedulerPriority('high', () => handler.call(this, event), { warnOnAsync: false });
+            };
+            el.addEventListener(eventName, wrappedHandler);
+            cleanups.push(() => el.removeEventListener(eventName, wrappedHandler));
         }
     }
 }
@@ -2279,6 +2234,8 @@ function bindVirtualEach(root, ctx, cleanups) {
             }
         };
         function renderVirtualList(items) {
+            if (virtualListDisposed)
+                return;
             const parent = comment.parentNode;
             if (!parent)
                 return;
@@ -2393,34 +2350,33 @@ function bindVirtualEach(root, ctx, cleanups) {
             maybeTriggerEndReached(visibleEndForEndReached, items.length);
         }
         let framePending = false;
-        let pendingRaf = null;
-        let pendingTimeout = null;
+        let virtualListDisposed = false;
         const scheduleRender = () => {
+            if (virtualListDisposed)
+                return;
             if (framePending)
                 return;
             framePending = true;
-            const flush = () => {
+            const listRenderPriority = resolveListRenderPriority();
+            schedule(() => {
                 framePending = false;
-                renderVirtualList(currentItems);
-            };
-            if (typeof requestAnimationFrame === 'function') {
-                pendingRaf = requestAnimationFrame(() => {
-                    pendingRaf = null;
-                    flush();
+                if (virtualListDisposed)
+                    return;
+                withSchedulerPriority(listRenderPriority, () => {
+                    renderVirtualList(currentItems);
                 });
-                return;
-            }
-            pendingTimeout = setTimeout(() => {
-                pendingTimeout = null;
-                flush();
-            }, 0);
+            }, { priority: listRenderPriority });
         };
         const onScroll = () => scheduleRender();
         const onResize = () => scheduleRender();
         scrollContainer?.addEventListener('scroll', onScroll, { passive: true });
         let containerResizeObserver = null;
         if (typeof ResizeObserver !== 'undefined' && scrollContainer) {
-            containerResizeObserver = new ResizeObserver(() => scheduleRender());
+            containerResizeObserver = new ResizeObserver(() => {
+                if (virtualListDisposed)
+                    return;
+                scheduleRender();
+            });
             containerResizeObserver.observe(scrollContainer);
         }
         else if (typeof window !== 'undefined') {
@@ -2428,6 +2384,8 @@ function bindVirtualEach(root, ctx, cleanups) {
         }
         if (dynamicHeight && typeof ResizeObserver !== 'undefined' && heightsIndex) {
             rowResizeObserver = new ResizeObserver((entries) => {
+                if (virtualListDisposed)
+                    return;
                 let changed = false;
                 for (const entry of entries) {
                     const target = entry.target;
@@ -2483,6 +2441,7 @@ function bindVirtualEach(root, ctx, cleanups) {
             scrollContainer.__dalilaVirtualList = virtualApi;
         }
         if (isSignal(binding)) {
+            let hasRenderedInitialSignalPass = false;
             bindEffect(scrollContainer ?? el, () => {
                 const value = binding();
                 if (Array.isArray(value)) {
@@ -2496,17 +2455,30 @@ function bindVirtualEach(root, ctx, cleanups) {
                     }
                     replaceItems([]);
                 }
-                renderVirtualList(currentItems);
+                if (!hasRenderedInitialSignalPass) {
+                    hasRenderedInitialSignalPass = true;
+                    const listRenderPriority = resolveListRenderPriority();
+                    withSchedulerPriority(listRenderPriority, () => {
+                        renderVirtualList(currentItems);
+                    });
+                    return;
+                }
+                scheduleRender();
             });
         }
         else if (Array.isArray(binding)) {
             replaceItems(binding);
-            renderVirtualList(currentItems);
+            const listRenderPriority = resolveListRenderPriority();
+            withSchedulerPriority(listRenderPriority, () => {
+                renderVirtualList(currentItems);
+            });
         }
         else {
             warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
         }
         cleanups.push(() => {
+            virtualListDisposed = true;
+            framePending = false;
             scrollContainer?.removeEventListener('scroll', onScroll);
             if (containerResizeObserver) {
                 containerResizeObserver.disconnect();
@@ -2514,13 +2486,6 @@ function bindVirtualEach(root, ctx, cleanups) {
             else if (typeof window !== 'undefined') {
                 window.removeEventListener('resize', onResize);
             }
-            if (pendingRaf != null && typeof cancelAnimationFrame === 'function') {
-                cancelAnimationFrame(pendingRaf);
-            }
-            pendingRaf = null;
-            if (pendingTimeout != null)
-                clearTimeout(pendingTimeout);
-            pendingTimeout = null;
             if (rowResizeObserver) {
                 rowResizeObserver.disconnect();
             }
@@ -2759,20 +2724,62 @@ function bindEach(root, ctx, cleanups) {
                 referenceNode = clone;
             }
         }
+        let lowPriorityRenderQueued = false;
+        let listRenderDisposed = false;
+        let pendingListItems = null;
+        const scheduleLowPriorityListRender = (items) => {
+            if (listRenderDisposed)
+                return;
+            const listRenderPriority = resolveListRenderPriority();
+            pendingListItems = items;
+            if (lowPriorityRenderQueued)
+                return;
+            lowPriorityRenderQueued = true;
+            schedule(() => {
+                lowPriorityRenderQueued = false;
+                if (listRenderDisposed) {
+                    pendingListItems = null;
+                    return;
+                }
+                const next = pendingListItems;
+                pendingListItems = null;
+                if (!next)
+                    return;
+                withSchedulerPriority(listRenderPriority, () => {
+                    renderList(next);
+                });
+            }, { priority: listRenderPriority });
+        };
         if (isSignal(binding)) {
+            let hasRenderedInitialSignalPass = false;
             // Effect owned by templateScope — no manual stop needed
             bindEffect(el, () => {
                 const value = binding();
-                renderList(Array.isArray(value) ? value : []);
+                const items = Array.isArray(value) ? value : [];
+                if (!hasRenderedInitialSignalPass) {
+                    hasRenderedInitialSignalPass = true;
+                    const listRenderPriority = resolveListRenderPriority();
+                    withSchedulerPriority(listRenderPriority, () => {
+                        renderList(items);
+                    });
+                    return;
+                }
+                scheduleLowPriorityListRender(items);
             });
         }
         else if (Array.isArray(binding)) {
-            renderList(binding);
+            const listRenderPriority = resolveListRenderPriority();
+            withSchedulerPriority(listRenderPriority, () => {
+                renderList(binding);
+            });
         }
         else {
             warn(`d-each: "${bindingName}" is not an array or signal`);
         }
         cleanups.push(() => {
+            listRenderDisposed = true;
+            lowPriorityRenderQueued = false;
+            pendingListItems = null;
             for (const clone of clonesByKey.values())
                 clone.remove();
             for (const dispose of disposesByKey.values())
@@ -3212,13 +3219,16 @@ function bindForm(root, ctx, cleanups) {
                     ? originalHandler
                     : form.handleSubmit(originalHandler);
                 // Add submit listener directly to form element (not via d-on-submit)
-                // This avoids mutating the shared context
-                el.addEventListener('submit', finalHandler);
+                // This avoids mutating the shared context while preserving high-priority event context.
+                const wrappedSubmitHandler = function (event) {
+                    return withSchedulerPriority('high', () => finalHandler.call(this, event), { warnOnAsync: false });
+                };
+                el.addEventListener('submit', wrappedSubmitHandler);
                 // Remove d-on-submit to prevent bindEvents from adding duplicate listener
                 el.removeAttribute('d-on-submit');
                 // Restore attribute on cleanup so dispose()+bind() (HMR) can rediscover it
                 cleanups.push(() => {
-                    el.removeEventListener('submit', finalHandler);
+                    el.removeEventListener('submit', wrappedSubmitHandler);
                     el.setAttribute('d-on-submit', submitHandlerName);
                 });
             }
@@ -4181,7 +4191,6 @@ export function bind(root, ctx, options = {}) {
     const rawTextSelectors = options.rawTextSelectors ?? DEFAULT_RAW_TEXT_SELECTORS;
     const templatePlanCacheConfig = resolveTemplatePlanCacheConfig(options);
     const transitionRegistry = createTransitionRegistry(options.transitions);
-    const benchSession = createBindBenchSession();
     const htmlRoot = root;
     // HMR support: Register binding context globally in dev mode.
     // Skip for internal (d-each clone) bindings — only the top-level bind owns HMR.
@@ -4217,7 +4226,7 @@ export function bind(root, ctx, options = {}) {
             // 7.5. d-text — safe textContent binding (before text interpolation)
             bindText(root, ctx, cleanups);
             // 7. Text interpolation (template plan cache + lazy parser fallback)
-            bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
+            bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig);
             // 8. d-attr bindings
             bindAttrs(root, ctx, cleanups);
             // 9. d-bind-* two-way bindings
@@ -4256,7 +4265,6 @@ export function bind(root, ctx, options = {}) {
             htmlRoot.setAttribute('d-ready', '');
         });
     }
-    flushBindBenchSession(benchSession);
     // Return BindHandle (callable dispose + ref accessors)
     const dispose = () => {
         // Run manual cleanups (event listeners)

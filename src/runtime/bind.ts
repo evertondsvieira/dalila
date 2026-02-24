@@ -8,6 +8,7 @@
  */
 
 import { effect, createScope, withScope, isInDevMode, signal, Signal, computeVirtualRange } from '../core/index.js';
+import { schedule, withSchedulerPriority, type SchedulerPriority } from '../core/scheduler.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
 import type { Component, SetupContext, ComponentDefinition } from './component.js';
@@ -424,22 +425,14 @@ type InterpolationTemplatePlan = {
   fastPathExpressions: number;
 };
 
-type BindBenchSession = {
-  enabled: boolean;
-  scanMs: number;
-  parseMs: number;
-  totalExpressions: number;
-  fastPathExpressions: number;
-  planCacheHit: boolean;
-};
-
-const BENCH_FLAG = '__dalila_bind_bench';
-const BENCH_STATS_KEY = '__dalila_bind_bench_stats';
-
 function nowMs(): number {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
     : Date.now();
+}
+
+function resolveListRenderPriority(): SchedulerPriority {
+  return 'low';
 }
 
 function coerceCacheSetting(value: unknown, fallback: number): number {
@@ -463,42 +456,6 @@ function resolveTemplatePlanCacheConfig(options: BindOptions): TemplatePlanCache
   );
 
   return { maxEntries, ttlMs };
-}
-
-function createBindBenchSession(): BindBenchSession {
-  const enabled = isInDevMode() && (globalThis as Record<string, unknown>)[BENCH_FLAG] === true;
-  return {
-    enabled,
-    scanMs: 0,
-    parseMs: 0,
-    totalExpressions: 0,
-    fastPathExpressions: 0,
-    planCacheHit: false,
-  };
-}
-
-function flushBindBenchSession(session: BindBenchSession): void {
-  if (!session.enabled) return;
-
-  const stats = {
-    scanMs: Number(session.scanMs.toFixed(3)),
-    parseMs: Number(session.parseMs.toFixed(3)),
-    totalExpressions: session.totalExpressions,
-    fastPathExpressions: session.fastPathExpressions,
-    fastPathHitPercent: session.totalExpressions === 0
-      ? 0
-      : Number(((session.fastPathExpressions / session.totalExpressions) * 100).toFixed(2)),
-    planCacheHit: session.planCacheHit,
-  };
-
-  const globalObj = globalThis as Record<string, unknown>;
-  const bucket = (globalObj[BENCH_STATS_KEY] as { runs?: unknown[]; last?: unknown } | undefined) ?? {};
-  const runs = Array.isArray(bucket.runs) ? bucket.runs : [];
-  runs.push(stats);
-  if (runs.length > 200) runs.shift();
-  bucket.runs = runs;
-  bucket.last = stats;
-  globalObj[BENCH_STATS_KEY] = bucket;
 }
 
 function compileFastPathExpression(expression: string): ExprNode | null {
@@ -1018,24 +975,14 @@ function compileInterpolationExpression(expression: string): CompiledExpression 
   return { kind: 'parser', expression };
 }
 
-function parseInterpolationExpression(
-  expression: string,
-  benchSession?: BindBenchSession
-): { ok: true; ast: ExprNode } | { ok: false; message: string } {
+function parseInterpolationExpression(expression: string): { ok: true; ast: ExprNode } | { ok: false; message: string } {
   let ast = expressionCache.get(expression);
   if (ast === undefined) {
-    const parseStart = benchSession?.enabled ? nowMs() : 0;
     try {
       ast = parseExpression(expression);
       expressionCache.set(expression, ast);
-      if (benchSession?.enabled) {
-        benchSession.parseMs += nowMs() - parseStart;
-      }
     } catch (err) {
       expressionCache.set(expression, null);
-      if (benchSession?.enabled) {
-        benchSession.parseMs += nowMs() - parseStart;
-      }
       return {
         ok: false,
         message: `Text interpolation parse error in "{${expression}}": ${(err as Error).message}`,
@@ -1286,13 +1233,12 @@ function createInterpolationTemplatePlan(
 }
 
 function resolveCompiledExpression(
-  compiled: CompiledExpression,
-  benchSession: BindBenchSession | undefined
+  compiled: CompiledExpression
 ): { ok: true; ast: ExprNode } | { ok: false; message: string } {
   if (compiled.kind === 'fast_path') {
     return { ok: true, ast: compiled.ast };
   }
-  return parseInterpolationExpression(compiled.expression, benchSession);
+  return parseInterpolationExpression(compiled.expression);
 }
 
 function pruneTemplatePlanCache(now: number, config: TemplatePlanCacheConfig): void {
@@ -1354,8 +1300,7 @@ function setCachedTemplatePlan(
 function bindTextNodeFromPlan(
   node: Text,
   plan: TextInterpolationPlan,
-  ctx: BindContext,
-  benchSession: BindBenchSession | undefined
+  ctx: BindContext
 ): void {
   const frag = document.createDocumentFragment();
 
@@ -1394,7 +1339,7 @@ function bindTextNodeFromPlan(
       textNode.data = result.value == null ? '' : String(result.value);
     };
 
-    const parsed = resolveCompiledExpression(segment.compiled, benchSession);
+    const parsed = resolveCompiledExpression(segment.compiled);
     if (!parsed.ok) {
       applyResult({ ok: false, reason: 'parse', message: parsed.message });
       frag.appendChild(textNode);
@@ -1423,24 +1368,15 @@ function bindTextInterpolation(
   root: Element,
   ctx: BindContext,
   rawTextSelectors: string,
-  cacheConfig: TemplatePlanCacheConfig,
-  benchSession?: BindBenchSession
+  cacheConfig: TemplatePlanCacheConfig
 ): void {
   const signature = createInterpolationTemplateSignature(root, rawTextSelectors);
   const now = nowMs();
   let plan = getCachedTemplatePlan(signature, now, cacheConfig);
 
-  const scanStart = benchSession?.enabled ? nowMs() : 0;
   if (!plan) {
     plan = createInterpolationTemplatePlan(root, rawTextSelectors);
     setCachedTemplatePlan(signature, plan, now, cacheConfig);
-  } else if (benchSession) {
-    benchSession.planCacheHit = true;
-  }
-  if (benchSession?.enabled) {
-    benchSession.scanMs += nowMs() - scanStart;
-    benchSession.totalExpressions = plan.totalExpressions;
-    benchSession.fastPathExpressions = plan.fastPathExpressions;
   }
 
   if (plan.bindings.length === 0) return;
@@ -1454,7 +1390,7 @@ function bindTextInterpolation(
   }
 
   for (const item of nodesToBind) {
-    bindTextNodeFromPlan(item.node, item.binding, ctx, benchSession);
+    bindTextNodeFromPlan(item.node, item.binding, ctx);
   }
 }
 
@@ -1491,8 +1427,16 @@ function bindEvents(
         continue;
       }
 
-      el.addEventListener(eventName, handler as EventListener);
-      cleanups.push(() => el.removeEventListener(eventName, handler as EventListener));
+      const wrappedHandler: EventListener = function (this: EventTarget, event: Event) {
+        return withSchedulerPriority(
+          'high',
+          () => (handler as (this: EventTarget, event: Event) => unknown).call(this, event),
+          { warnOnAsync: false }
+        );
+      };
+
+      el.addEventListener(eventName, wrappedHandler);
+      cleanups.push(() => el.removeEventListener(eventName, wrappedHandler));
     }
   }
 }
@@ -2774,6 +2718,7 @@ function bindVirtualEach(
     };
 
     function renderVirtualList(items: unknown[]): void {
+      if (virtualListDisposed) return;
       const parent = comment.parentNode;
       if (!parent) return;
 
@@ -2905,30 +2850,21 @@ function bindVirtualEach(
     }
 
     let framePending = false;
-    let pendingRaf: number | null = null;
-    let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
+    let virtualListDisposed = false;
 
     const scheduleRender = () => {
+      if (virtualListDisposed) return;
       if (framePending) return;
       framePending = true;
+      const listRenderPriority = resolveListRenderPriority();
 
-      const flush = () => {
+      schedule(() => {
         framePending = false;
-        renderVirtualList(currentItems);
-      };
-
-      if (typeof requestAnimationFrame === 'function') {
-        pendingRaf = requestAnimationFrame(() => {
-          pendingRaf = null;
-          flush();
+        if (virtualListDisposed) return;
+        withSchedulerPriority(listRenderPriority, () => {
+          renderVirtualList(currentItems);
         });
-        return;
-      }
-
-      pendingTimeout = setTimeout(() => {
-        pendingTimeout = null;
-        flush();
-      }, 0);
+      }, { priority: listRenderPriority });
     };
 
     const onScroll = () => scheduleRender();
@@ -2938,7 +2874,10 @@ function bindVirtualEach(
 
     let containerResizeObserver: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && scrollContainer) {
-      containerResizeObserver = new ResizeObserver(() => scheduleRender());
+      containerResizeObserver = new ResizeObserver(() => {
+        if (virtualListDisposed) return;
+        scheduleRender();
+      });
       containerResizeObserver.observe(scrollContainer);
     } else if (typeof window !== 'undefined') {
       window.addEventListener('resize', onResize);
@@ -2946,6 +2885,7 @@ function bindVirtualEach(
 
     if (dynamicHeight && typeof ResizeObserver !== 'undefined' && heightsIndex) {
       rowResizeObserver = new ResizeObserver((entries) => {
+        if (virtualListDisposed) return;
         let changed = false;
         for (const entry of entries) {
           const target = entry.target as Element;
@@ -3004,6 +2944,7 @@ function bindVirtualEach(
     }
 
     if (isSignal(binding)) {
+      let hasRenderedInitialSignalPass = false;
       bindEffect(scrollContainer ?? el, () => {
         const value = binding();
         if (Array.isArray(value)) {
@@ -3016,28 +2957,35 @@ function bindVirtualEach(
           }
           replaceItems([]);
         }
-        renderVirtualList(currentItems);
+        if (!hasRenderedInitialSignalPass) {
+          hasRenderedInitialSignalPass = true;
+          const listRenderPriority = resolveListRenderPriority();
+          withSchedulerPriority(listRenderPriority, () => {
+            renderVirtualList(currentItems);
+          });
+          return;
+        }
+        scheduleRender();
       });
     } else if (Array.isArray(binding)) {
       replaceItems(binding);
-      renderVirtualList(currentItems);
+      const listRenderPriority = resolveListRenderPriority();
+      withSchedulerPriority(listRenderPriority, () => {
+        renderVirtualList(currentItems);
+      });
     } else {
       warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
     }
 
     cleanups.push(() => {
+      virtualListDisposed = true;
+      framePending = false;
       scrollContainer?.removeEventListener('scroll', onScroll);
       if (containerResizeObserver) {
         containerResizeObserver.disconnect();
       } else if (typeof window !== 'undefined') {
         window.removeEventListener('resize', onResize);
       }
-      if (pendingRaf != null && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(pendingRaf);
-      }
-      pendingRaf = null;
-      if (pendingTimeout != null) clearTimeout(pendingTimeout);
-      pendingTimeout = null;
       if (rowResizeObserver) {
         rowResizeObserver.disconnect();
       }
@@ -3304,19 +3252,60 @@ function bindEach(
       }
     }
 
+    let lowPriorityRenderQueued = false;
+    let listRenderDisposed = false;
+    let pendingListItems: unknown[] | null = null;
+    const scheduleLowPriorityListRender = (items: unknown[]) => {
+      if (listRenderDisposed) return;
+      const listRenderPriority = resolveListRenderPriority();
+      pendingListItems = items;
+      if (lowPriorityRenderQueued) return;
+
+      lowPriorityRenderQueued = true;
+      schedule(() => {
+        lowPriorityRenderQueued = false;
+        if (listRenderDisposed) {
+          pendingListItems = null;
+          return;
+        }
+        const next = pendingListItems;
+        pendingListItems = null;
+        if (!next) return;
+        withSchedulerPriority(listRenderPriority, () => {
+          renderList(next);
+        });
+      }, { priority: listRenderPriority });
+    };
+
     if (isSignal(binding)) {
+      let hasRenderedInitialSignalPass = false;
       // Effect owned by templateScope — no manual stop needed
       bindEffect(el, () => {
         const value = binding();
-        renderList(Array.isArray(value) ? value : []);
+        const items = Array.isArray(value) ? value : [];
+        if (!hasRenderedInitialSignalPass) {
+          hasRenderedInitialSignalPass = true;
+          const listRenderPriority = resolveListRenderPriority();
+          withSchedulerPriority(listRenderPriority, () => {
+            renderList(items);
+          });
+          return;
+        }
+        scheduleLowPriorityListRender(items);
       });
     } else if (Array.isArray(binding)) {
-      renderList(binding);
+      const listRenderPriority = resolveListRenderPriority();
+      withSchedulerPriority(listRenderPriority, () => {
+        renderList(binding);
+      });
     } else {
       warn(`d-each: "${bindingName}" is not an array or signal`);
     }
 
     cleanups.push(() => {
+      listRenderDisposed = true;
+      lowPriorityRenderQueued = false;
+      pendingListItems = null;
       for (const clone of clonesByKey.values()) clone.remove();
       for (const dispose of disposesByKey.values()) dispose();
       clonesByKey.clear();
@@ -3833,15 +3822,22 @@ function bindForm(
           : (form as any).handleSubmit(originalHandler);
 
         // Add submit listener directly to form element (not via d-on-submit)
-        // This avoids mutating the shared context
-        el.addEventListener('submit', finalHandler);
+        // This avoids mutating the shared context while preserving high-priority event context.
+        const wrappedSubmitHandler: EventListener = function (this: EventTarget, event: Event) {
+          return withSchedulerPriority(
+            'high',
+            () => (finalHandler as (this: EventTarget, event: Event) => unknown).call(this, event),
+            { warnOnAsync: false }
+          );
+        };
+        el.addEventListener('submit', wrappedSubmitHandler);
 
         // Remove d-on-submit to prevent bindEvents from adding duplicate listener
         el.removeAttribute('d-on-submit');
 
         // Restore attribute on cleanup so dispose()+bind() (HMR) can rediscover it
         cleanups.push(() => {
-          el.removeEventListener('submit', finalHandler);
+          el.removeEventListener('submit', wrappedSubmitHandler);
           el.setAttribute('d-on-submit', submitHandlerName);
         });
       }
@@ -4942,7 +4938,6 @@ export function bind<T extends Record<string, unknown> = BindContext>(
   const rawTextSelectors = options.rawTextSelectors ?? DEFAULT_RAW_TEXT_SELECTORS;
   const templatePlanCacheConfig = resolveTemplatePlanCacheConfig(options);
   const transitionRegistry = createTransitionRegistry(options.transitions);
-  const benchSession = createBindBenchSession();
 
   const htmlRoot = root as HTMLElement;
 
@@ -4990,7 +4985,7 @@ export function bind<T extends Record<string, unknown> = BindContext>(
       bindText(root, ctx, cleanups);
 
       // 7. Text interpolation (template plan cache + lazy parser fallback)
-      bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig, benchSession);
+      bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig);
 
       // 8. d-attr bindings
       bindAttrs(root, ctx, cleanups);
@@ -5041,8 +5036,6 @@ export function bind<T extends Record<string, unknown> = BindContext>(
       htmlRoot.setAttribute('d-ready', '');
     });
   }
-
-  flushBindBenchSession(benchSession);
 
   // Return BindHandle (callable dispose + ref accessors)
   const dispose = (): void => {

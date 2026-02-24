@@ -112,7 +112,7 @@ function scheduleEffect(eff: EffectFn): void {
   // During batch: defer scheduling into the batch queue (no microtask overhead).
   // Outside batch: schedule in a microtask (coalescing across multiple writes).
   if (isBatching()) queueInBatch(eff.runner);
-  else scheduleMicrotask(eff.runner);
+  else scheduleMicrotask(eff.runner, { priority: 'medium' });
 }
 
 function trySubscribeActiveEffect(
