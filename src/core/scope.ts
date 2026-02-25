@@ -27,6 +27,13 @@ export interface CreateScopeOptions {
 /** Tracks disposed scopes without mutating the public interface. */
 const disposedScopes = new WeakSet<Scope>();
 
+interface InternalScopeState {
+  localCleanups: Array<() => void>;
+  childDisposers: Array<() => void>;
+}
+
+const scopeState = new WeakMap<Scope, InternalScopeState>();
+
 const scopeCreateListeners = new Set<(scope: Scope) => void>();
 const scopeDisposeListeners = new Set<(scope: Scope) => void>();
 
@@ -69,6 +76,32 @@ function normalizeScopeName(options: CreateScopeOptions | undefined): string | u
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function getInternalScopeState(scope: Scope): InternalScopeState {
+  const state = scopeState.get(scope);
+  if (!state) {
+    throw new Error('[Dalila] Internal scope state missing.');
+  }
+  return state;
+}
+
+function registerChildScope(parent: Scope, child: Scope): void {
+  if (isScopeDisposed(parent)) {
+    child.dispose();
+    return;
+  }
+  const parentState = scopeState.get(parent);
+  if (parentState) {
+    parentState.childDisposers.push(() => child.dispose());
+    return;
+  }
+
+  // External/mock Scope parent: fall back to the public Scope interface.
+  // Child-first ordering cannot be guaranteed for interface-only parents.
+  // This preserves compatibility (including implementations that run late
+  // onCleanup registrations immediately after disposal).
+  parent.onCleanup(() => child.dispose());
+}
+
 function resolveCreateScopeArgs(
   parentOrOptions?: Scope | null | CreateScopeOptions,
   maybeOptions?: CreateScopeOptions
@@ -93,9 +126,8 @@ function resolveCreateScopeArgs(
  * Creates a new Scope instance.
  *
  * Notes:
- * - Cleanups run in FIFO order (registration order).
- * - If a cleanup registers another cleanup during disposal, it will NOT run
- *   in the same dispose pass (because we snapshot via `splice(0)`).
+ * - Cleanups registered on the same scope run in FIFO order (registration order).
+ * - Child scopes are disposed before parent-local cleanups run (for Dalila-created parents).
  * - Parent is captured from the current scope context (set by withScope).
  * - Optional debug names can be passed for DevTools diagnostics.
  */
@@ -109,7 +141,6 @@ export function createScope(
 ): Scope {
   const { parentOverride, options } = resolveCreateScopeArgs(parentOrOptions, maybeOptions);
   const name = normalizeScopeName(options);
-  const cleanups: (() => void)[] = [];
   const parentCandidate =
     parentOverride === undefined ? currentScope : parentOverride === null ? null : parentOverride;
   // A stale async context can leave `currentScope` pointing to an already
@@ -136,16 +167,23 @@ export function createScope(
         }
         return;
       }
-      cleanups.push(fn);
+      getInternalScopeState(scope).localCleanups.push(fn);
     },
     dispose() {
       if (isScopeDisposed(scope)) return;
       disposedScopes.add(scope);
 
-      const snapshot = cleanups.splice(0);
+      const state = getInternalScopeState(scope);
+      const childSnapshot = state.childDisposers.splice(0);
+      const localSnapshot = state.localCleanups.splice(0);
       const errors: unknown[] = [];
 
-      for (const fn of snapshot) {
+      for (const fn of childSnapshot) {
+        const error = runCleanupSafely(fn);
+        if (error) errors.push(error);
+      }
+
+      for (const fn of localSnapshot) {
         const error = runCleanupSafely(fn);
         if (error) errors.push(error);
       }
@@ -165,10 +203,15 @@ export function createScope(
     parent,
   };
 
+  scopeState.set(scope, {
+    localCleanups: [],
+    childDisposers: [],
+  });
+
   registerScope(scope, parent, name);
 
   if (parent) {
-    parent.onCleanup(() => scope.dispose());
+    registerChildScope(parent, scope);
   }
 
   for (const listener of scopeCreateListeners) {

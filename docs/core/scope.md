@@ -92,6 +92,7 @@ root scope
 
 - A scope owns cleanup callbacks registered with `onCleanup`.
 - Disposing a parent scope automatically disposes all descendants.
+- Cleanup ordering is two-layered for Dalila-managed parent/child scopes: children dispose before parent-local cleanups; within the same scope, `onCleanup` callbacks run in `FIFO`.
 - `withScope()` sets the current scope for the duration of a call.
 
 ## API Reference
@@ -219,6 +220,8 @@ withScope(root, () => {
 Notes:
 - `createScope()` uses the current scope as parent by default.
 - Passing `null` creates an isolated root scope.
+- For Dalila-managed parent scopes: descendant scopes are disposed first, then the parent's local `onCleanup()` callbacks (FIFO).
+- For external/custom `Scope` parents passed via `createScope(parentOverride)`, cascading uses the public `Scope` interface and follows the external implementation's ordering semantics.
 
 ## Comparison: Scope vs Manual Cleanup
 
@@ -287,5 +290,5 @@ unsubDispose();
 ## Performance Notes
 
 - Scopes are cheap to create.
-- Disposing runs cleanups in FIFO order; cost is linear to number of cleanups.
+- Disposing is linear to number of child scopes + local cleanups; Dalila-managed scopes dispose descendants first, then run local cleanups in FIFO order.
 - Avoid creating scopes per item in large loops unless required (use list helpers).

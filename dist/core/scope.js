@@ -1,6 +1,7 @@
 import { disposeScope, registerScope } from "./devtools.js";
 /** Tracks disposed scopes without mutating the public interface. */
 const disposedScopes = new WeakSet();
+const scopeState = new WeakMap();
 const scopeCreateListeners = new Set();
 const scopeDisposeListeners = new Set();
 /**
@@ -37,6 +38,29 @@ function normalizeScopeName(options) {
     const trimmed = options.name.trim();
     return trimmed.length > 0 ? trimmed : undefined;
 }
+function getInternalScopeState(scope) {
+    const state = scopeState.get(scope);
+    if (!state) {
+        throw new Error('[Dalila] Internal scope state missing.');
+    }
+    return state;
+}
+function registerChildScope(parent, child) {
+    if (isScopeDisposed(parent)) {
+        child.dispose();
+        return;
+    }
+    const parentState = scopeState.get(parent);
+    if (parentState) {
+        parentState.childDisposers.push(() => child.dispose());
+        return;
+    }
+    // External/mock Scope parent: fall back to the public Scope interface.
+    // Child-first ordering cannot be guaranteed for interface-only parents.
+    // This preserves compatibility (including implementations that run late
+    // onCleanup registrations immediately after disposal).
+    parent.onCleanup(() => child.dispose());
+}
 function resolveCreateScopeArgs(parentOrOptions, maybeOptions) {
     if (parentOrOptions === undefined || parentOrOptions === null || isScopeLike(parentOrOptions)) {
         return {
@@ -52,7 +76,6 @@ function resolveCreateScopeArgs(parentOrOptions, maybeOptions) {
 export function createScope(parentOrOptions, maybeOptions) {
     const { parentOverride, options } = resolveCreateScopeArgs(parentOrOptions, maybeOptions);
     const name = normalizeScopeName(options);
-    const cleanups = [];
     const parentCandidate = parentOverride === undefined ? currentScope : parentOverride === null ? null : parentOverride;
     // A stale async context can leave `currentScope` pointing to an already
     // disposed scope; in that case we create a detached scope instead.
@@ -77,15 +100,22 @@ export function createScope(parentOrOptions, maybeOptions) {
                 }
                 return;
             }
-            cleanups.push(fn);
+            getInternalScopeState(scope).localCleanups.push(fn);
         },
         dispose() {
             if (isScopeDisposed(scope))
                 return;
             disposedScopes.add(scope);
-            const snapshot = cleanups.splice(0);
+            const state = getInternalScopeState(scope);
+            const childSnapshot = state.childDisposers.splice(0);
+            const localSnapshot = state.localCleanups.splice(0);
             const errors = [];
-            for (const fn of snapshot) {
+            for (const fn of childSnapshot) {
+                const error = runCleanupSafely(fn);
+                if (error)
+                    errors.push(error);
+            }
+            for (const fn of localSnapshot) {
                 const error = runCleanupSafely(fn);
                 if (error)
                     errors.push(error);
@@ -105,9 +135,13 @@ export function createScope(parentOrOptions, maybeOptions) {
         },
         parent,
     };
+    scopeState.set(scope, {
+        localCleanups: [],
+        childDisposers: [],
+    });
     registerScope(scope, parent, name);
     if (parent) {
-        parent.onCleanup(() => scope.dispose());
+        registerChildScope(parent, scope);
     }
     for (const listener of scopeCreateListeners) {
         try {

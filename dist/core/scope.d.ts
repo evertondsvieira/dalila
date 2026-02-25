@@ -34,9 +34,8 @@ export declare function isScopeDisposed(scope: Scope): boolean;
  * Creates a new Scope instance.
  *
  * Notes:
- * - Cleanups run in FIFO order (registration order).
- * - If a cleanup registers another cleanup during disposal, it will NOT run
- *   in the same dispose pass (because we snapshot via `splice(0)`).
+ * - Cleanups registered on the same scope run in FIFO order (registration order).
+ * - Child scopes are disposed before parent-local cleanups run (for Dalila-created parents).
  * - Parent is captured from the current scope context (set by withScope).
  * - Optional debug names can be passed for DevTools diagnostics.
  */
