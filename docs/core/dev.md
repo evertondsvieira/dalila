@@ -10,6 +10,17 @@ npx dalila dev
 
 The dev server starts on http://localhost:4242 with automatic HMR.
 
+## Dalila DevTools Extension (Mozilla / Firefox)
+
+Dalila now ships a DevTools extension panel for Firefox (Mozilla) in the current release.
+
+- Firefox Add-ons (AMO): https://addons.mozilla.org/en-US/firefox/addon/dalila-devtools/
+- Extension docs: `devtools-extension/README.md`
+- Firefox dev workflow: `npm run devtools:firefox:run`
+- Firefox package build (for signing/submission): `npm run devtools:firefox:build`
+
+To expose runtime data to the extension, initialize the DevTools hook in your app (see `devtools-extension/README.md`).
+
 ## HMR Behavior
 
 When you edit a file, the dev server updates modules without full page reload. What happens depends on the file type:

@@ -11,6 +11,12 @@ Browser DevTools panel for inspecting Dalila's reactive runtime graph.
 
 ## Install (Firefox)
 
+Install from Mozilla Add-ons (recommended):
+
+- https://addons.mozilla.org/en-US/firefox/addon/dalila-devtools/
+
+For local development / temporary loading:
+
 1. Open `about:debugging#/runtime/this-firefox`
 2. Click **Load Temporary Add-on...**
 3. Select `devtools-extension/manifest.json`

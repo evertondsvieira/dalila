@@ -1,6 +1,6 @@
 import { getCurrentScope, withScope } from './scope.js';
 import { scheduleMicrotask, isBatching, queueInBatch } from './scheduler.js';
-import { aliasEffectToNode, linkSubscriberSetToSignal, registerEffect, registerSignal, trackDependency, trackEffectDispose, trackEffectRun, trackSignalRead, trackSignalWrite, untrackDependencyBySet, } from './devtools.js';
+import { aliasEffectToNode, linkSubscriberSetToSignal, registerEffect, registerSignal, trackDependency, trackEffectDispose, trackComputedRunEnd, trackComputedRunStart, trackEffectRunEnd, trackEffectRunStart, trackSignalRead, trackSignalWrite, untrackDependencyBySet, } from './devtools.js';
 /**
  * Optional global error handler for reactive execution.
  *
@@ -368,7 +368,7 @@ export function effect(fn) {
     const run = (() => {
         if (run.disposed)
             return;
-        trackEffectRun(run);
+        trackEffectRunStart(run);
         // Dynamic deps: unsubscribe from previous reads.
         cleanupDeps();
         const prevEffect = activeEffect;
@@ -383,6 +383,7 @@ export function effect(fn) {
                 fn();
         }
         finally {
+            trackEffectRunEnd(run);
             activeEffect = prevEffect;
             activeScope = prevScope;
         }
@@ -443,6 +444,7 @@ export function computed(fn) {
         // Allow effects to subscribe to this computed (same rules as signal()).
         trySubscribeActiveEffect(subscribers, signalRef);
         if (dirty) {
+            trackComputedRunStart(signalRef);
             cleanupDeps();
             const prevEffect = activeEffect;
             const prevScope = activeScope;
@@ -460,6 +462,7 @@ export function computed(fn) {
                     trackedDeps = new Set(markDirty.deps);
             }
             finally {
+                trackComputedRunEnd(signalRef);
                 activeEffect = prevEffect;
                 activeScope = prevScope;
             }
@@ -475,6 +478,7 @@ export function computed(fn) {
     read.peek = () => {
         // For computed, peek still needs to compute if dirty, but without tracking
         if (dirty) {
+            trackComputedRunStart(signalRef);
             cleanupDeps();
             const prevEffect = activeEffect;
             const prevScope = activeScope;
@@ -487,6 +491,7 @@ export function computed(fn) {
                     trackedDeps = new Set(markDirty.deps);
             }
             finally {
+                trackComputedRunEnd(signalRef);
                 activeEffect = prevEffect;
                 activeScope = prevScope;
             }
@@ -553,7 +558,7 @@ export function effectAsync(fn) {
     const run = (() => {
         if (run.disposed)
             return;
-        trackEffectRun(run);
+        trackEffectRunStart(run);
         // Abort previous run (if any), then create a new controller for this run.
         controller?.abort();
         controller = new AbortController();
@@ -570,6 +575,7 @@ export function effectAsync(fn) {
                 exec();
         }
         finally {
+            trackEffectRunEnd(run);
             activeEffect = prevEffect;
             activeScope = prevScope;
         }

@@ -41,10 +41,35 @@
         </article>
 
         <article class="panel panel-center">
-          <div class="panel-head">
-            <h2>Dependencies</h2>
-          </div>
-          <div id="edges" class="list"></div>
+          <section class="panel-stack">
+            <div class="panel-head">
+              <h2>Profiler</h2>
+              <div class="prof-controls">
+                <div class="mini-controls">
+                  <button id="prof-sort-p95" class="btn btn-mini">p95</button>
+                  <button id="prof-sort-avg" class="btn btn-mini">avg</button>
+                  <button id="prof-sort-runs" class="btn btn-mini">runs</button>
+                </div>
+                <div class="mini-controls">
+                  <button id="prof-win-5s" class="btn btn-mini">5s</button>
+                  <button id="prof-win-10s" class="btn btn-mini">10s</button>
+                  <button id="prof-win-30s" class="btn btn-mini">30s</button>
+                </div>
+                <div class="mini-controls">
+                  <label class="toggle toggle-mini"><input id="prof-filter-effect" type="checkbox" checked /><span>effect</span></label>
+                  <label class="toggle toggle-mini"><input id="prof-filter-effectasync" type="checkbox" checked /><span>effectAsync</span></label>
+                  <label class="toggle toggle-mini"><input id="prof-filter-computed" type="checkbox" checked /><span>computed</span></label>
+                </div>
+              </div>
+            </div>
+            <div id="profiler" class="list profiler-list"></div>
+          </section>
+          <section class="panel-stack panel-stack-fill">
+            <div class="panel-head">
+              <h2>Dependencies</h2>
+            </div>
+            <div id="edges" class="list"></div>
+          </section>
         </article>
 
         <article class="panel panel-right">

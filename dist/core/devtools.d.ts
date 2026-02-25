@@ -29,17 +29,38 @@ export interface DevtoolsSnapshot {
     nodes: DevtoolsNode[];
     edges: DevtoolsEdge[];
     events: DevtoolsEvent[];
+    profiler?: DevtoolsProfilerSnapshot;
 }
 export interface DevtoolsRuntimeOptions {
     maxEvents?: number;
     exposeGlobalHook?: boolean;
     dispatchEvents?: boolean;
 }
+export interface DevtoolsProfilerNodeSample {
+    id: number;
+    runs: number;
+    avgMs: number;
+    p95Ms: number;
+    maxMs: number;
+    lastMs: number;
+    lastAt: number;
+}
+export interface DevtoolsProfilerSnapshot {
+    enabled: boolean;
+    windowMs: number;
+    samplesPerNode: number;
+    nodes: DevtoolsProfilerNodeSample[];
+}
 export interface DevtoolsHighlightOptions {
     durationMs?: number;
 }
+export declare function getProfilerSnapshot(): DevtoolsProfilerSnapshot;
 export declare function configure(options?: DevtoolsRuntimeOptions): void;
 export declare function setEnabled(next: boolean, options?: DevtoolsRuntimeOptions): void;
+export declare function setProfilerEnabled(next: boolean, options?: {
+    windowMs?: number;
+    samplesPerNode?: number;
+}): void;
 export declare function isEnabled(): boolean;
 export declare function reset(): void;
 export declare function subscribe(listener: (event: DevtoolsEvent) => void): () => void;
@@ -58,6 +79,10 @@ export declare function linkSubscriberSetToSignal(subscriberSetRef: object, sign
 export declare function trackSignalRead(signalRef: object): void;
 export declare function trackSignalWrite(signalRef: object, nextValue: unknown): void;
 export declare function trackEffectRun(effectRef: object): void;
+export declare function trackEffectRunStart(effectRef: object): void;
+export declare function trackEffectRunEnd(effectRef: object): void;
+export declare function trackComputedRunStart(computedRef: object): void;
+export declare function trackComputedRunEnd(computedRef: object): void;
 export declare function trackEffectDispose(effectRef: object): void;
 export declare function trackDependency(signalRef: object, effectRef: object): void;
 export declare function untrackDependencyBySet(subscriberSetRef: object, effectRef: object): void;

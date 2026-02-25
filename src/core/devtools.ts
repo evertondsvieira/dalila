@@ -33,12 +33,30 @@ export interface DevtoolsSnapshot {
   nodes: DevtoolsNode[];
   edges: DevtoolsEdge[];
   events: DevtoolsEvent[];
+  profiler?: DevtoolsProfilerSnapshot;
 }
 
 export interface DevtoolsRuntimeOptions {
   maxEvents?: number;
   exposeGlobalHook?: boolean;
   dispatchEvents?: boolean;
+}
+
+export interface DevtoolsProfilerNodeSample {
+  id: number;
+  runs: number;
+  avgMs: number;
+  p95Ms: number;
+  maxMs: number;
+  lastMs: number;
+  lastAt: number;
+}
+
+export interface DevtoolsProfilerSnapshot {
+  enabled: boolean;
+  windowMs: number;
+  samplesPerNode: number;
+  nodes: DevtoolsProfilerNodeSample[];
 }
 
 export interface DevtoolsHighlightOptions {
@@ -70,6 +88,12 @@ let events: DevtoolsEvent[] = [];
 const nodeDomTargets = new Map<number, Set<Element>>();
 const highlightTimers = new WeakMap<Element, ReturnType<typeof setTimeout>>();
 let currentDomTarget: Element | null = null;
+let profilerEnabled = false;
+let profilerWindowMs = 10_000;
+let profilerSamplesPerNode = 128;
+const profilerSamplesByNode = new Map<number, Array<{ at: number; durationMs: number }>>();
+const profilerRunBucketsByNode = new Map<number, Array<{ at: number; count: number }>>();
+let runStartStacks = new WeakMap<object, number[]>();
 
 const HIGHLIGHT_ATTR = "data-dalila-devtools-highlight";
 const HIGHLIGHT_LABEL_ATTR = "data-dalila-devtools-label";
@@ -81,6 +105,12 @@ function canUseGlobalDispatch(): boolean {
 
 function canUseDOM(): boolean {
   return typeof document !== "undefined" && typeof Element !== "undefined";
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
 }
 
 function clearHighlightOnElement(element: Element): void {
@@ -332,6 +362,130 @@ function markRun(ref: object): void {
   node.lastRunAt = Date.now();
 }
 
+function markRunStart(ref: object): void {
+  markRun(ref);
+  if (!enabled || !profilerEnabled) return;
+
+  const stack = runStartStacks.get(ref) ?? [];
+  stack.push(nowMs());
+  runStartStacks.set(ref, stack);
+}
+
+function pruneProfilerSamples(nodeId: number, nowAt: number): Array<{ at: number; durationMs: number }> {
+  const samples = profilerSamplesByNode.get(nodeId) ?? [];
+  if (samples.length === 0) return samples;
+
+  const minAt = nowAt - profilerWindowMs;
+  let start = 0;
+  while (start < samples.length && samples[start].at < minAt) start++;
+  let next = start > 0 ? samples.slice(start) : samples;
+  if (next.length > profilerSamplesPerNode) {
+    next = next.slice(next.length - profilerSamplesPerNode);
+  }
+  if (next !== samples) profilerSamplesByNode.set(nodeId, next);
+  return next;
+}
+
+function pruneProfilerRunBuckets(nodeId: number, nowAt: number): Array<{ at: number; count: number }> {
+  const buckets = profilerRunBucketsByNode.get(nodeId) ?? [];
+  if (buckets.length === 0) return buckets;
+
+  const minAt = nowAt - profilerWindowMs;
+  let start = 0;
+  while (start < buckets.length && buckets[start].at < minAt) start++;
+  const next = start > 0 ? buckets.slice(start) : buckets;
+  if (next !== buckets) profilerRunBucketsByNode.set(nodeId, next);
+  return next;
+}
+
+function markRunEnd(ref: object): void {
+  if (!enabled || !profilerEnabled) return;
+
+  const stack = runStartStacks.get(ref);
+  if (!stack || stack.length === 0) return;
+  const start = stack.pop()!;
+  if (stack.length === 0) runStartStacks.delete(ref);
+
+  const nodeId = getNodeId(ref);
+  if (!nodes.has(nodeId)) return;
+
+  const durationMs = Math.max(0, nowMs() - start);
+  const sampleAt = Date.now();
+
+  const runBuckets = pruneProfilerRunBuckets(nodeId, sampleAt);
+  const lastBucket = runBuckets[runBuckets.length - 1];
+  if (lastBucket && lastBucket.at === sampleAt) {
+    lastBucket.count += 1;
+  } else {
+    runBuckets.push({ at: sampleAt, count: 1 });
+  }
+  profilerRunBucketsByNode.set(nodeId, runBuckets);
+
+  const samples = pruneProfilerSamples(nodeId, sampleAt);
+  samples.push({ at: sampleAt, durationMs });
+  if (samples.length > profilerSamplesPerNode) {
+    samples.splice(0, samples.length - profilerSamplesPerNode);
+  }
+  profilerSamplesByNode.set(nodeId, samples);
+}
+
+function summarizeProfilerNode(nodeId: number): DevtoolsProfilerNodeSample | null {
+  const now = Date.now();
+  const runBuckets = pruneProfilerRunBuckets(nodeId, now);
+  const samples = pruneProfilerSamples(nodeId, now);
+  if (samples.length === 0 && runBuckets.length === 0) return null;
+  const runCount = runBuckets.reduce((acc, bucket) => acc + bucket.count, 0);
+  const lastRunAt = runBuckets[runBuckets.length - 1]?.at ?? 0;
+  if (samples.length === 0) {
+    return {
+      id: nodeId,
+      runs: runCount,
+      avgMs: 0,
+      p95Ms: 0,
+      maxMs: 0,
+      lastMs: 0,
+      lastAt: lastRunAt,
+    };
+  }
+
+  const values = samples.map((sample) => sample.durationMs).sort((a, b) => a - b);
+  const sum = values.reduce((acc, v) => acc + v, 0);
+  const p95Index = Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * 0.95) - 1));
+  const last = samples[samples.length - 1];
+
+  return {
+    id: nodeId,
+    runs: runCount,
+    avgMs: Number((sum / values.length).toFixed(3)),
+    p95Ms: Number(values[p95Index].toFixed(3)),
+    maxMs: Number(values[values.length - 1].toFixed(3)),
+    lastMs: Number(last.durationMs.toFixed(3)),
+    lastAt: last.at,
+  };
+}
+
+export function getProfilerSnapshot(): DevtoolsProfilerSnapshot {
+  const profiledNodes: DevtoolsProfilerNodeSample[] = [];
+  for (const node of nodes.values()) {
+    if (node.type !== "effect" && node.type !== "effectAsync" && node.type !== "computed") continue;
+    const summary = summarizeProfilerNode(node.id);
+    if (summary) profiledNodes.push(summary);
+  }
+
+  profiledNodes.sort((a, b) => {
+    if (b.p95Ms !== a.p95Ms) return b.p95Ms - a.p95Ms;
+    if (b.avgMs !== a.avgMs) return b.avgMs - a.avgMs;
+    return a.id - b.id;
+  });
+
+  return {
+    enabled: profilerEnabled,
+    windowMs: profilerWindowMs,
+    samplesPerNode: profilerSamplesPerNode,
+    nodes: profiledNodes,
+  };
+}
+
 function installGlobalHook(): void {
   if (!exposeGlobalHook) return;
 
@@ -341,10 +495,12 @@ function installGlobalHook(): void {
   host[GLOBAL_HOOK_KEY] = {
     version: 1,
     getSnapshot,
+    getProfilerSnapshot,
     subscribe,
     reset,
     setEnabled,
     configure,
+    setProfilerEnabled,
     highlightNode,
     clearHighlights,
   };
@@ -384,6 +540,33 @@ export function setEnabled(next: boolean, options?: DevtoolsRuntimeOptions): voi
   }
 }
 
+export function setProfilerEnabled(
+  next: boolean,
+  options?: { windowMs?: number; samplesPerNode?: number }
+): void {
+  if (typeof options?.windowMs === "number" && Number.isFinite(options.windowMs)) {
+    const nextWindowMs = Math.floor(options.windowMs);
+    if (nextWindowMs > 0) profilerWindowMs = nextWindowMs;
+  }
+  if (
+    typeof options?.samplesPerNode === "number" &&
+    Number.isFinite(options.samplesPerNode)
+  ) {
+    const nextSamplesPerNode = Math.floor(options.samplesPerNode);
+    if (nextSamplesPerNode > 0) profilerSamplesPerNode = nextSamplesPerNode;
+  }
+
+  profilerEnabled = next;
+  if (!next) {
+    profilerSamplesByNode.clear();
+    profilerRunBucketsByNode.clear();
+    runStartStacks = new WeakMap<object, number[]>();
+  }
+  if (enabled) {
+    emit("devtools.profiler", { enabled: profilerEnabled, windowMs: profilerWindowMs, samplesPerNode: profilerSamplesPerNode });
+  }
+}
+
 export function isEnabled(): boolean {
   return enabled;
 }
@@ -401,6 +584,9 @@ export function reset(): void {
   nodes.clear();
   nodeDomTargets.clear();
   currentDomTarget = null;
+  profilerSamplesByNode.clear();
+  profilerRunBucketsByNode.clear();
+  runStartStacks = new WeakMap<object, number[]>();
   events = [];
   if (enabled) {
     emit("devtools.reset", {});
@@ -418,6 +604,7 @@ export function getSnapshot(): DevtoolsSnapshot {
     nodes: Array.from(nodes.values()).map((node) => ({ ...node })),
     edges: [...Array.from(ownershipEdges.values()), ...Array.from(dependencyEdges.values())],
     events: events.map((event) => ({ ...event, payload: { ...event.payload } })),
+    profiler: getProfilerSnapshot(),
   };
 }
 
@@ -523,6 +710,22 @@ export function trackSignalWrite(signalRef: object, nextValue: unknown): void {
 
 export function trackEffectRun(effectRef: object): void {
   markRun(effectRef);
+}
+
+export function trackEffectRunStart(effectRef: object): void {
+  markRunStart(effectRef);
+}
+
+export function trackEffectRunEnd(effectRef: object): void {
+  markRunEnd(effectRef);
+}
+
+export function trackComputedRunStart(computedRef: object): void {
+  markRunStart(computedRef);
+}
+
+export function trackComputedRunEnd(computedRef: object): void {
+  markRunEnd(computedRef);
 }
 
 export function trackEffectDispose(effectRef: object): void {

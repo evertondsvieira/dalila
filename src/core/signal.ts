@@ -7,7 +7,10 @@ import {
   registerSignal,
   trackDependency,
   trackEffectDispose,
-  trackEffectRun,
+  trackComputedRunEnd,
+  trackComputedRunStart,
+  trackEffectRunEnd,
+  trackEffectRunStart,
   trackSignalRead,
   trackSignalWrite,
   untrackDependencyBySet,
@@ -480,7 +483,7 @@ export function effect(fn: () => void): () => void {
 
   const run: EffectFn = (() => {
     if (run.disposed) return;
-    trackEffectRun(run);
+    trackEffectRunStart(run);
 
     // Dynamic deps: unsubscribe from previous reads.
     cleanupDeps();
@@ -496,6 +499,7 @@ export function effect(fn: () => void): () => void {
       if (owningScope) withScope(owningScope, fn);
       else fn();
     } finally {
+      trackEffectRunEnd(run);
       activeEffect = prevEffect;
       activeScope = prevScope;
     }
@@ -563,6 +567,7 @@ export function computed<T>(fn: () => T): Signal<T> {
     trySubscribeActiveEffect(subscribers, signalRef);
 
     if (dirty) {
+      trackComputedRunStart(signalRef);
       cleanupDeps();
 
       const prevEffect = activeEffect;
@@ -583,6 +588,7 @@ export function computed<T>(fn: () => T): Signal<T> {
         // Snapshot the current dep sets for later unsubscription.
         if (markDirty.deps) trackedDeps = new Set(markDirty.deps);
       } finally {
+        trackComputedRunEnd(signalRef);
         activeEffect = prevEffect;
         activeScope = prevScope;
       }
@@ -602,6 +608,7 @@ export function computed<T>(fn: () => T): Signal<T> {
   read.peek = () => {
     // For computed, peek still needs to compute if dirty, but without tracking
     if (dirty) {
+      trackComputedRunStart(signalRef);
       cleanupDeps();
 
       const prevEffect = activeEffect;
@@ -616,6 +623,7 @@ export function computed<T>(fn: () => T): Signal<T> {
 
         if (markDirty.deps) trackedDeps = new Set(markDirty.deps);
       } finally {
+        trackComputedRunEnd(signalRef);
         activeEffect = prevEffect;
         activeScope = prevScope;
       }
@@ -689,7 +697,7 @@ export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
 
   const run: EffectFn = (() => {
     if (run.disposed) return;
-    trackEffectRun(run);
+    trackEffectRunStart(run);
 
     // Abort previous run (if any), then create a new controller for this run.
     controller?.abort();
@@ -708,6 +716,7 @@ export function effectAsync(fn: (signal: AbortSignal) => void): () => void {
       if (owningScope) withScope(owningScope, exec);
       else exec();
     } finally {
+      trackEffectRunEnd(run);
       activeEffect = prevEffect;
       activeScope = prevScope;
     }

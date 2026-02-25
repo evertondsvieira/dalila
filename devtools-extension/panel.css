@@ -156,6 +156,26 @@ h1 {
   min-height: 280px;
 }
 
+.panel-center {
+  gap: 0;
+}
+
+.panel-stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-stack:last-child {
+  border-bottom: 0;
+}
+
+.panel-stack-fill {
+  flex: 1;
+  min-height: 0;
+}
+
 .panel-head {
   display: flex;
   justify-content: space-between;
@@ -168,6 +188,33 @@ h1 {
 .panel-head h2 {
   margin: 0;
   font-size: 16px;
+}
+
+.mini-controls {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.prof-controls {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.btn-mini {
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.toggle-mini {
+  gap: 4px;
+  font-size: 11px;
+  background: rgba(255,255,255,0.55);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 6px;
 }
 
 .panel-head input {
@@ -247,6 +294,37 @@ h1 {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.profiler-list {
+  gap: 5px;
+  max-height: 280px;
+}
+
+.prof-row {
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.prof-row:hover {
+  border-color: var(--accent);
+}
+
+.prof-row.selected {
+  border-color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px rgba(15, 109, 103, 0.35);
+}
+
+.prof-grid {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px 8px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
 }
 
 @media (max-width: 1100px) {

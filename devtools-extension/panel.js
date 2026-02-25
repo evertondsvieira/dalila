@@ -6,6 +6,16 @@ const dom = {
   autoRefresh: document.getElementById("autorefresh"),
   highlightUpdates: document.getElementById("highlight-updates"),
   search: document.getElementById("search"),
+  profiler: document.getElementById("profiler"),
+  profSortP95: document.getElementById("prof-sort-p95"),
+  profSortAvg: document.getElementById("prof-sort-avg"),
+  profSortRuns: document.getElementById("prof-sort-runs"),
+  profWin5s: document.getElementById("prof-win-5s"),
+  profWin10s: document.getElementById("prof-win-10s"),
+  profWin30s: document.getElementById("prof-win-30s"),
+  profFilterEffect: document.getElementById("prof-filter-effect"),
+  profFilterEffectAsync: document.getElementById("prof-filter-effectasync"),
+  profFilterComputed: document.getElementById("prof-filter-computed"),
   status: document.getElementById("status"),
   stats: document.getElementById("stats"),
   nodes: document.getElementById("nodes"),
@@ -20,6 +30,13 @@ const state = {
   lastError: "",
   pollTimer: null,
   bridgeEnabled: false,
+  profilerSort: "p95",
+  profilerWindowMs: 10000,
+  profilerTypeFilter: {
+    effect: true,
+    effectAsync: true,
+    computed: true,
+  },
 };
 
 function evalInInspectedWindow(source) {
@@ -86,6 +103,15 @@ function syncControls() {
     dom.enableButton.textContent = state.bridgeEnabled ? "Disable Bridge" : "Enable Bridge";
     dom.enableButton.classList.toggle("btn-strong", !state.bridgeEnabled);
   }
+  dom.profSortP95?.classList.toggle("btn-strong", state.profilerSort === "p95");
+  dom.profSortAvg?.classList.toggle("btn-strong", state.profilerSort === "avg");
+  dom.profSortRuns?.classList.toggle("btn-strong", state.profilerSort === "runs");
+  dom.profWin5s?.classList.toggle("btn-strong", state.profilerWindowMs === 5000);
+  dom.profWin10s?.classList.toggle("btn-strong", state.profilerWindowMs === 10000);
+  dom.profWin30s?.classList.toggle("btn-strong", state.profilerWindowMs === 30000);
+  if (dom.profFilterEffect) dom.profFilterEffect.checked = !!state.profilerTypeFilter.effect;
+  if (dom.profFilterEffectAsync) dom.profFilterEffectAsync.checked = !!state.profilerTypeFilter.effectAsync;
+  if (dom.profFilterComputed) dom.profFilterComputed.checked = !!state.profilerTypeFilter.computed;
 }
 
 function typeSortWeight(type) {
@@ -206,6 +232,86 @@ function renderNodes(snapshot) {
     });
 
     dom.nodes.append(row);
+  }
+}
+
+function sortProfilerRows(rows) {
+  const sortKey = state.profilerSort;
+  return [...rows].sort((a, b) => {
+    if (sortKey === "runs") {
+      if (b.runs !== a.runs) return b.runs - a.runs;
+      if (b.p95Ms !== a.p95Ms) return b.p95Ms - a.p95Ms;
+      return a.id - b.id;
+    }
+    if (sortKey === "avg") {
+      if (b.avgMs !== a.avgMs) return b.avgMs - a.avgMs;
+      if (b.p95Ms !== a.p95Ms) return b.p95Ms - a.p95Ms;
+      return a.id - b.id;
+    }
+    if (b.p95Ms !== a.p95Ms) return b.p95Ms - a.p95Ms;
+    if (b.avgMs !== a.avgMs) return b.avgMs - a.avgMs;
+    return a.id - b.id;
+  });
+}
+
+function renderProfiler(snapshot) {
+  clearElement(dom.profiler);
+
+  const rows = Array.isArray(snapshot.profiler?.nodes) ? snapshot.profiler.nodes : [];
+  const filteredRows = rows.filter((sample) => {
+    const node = snapshot.nodes.find((entry) => entry.id === sample.id);
+    if (!node) return true;
+    if (node.type === "effect") return !!state.profilerTypeFilter.effect;
+    if (node.type === "effectAsync") return !!state.profilerTypeFilter.effectAsync;
+    if (node.type === "computed") return !!state.profilerTypeFilter.computed;
+    return true;
+  });
+  if (filteredRows.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "row";
+    empty.textContent = snapshot.profiler?.enabled
+      ? "No profiler rows match the current filters yet."
+      : "Profiler disabled.";
+    dom.profiler.append(empty);
+    return;
+  }
+
+  for (const sample of sortProfilerRows(filteredRows)) {
+    const node = snapshot.nodes.find((entry) => entry.id === sample.id);
+    const row = document.createElement("div");
+    row.className = "prof-row";
+    if (sample.id === state.selectedNodeId) row.classList.add("selected");
+
+    const head = document.createElement("div");
+    head.className = "row-head";
+
+    const title = document.createElement("strong");
+    title.textContent = node
+      ? `#${sample.id} ${node.type}${node.label ? ` · ${node.label}` : ""}`
+      : `#${sample.id}`;
+
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = `${sample.runs} runs`;
+    head.append(title, badge);
+
+    const grid = document.createElement("div");
+    grid.className = "prof-grid";
+    appendMetaSpan(grid, `avg:${sample.avgMs}ms`);
+    appendMetaSpan(grid, `p95:${sample.p95Ms}ms`);
+    appendMetaSpan(grid, `max:${sample.maxMs}ms`);
+    appendMetaSpan(grid, `last:${sample.lastMs}ms`);
+
+    row.append(head, grid);
+    row.addEventListener("click", () => {
+      state.selectedNodeId = sample.id;
+      render(snapshot);
+      if (dom.highlightUpdates?.checked) {
+        highlightNodeInInspectedPage(sample.id, 900);
+      }
+    });
+
+    dom.profiler.append(row);
   }
 }
 
@@ -342,6 +448,7 @@ function renderInspector(snapshot) {
 
   const detail = {
     node,
+    profiler: snapshot.profiler?.nodes?.find((entry) => entry.id === node.id) ?? null,
     relations: {
       incomingDeps: incomingDeps.map((edge) => edge.from),
       outgoingDeps: outgoingDeps.map((edge) => edge.to),
@@ -361,6 +468,7 @@ function renderInspector(snapshot) {
 function render(snapshot) {
   renderStats(snapshot);
   renderNodes(snapshot);
+  renderProfiler(snapshot);
   renderEdges(snapshot);
   renderInspector(snapshot);
 }
@@ -389,16 +497,37 @@ async function enableBridge() {
     const hook = globalThis.__DALILA_DEVTOOLS__;
     if (!hook || typeof hook.setEnabled !== "function") return { ok: false, reason: "missing_hook" };
     hook.setEnabled(true, { exposeGlobalHook: true, dispatchEvents: true });
+    if (typeof hook.setProfilerEnabled === "function") {
+      hook.setProfilerEnabled(true, { windowMs: ${Math.max(1000, Math.floor(state.profilerWindowMs))}, samplesPerNode: 128 });
+    }
     return { ok: true };
   })();`;
 
   return evalInInspectedWindow(expression);
 }
 
+async function updateProfilerConfig() {
+  if (!state.bridgeEnabled) return;
+  const expression = `(() => {
+    const hook = globalThis.__DALILA_DEVTOOLS__;
+    if (!hook || typeof hook.setProfilerEnabled !== "function") return { ok: false };
+    hook.setProfilerEnabled(true, { windowMs: ${Math.max(1000, Math.floor(state.profilerWindowMs))}, samplesPerNode: 128 });
+    return { ok: true };
+  })();`;
+  try {
+    await evalInInspectedWindow(expression);
+  } catch {
+    // best effort; UI can keep local state and refresh later
+  }
+}
+
 async function disableBridge() {
   const expression = `(() => {
     const hook = globalThis.__DALILA_DEVTOOLS__;
     if (!hook || typeof hook.setEnabled !== "function") return { ok: false, reason: "missing_hook" };
+    if (typeof hook.setProfilerEnabled === "function") {
+      hook.setProfilerEnabled(false);
+    }
     hook.setEnabled(false);
     return { ok: true };
   })();`;
@@ -430,6 +559,7 @@ async function refresh() {
 
       clearElement(dom.stats);
       clearElement(dom.nodes);
+      clearElement(dom.profiler);
       clearElement(dom.edges);
       dom.inspector.className = "inspector empty";
       dom.inspector.textContent = "No data. Enable Devtools in the inspected app.";
@@ -494,6 +624,34 @@ async function bootstrap() {
   dom.search.addEventListener("input", () => {
     if (state.snapshot) render(state.snapshot);
   });
+
+  const setProfilerSort = (sort) => {
+    state.profilerSort = sort;
+    syncControls();
+    if (state.snapshot) render(state.snapshot);
+  };
+  dom.profSortP95?.addEventListener("click", () => setProfilerSort("p95"));
+  dom.profSortAvg?.addEventListener("click", () => setProfilerSort("avg"));
+  dom.profSortRuns?.addEventListener("click", () => setProfilerSort("runs"));
+  const setProfilerWindow = async (windowMs) => {
+    state.profilerWindowMs = windowMs;
+    syncControls();
+    await updateProfilerConfig();
+    if (state.snapshot) await refresh();
+  };
+  dom.profWin5s?.addEventListener("click", () => setProfilerWindow(5000));
+  dom.profWin10s?.addEventListener("click", () => setProfilerWindow(10000));
+  dom.profWin30s?.addEventListener("click", () => setProfilerWindow(30000));
+
+  const onFilterChange = () => {
+    state.profilerTypeFilter.effect = !!dom.profFilterEffect?.checked;
+    state.profilerTypeFilter.effectAsync = !!dom.profFilterEffectAsync?.checked;
+    state.profilerTypeFilter.computed = !!dom.profFilterComputed?.checked;
+    if (state.snapshot) render(state.snapshot);
+  };
+  dom.profFilterEffect?.addEventListener("change", onFilterChange);
+  dom.profFilterEffectAsync?.addEventListener("change", onFilterChange);
+  dom.profFilterComputed?.addEventListener("change", onFilterChange);
 
   dom.enableButton.addEventListener("click", async () => {
     try {
