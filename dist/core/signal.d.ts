@@ -24,6 +24,10 @@ export interface ReadonlySignal<T> {
     /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
     on(callback: (value: T) => void): () => void;
 }
+export interface ComputedSignal<T> extends ReadonlySignal<T> {
+    /** Nominal marker to improve IntelliSense/readability in docs and types. */
+    readonly __dalilaComputed?: true;
+}
 export interface DebounceSignalOptions {
     /** Emit immediately on the first update in a burst. Default: false */
     leading?: boolean;
@@ -107,7 +111,11 @@ export declare function effect(fn: () => void): () => void;
  * Subscription:
  * - other effects can subscribe to the computed like a normal signal
  */
-export declare function computed<T>(fn: () => T): Signal<T>;
+export declare function computed<T>(fn: () => T): ComputedSignal<T>;
+/** Short alias for `debounceSignal()`. */
+export declare function debounce<T>(source: ReadonlySignal<T>, waitMs: number, options?: DebounceSignalOptions): ReadonlySignal<T>;
+/** Short alias for `throttleSignal()`. */
+export declare function throttle<T>(source: ReadonlySignal<T>, waitMs: number, options?: ThrottleSignalOptions): ReadonlySignal<T>;
 /**
  * Async effect with cancellation.
  *

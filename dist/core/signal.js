@@ -100,6 +100,31 @@ function trySubscribeActiveEffect(subscribers, signalRef) {
     (activeEffect.deps ?? (activeEffect.deps = new Set())).add(subscribers);
     trackDependency(signalRef, activeEffect);
 }
+function cleanupEffectDeps(run) {
+    if (!run.deps)
+        return;
+    for (const depSet of run.deps) {
+        depSet.delete(run);
+        untrackDependencyBySet(depSet, run);
+    }
+    run.deps.clear();
+}
+function runTrackedEffectBody(run, owningScope, exec) {
+    const prevEffect = activeEffect;
+    const prevScope = activeScope;
+    activeEffect = run;
+    activeScope = owningScope ?? null;
+    try {
+        if (owningScope)
+            withScope(owningScope, exec);
+        else
+            exec();
+    }
+    finally {
+        activeEffect = prevEffect;
+        activeScope = prevScope;
+    }
+}
 /**
  * Create a signal: a mutable value with automatic dependency tracking.
  *
@@ -348,20 +373,11 @@ export function throttleSignal(source, waitMs, options = {}) {
  */
 export function effect(fn) {
     const owningScope = getCurrentScope();
-    const cleanupDeps = () => {
-        if (!run.deps)
-            return;
-        for (const depSet of run.deps) {
-            depSet.delete(run);
-            untrackDependencyBySet(depSet, run);
-        }
-        run.deps.clear();
-    };
     const dispose = () => {
         if (run.disposed)
             return;
         run.disposed = true;
-        cleanupDeps();
+        cleanupEffectDeps(run);
         run.queued = false;
         trackEffectDispose(run);
     };
@@ -370,22 +386,12 @@ export function effect(fn) {
             return;
         trackEffectRunStart(run);
         // Dynamic deps: unsubscribe from previous reads.
-        cleanupDeps();
-        const prevEffect = activeEffect;
-        const prevScope = activeScope;
-        activeEffect = run;
-        activeScope = owningScope ?? null;
+        cleanupEffectDeps(run);
         try {
-            // Run inside owning scope so resources created by the effect are scoped.
-            if (owningScope)
-                withScope(owningScope, fn);
-            else
-                fn();
+            runTrackedEffectBody(run, owningScope ?? null, fn);
         }
         finally {
             trackEffectRunEnd(run);
-            activeEffect = prevEffect;
-            activeScope = prevScope;
         }
     });
     registerEffect(run, 'effect', owningScope);
@@ -439,34 +445,33 @@ export function computed(fn) {
         if (markDirty.deps)
             markDirty.deps.clear();
     };
+    const recomputeIfDirty = () => {
+        if (!dirty)
+            return;
+        trackComputedRunStart(signalRef);
+        cleanupDeps();
+        const prevEffect = activeEffect;
+        const prevScope = activeScope;
+        // Collect deps into markDirty.
+        activeEffect = markDirty;
+        activeScope = null;
+        try {
+            value = fn();
+            dirty = false;
+            if (markDirty.deps)
+                trackedDeps = new Set(markDirty.deps);
+        }
+        finally {
+            trackComputedRunEnd(signalRef);
+            activeEffect = prevEffect;
+            activeScope = prevScope;
+        }
+    };
     const read = () => {
         trackSignalRead(signalRef);
         // Allow effects to subscribe to this computed (same rules as signal()).
         trySubscribeActiveEffect(subscribers, signalRef);
-        if (dirty) {
-            trackComputedRunStart(signalRef);
-            cleanupDeps();
-            const prevEffect = activeEffect;
-            const prevScope = activeScope;
-            // Collect deps into markDirty.
-            activeEffect = markDirty;
-            // During dependency collection for computed:
-            // - we want to subscribe to its dependencies regardless of the caller scope.
-            // - the computed's deps belong to the computed itself, not to whoever read it.
-            activeScope = null;
-            try {
-                value = fn();
-                dirty = false;
-                // Snapshot the current dep sets for later unsubscription.
-                if (markDirty.deps)
-                    trackedDeps = new Set(markDirty.deps);
-            }
-            finally {
-                trackComputedRunEnd(signalRef);
-                activeEffect = prevEffect;
-                activeScope = prevScope;
-            }
-        }
+        recomputeIfDirty();
         return value;
     };
     read.set = () => {
@@ -477,25 +482,7 @@ export function computed(fn) {
     };
     read.peek = () => {
         // For computed, peek still needs to compute if dirty, but without tracking
-        if (dirty) {
-            trackComputedRunStart(signalRef);
-            cleanupDeps();
-            const prevEffect = activeEffect;
-            const prevScope = activeScope;
-            activeEffect = markDirty;
-            activeScope = null;
-            try {
-                value = fn();
-                dirty = false;
-                if (markDirty.deps)
-                    trackedDeps = new Set(markDirty.deps);
-            }
-            finally {
-                trackComputedRunEnd(signalRef);
-                activeEffect = prevEffect;
-                activeScope = prevScope;
-            }
-        }
+        recomputeIfDirty();
         return value;
     };
     read.on = (callback) => {
@@ -525,6 +512,14 @@ export function computed(fn) {
     registerEffect(markDirty, 'effect', owningScope);
     return read;
 }
+/** Short alias for `debounceSignal()`. */
+export function debounce(source, waitMs, options = {}) {
+    return debounceSignal(source, waitMs, options);
+}
+/** Short alias for `throttleSignal()`. */
+export function throttle(source, waitMs, options = {}) {
+    return throttleSignal(source, waitMs, options);
+}
 /**
  * Async effect with cancellation.
  *
@@ -536,22 +531,13 @@ export function computed(fn) {
 export function effectAsync(fn) {
     const owningScope = getCurrentScope();
     let controller = null;
-    const cleanupDeps = () => {
-        if (!run.deps)
-            return;
-        for (const depSet of run.deps) {
-            depSet.delete(run);
-            untrackDependencyBySet(depSet, run);
-        }
-        run.deps.clear();
-    };
     const dispose = () => {
         if (run.disposed)
             return;
         run.disposed = true;
         controller?.abort();
         controller = null;
-        cleanupDeps();
+        cleanupEffectDeps(run);
         run.queued = false;
         trackEffectDispose(run);
     };
@@ -562,22 +548,12 @@ export function effectAsync(fn) {
         // Abort previous run (if any), then create a new controller for this run.
         controller?.abort();
         controller = new AbortController();
-        cleanupDeps();
-        const prevEffect = activeEffect;
-        const prevScope = activeScope;
-        activeEffect = run;
-        activeScope = owningScope ?? null;
+        cleanupEffectDeps(run);
         try {
-            const exec = () => fn(controller.signal);
-            if (owningScope)
-                withScope(owningScope, exec);
-            else
-                exec();
+            runTrackedEffectBody(run, owningScope ?? null, () => fn(controller.signal));
         }
         finally {
             trackEffectRunEnd(run);
-            activeEffect = prevEffect;
-            activeScope = prevScope;
         }
     });
     registerEffect(run, 'effectAsync', owningScope);
