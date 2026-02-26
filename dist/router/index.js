@@ -1,2 +1,2 @@
-export { createRouter, createTypedNavigate, } from "./router.js";
+export { createRouter, createTypedNavigate, buildPath, buildHref, } from "./router.js";
 export * from "./route-tables.js";

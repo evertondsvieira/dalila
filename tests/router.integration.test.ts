@@ -874,3 +874,31 @@ test('Router - manifest load failure sets error state and renders error view', {
     assert.equal(errorViewScopeDisposed, true);
   });
 });
+
+test('Router - href(target) applies basePath prefix', { concurrency: false }, async () => {
+  await withDom('/app/home', async () => {
+    const outlet = document.createElement('main');
+    document.body.appendChild(outlet);
+
+    const router = createRouter({
+      outlet,
+      basePath: '/app',
+      routes: [
+        {
+          path: '/home',
+          view: () => document.createElement('div')
+        },
+        {
+          path: '/users/:id',
+          view: () => document.createElement('div')
+        }
+      ]
+    });
+
+    assert.equal(router.href({
+      path: '/users/:id',
+      params: { id: 1 },
+      query: { tab: 'activity' }
+    }), '/app/users/1?tab=activity');
+  });
+});

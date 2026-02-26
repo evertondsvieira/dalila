@@ -1,75 +1,20 @@
 import { signal } from '../core/signal.js';
 import { withSchedulerPriority } from '../core/scheduler.js';
 import { createScope, withScope, withScopeAsync } from '../core/scope.js';
-import { normalizeRules, validateValue } from './validation.js';
+import { LRUCache } from './lru-cache.js';
+import { createLocationUtils } from './location-utils.js';
+import { createPreloadMetadataHelpers } from './preload-metadata.js';
+import { findDeepestBoundaryIndex, runRouteUnmountLifecycleEffects } from './router-lifecycle.js';
+import { scheduleRouteMountLifecycle } from './router-mount-lifecycle.js';
+import { createRouterPreloadCacheManager } from './router-preload-cache.js';
+import { createRouterPrefetchHelpers } from './router-prefetch.js';
+import { mountRenderedContent, renderWrappedBoundary } from './router-render-utils.js';
+import { composeViewStack } from './router-view-composer.js';
+import { createRouteValidationHelpers } from './router-validation.js';
 import { compileRoutes, findCompiledRouteStackResult, normalizePath } from './route-tables.js';
 /** Singleton reference to the most recently created router. */
 let currentRouter = null;
 const LINK_ATTRIBUTE = 'd-link';
-/**
- * Fixed-size LRU cache with optional eviction callback.
- *
- * Used for preload data and scroll positions — both need bounded
- * memory with automatic eviction of least-recently-used entries.
- */
-class LRUCache {
-    constructor(maxSize, onEvict) {
-        this.cache = new Map();
-        this.maxSize = maxSize;
-        this.onEvict = onEvict;
-    }
-    get(key) {
-        const value = this.cache.get(key);
-        if (value !== undefined) {
-            this.cache.delete(key);
-            this.cache.set(key, value);
-        }
-        return value;
-    }
-    set(key, value) {
-        if (this.cache.has(key)) {
-            const existing = this.cache.get(key);
-            if (existing !== undefined && this.onEvict) {
-                this.onEvict(key, existing);
-            }
-            this.cache.delete(key);
-        }
-        else if (this.cache.size >= this.maxSize) {
-            const firstKey = this.cache.keys().next().value;
-            if (firstKey !== undefined) {
-                const evicted = this.cache.get(firstKey);
-                if (evicted !== undefined && this.onEvict) {
-                    this.onEvict(firstKey, evicted);
-                }
-                this.cache.delete(firstKey);
-            }
-        }
-        this.cache.set(key, value);
-    }
-    has(key) {
-        return this.cache.has(key);
-    }
-    delete(key) {
-        const value = this.cache.get(key);
-        if (value === undefined)
-            return false;
-        if (this.onEvict) {
-            this.onEvict(key, value);
-        }
-        return this.cache.delete(key);
-    }
-    entries() {
-        return this.cache.entries();
-    }
-    clear() {
-        if (this.onEvict) {
-            for (const [key, value] of this.cache.entries()) {
-                this.onEvict(key, value);
-            }
-        }
-        this.cache.clear();
-    }
-}
 /** Return the most recently created router instance (or null). */
 export function getCurrentRouter() {
     return currentRouter;
@@ -117,75 +62,14 @@ export function createRouter(config) {
     let activeLeafCtx = null;
     const transitionCoalescing = new Map();
     const scrollPositions = new LRUCache(config.scrollPositionsCacheSize ?? 100);
-    const preloadTagsByKey = new Map();
-    const preloadMetadataByKey = new Map();
-    const preloadCache = new LRUCache(config.preloadCacheSize ?? 50, (key, entry) => {
-        try {
-            entry.controller.abort();
-            entry.scope.dispose();
-        }
-        finally {
-            preloadTagsByKey.delete(key);
-            preloadMetadataByKey.delete(key);
-        }
+    const preloadCacheManager = createRouterPreloadCacheManager({
+        size: config.preloadCacheSize ?? 50,
+        toPublicEntry: toRouterPreloadCacheEntry
     });
-    const preloadRouteIds = new WeakMap();
-    let nextPreloadRouteId = 0;
-    const resolvedValidationByRoute = new WeakMap();
-    const queryValidatorsByRoute = new WeakMap();
-    const paramsValidatorsByRoute = new WeakMap();
-    function stripBase(pathname) {
-        if (!basePrefix)
-            return normalizePath(pathname);
-        const normalized = normalizePath(pathname);
-        if (normalized === basePrefix)
-            return '/';
-        if (normalized.startsWith(basePrefix + '/')) {
-            const stripped = normalized.slice(basePrefix.length);
-            return stripped ? normalizePath(stripped) : '/';
-        }
-        return normalizePath(pathname);
-    }
-    function applyBase(fullPath) {
-        if (!basePrefix)
-            return fullPath;
-        const location = parseLocation(fullPath);
-        const pathname = location.pathname === '/' ? basePrefix : normalizePath(`${basePrefix}${location.pathname}`);
-        return `${pathname}${location.queryString ? `?${location.queryString}` : ''}${location.hash ? `#${location.hash}` : ''}`;
-    }
-    function parseRelativePath(to) {
-        let rest = to;
-        let hash = '';
-        const hashIdx = rest.indexOf('#');
-        if (hashIdx >= 0) {
-            hash = rest.slice(hashIdx + 1);
-            rest = rest.slice(0, hashIdx);
-        }
-        let queryString = '';
-        const queryIdx = rest.indexOf('?');
-        if (queryIdx >= 0) {
-            queryString = rest.slice(queryIdx + 1);
-            rest = rest.slice(0, queryIdx);
-        }
-        const pathname = stripBase(rest || '/');
-        const fullPath = `${pathname}${queryString ? `?${queryString}` : ''}${hash ? `#${hash}` : ''}`;
-        return { pathname, queryString, hash, fullPath };
-    }
-    function getLocationQuery(location) {
-        if (!location.query) {
-            location.query = new URLSearchParams(location.queryString);
-        }
-        return location.query;
-    }
-    function parseLocation(to) {
-        // Fast path for most app navigations (absolute pathname within same origin).
-        if (to.startsWith('/')) {
-            return parseRelativePath(to);
-        }
-        // Fallback for relative paths and absolute URLs.
-        const url = new URL(to, window.location.href);
-        return parseRelativePath(`${url.pathname}${url.search}${url.hash}`);
-    }
+    const preloadCache = preloadCacheManager.cache;
+    const { applyBase, parseLocation, getLocationQuery, } = createLocationUtils({ basePrefix, normalizePath });
+    const { normalizeTags, resolveManifestEntry, resolveMatchScore, resolveMatchTags, resolvePreloadKey, createPreloadMetadata, } = createPreloadMetadataHelpers({ routeManifestByPattern, normalizePath });
+    const { resolveRouteValidationError } = createRouteValidationHelpers();
     function joinRoutePaths(parent, child) {
         if (!child || child === '.')
             return normalizePath(parent || '/');
@@ -237,52 +121,9 @@ export function createRouter(config) {
         };
     }
     function resolveTo(to) {
-        return parseLocation(to).fullPath;
-    }
-    function resolvePreloadRouteId(match) {
-        const existing = preloadRouteIds.get(match.route);
-        if (existing)
-            return existing;
-        const generated = `r${++nextPreloadRouteId}`;
-        preloadRouteIds.set(match.route, generated);
-        return generated;
-    }
-    function resolvePreloadKey(match, location) {
-        const routeId = resolvePreloadRouteId(match);
-        const search = location.queryString;
-        const urlKey = search ? `${location.pathname}?${search}` : location.pathname;
-        return `${routeId}::${match.path}::${urlKey}`;
-    }
-    function normalizeTags(source) {
-        if (!source || source.length === 0)
-            return [];
-        const tags = new Set();
-        for (const tag of source) {
-            const normalized = String(tag).trim();
-            if (normalized)
-                tags.add(normalized);
-        }
-        return [...tags];
-    }
-    function resolveStaticPrefetchPath(pattern) {
-        const segments = normalizePath(pattern).split('/').filter(Boolean);
-        const staticSegments = [];
-        for (const segment of segments) {
-            if (segment === '*')
-                return null;
-            if (!segment.startsWith(':')) {
-                staticSegments.push(segment);
-                continue;
-            }
-            const isOptionalCatchAll = segment.endsWith('*?');
-            const isCatchAll = isOptionalCatchAll || segment.endsWith('*');
-            if (isOptionalCatchAll)
-                continue;
-            if (isCatchAll)
-                return null;
-            return null;
-        }
-        return staticSegments.length > 0 ? `/${staticSegments.join('/')}` : '/';
+        if (typeof to === 'string')
+            return parseLocation(to).fullPath;
+        return buildHref(to);
     }
     function createRouteQueryValues(query) {
         const values = {};
@@ -303,99 +144,6 @@ export function createRouter(config) {
     }
     function createRouteParamsValues(params) {
         return { ...params };
-    }
-    async function resolveRouteValidation(match) {
-        if (resolvedValidationByRoute.has(match.route)) {
-            return resolvedValidationByRoute.get(match.route) ?? null;
-        }
-        const source = match.route.validation;
-        if (!source) {
-            resolvedValidationByRoute.set(match.route, null);
-            return null;
-        }
-        const resolved = typeof source === 'function'
-            ? await source()
-            : source;
-        if (!resolved || typeof resolved !== 'object') {
-            resolvedValidationByRoute.set(match.route, null);
-            return null;
-        }
-        resolvedValidationByRoute.set(match.route, resolved);
-        return resolved;
-    }
-    function resolveQueryValidators(route, querySchema) {
-        if (queryValidatorsByRoute.has(route)) {
-            return queryValidatorsByRoute.get(route) ?? null;
-        }
-        const validatorsByKey = new Map();
-        for (const [key, rulesInput] of Object.entries(querySchema)) {
-            if (!Array.isArray(rulesInput))
-                continue;
-            const validators = normalizeRules(rulesInput, `query.${key}`);
-            if (validators.length > 0) {
-                validatorsByKey.set(key, validators);
-            }
-        }
-        const result = validatorsByKey.size > 0 ? validatorsByKey : null;
-        queryValidatorsByRoute.set(route, result);
-        return result;
-    }
-    function resolveParamsValidators(route, paramsSchema) {
-        if (paramsValidatorsByRoute.has(route)) {
-            return paramsValidatorsByRoute.get(route) ?? null;
-        }
-        const validatorsByKey = new Map();
-        for (const [key, rulesInput] of Object.entries(paramsSchema)) {
-            if (!Array.isArray(rulesInput))
-                continue;
-            const validators = normalizeRules(rulesInput, `params.${key}`);
-            if (validators.length > 0) {
-                validatorsByKey.set(key, validators);
-            }
-        }
-        const result = validatorsByKey.size > 0 ? validatorsByKey : null;
-        paramsValidatorsByRoute.set(route, result);
-        return result;
-    }
-    async function resolveRouteQueryValidationError(match, queryValues) {
-        const validation = await resolveRouteValidation(match);
-        const querySchema = validation?.query;
-        if (!querySchema)
-            return null;
-        const validatorsByKey = resolveQueryValidators(match.route, querySchema);
-        if (!validatorsByKey)
-            return null;
-        for (const [key, validators] of validatorsByKey.entries()) {
-            const value = queryValues[key];
-            const message = validateValue(value, queryValues, validators, `query.${key}`);
-            if (message) {
-                return new Error(`Invalid query param "${key}": ${message}`);
-            }
-        }
-        return null;
-    }
-    async function resolveRouteParamsValidationError(match, paramsValues) {
-        const validation = await resolveRouteValidation(match);
-        const paramsSchema = validation?.params;
-        if (!paramsSchema)
-            return null;
-        const validatorsByKey = resolveParamsValidators(match.route, paramsSchema);
-        if (!validatorsByKey)
-            return null;
-        for (const [key, validators] of validatorsByKey.entries()) {
-            const value = paramsValues[key];
-            const message = validateValue(value, paramsValues, validators, `params.${key}`);
-            if (message) {
-                return new Error(`Invalid route param "${key}": ${message}`);
-            }
-        }
-        return null;
-    }
-    async function resolveRouteValidationError(match, queryValues, paramsValues) {
-        const queryError = await resolveRouteQueryValidationError(match, queryValues);
-        if (queryError)
-            return queryError;
-        return resolveRouteParamsValidationError(match, paramsValues);
     }
     async function resolveRouteData(match, ctx, location) {
         const preloadKey = resolvePreloadKey(match, location);
@@ -460,21 +208,6 @@ export function createRouter(config) {
     async function resolveMiddleware(match, ctx) {
         return resolveMiddlewareSource(match.route.middleware, ctx);
     }
-    function resolveManifestEntry(match) {
-        return routeManifestByPattern.get(normalizePath(match.path));
-    }
-    function resolveMatchScore(match) {
-        const manifest = resolveManifestEntry(match);
-        if (typeof manifest?.score === 'number') {
-            return manifest.score;
-        }
-        return typeof match.route.score === 'number' ? match.route.score : undefined;
-    }
-    function resolveMatchTags(match) {
-        const manifest = resolveManifestEntry(match);
-        const source = manifest?.tags ?? match.route.tags ?? [];
-        return normalizeTags(source);
-    }
     function resolveTagContext(match) {
         const manifest = resolveManifestEntry(match);
         const tags = manifest?.tags ?? match.route.tags ?? [];
@@ -513,19 +246,6 @@ export function createRouter(config) {
             return null;
         return (ctx, child, data) => layout(ctx, child, data, tagCtx);
     }
-    function createPreloadMetadata(match, location) {
-        const manifest = resolveManifestEntry(match);
-        return {
-            path: location.pathname,
-            fullPath: location.fullPath,
-            routePath: match.path,
-            routeId: manifest?.id,
-            params: { ...match.params },
-            queryString: location.queryString,
-            tags: resolveMatchTags(match),
-            score: resolveMatchScore(match)
-        };
-    }
     function toRouterPreloadCacheEntry(key, entry, metadata) {
         return {
             key,
@@ -540,71 +260,6 @@ export function createRouter(config) {
             score: metadata.score,
             status: entry.status
         };
-    }
-    function collectPrefetchCandidatesFromRoutes(routeDefs, parentPath = '') {
-        const out = [];
-        for (const route of routeDefs) {
-            const fullPath = joinRoutePaths(parentPath, route.path);
-            if (route.view || route.redirect) {
-                out.push({
-                    pattern: fullPath,
-                    tags: normalizeTags(route.tags),
-                    score: route.score
-                });
-            }
-            if (route.children && route.children.length > 0) {
-                out.push(...collectPrefetchCandidatesFromRoutes(route.children, fullPath));
-            }
-        }
-        return out;
-    }
-    function collectPrefetchCandidates() {
-        if (routeManifestEntries.length > 0) {
-            return routeManifestEntries.map((entry) => ({
-                pattern: normalizePath(entry.pattern),
-                tags: normalizeTags(entry.tags),
-                score: entry.score,
-                load: entry.load
-            }));
-        }
-        return collectPrefetchCandidatesFromRoutes(routes);
-    }
-    async function prefetchCandidates(candidates, priority = 'medium') {
-        if (candidates.length === 0)
-            return;
-        const seenStaticPaths = new Set();
-        const seenDynamicPatterns = new Set();
-        const tasks = [];
-        for (const candidate of candidates) {
-            const staticPath = resolveStaticPrefetchPath(candidate.pattern);
-            if (staticPath) {
-                if (seenStaticPaths.has(staticPath))
-                    continue;
-                seenStaticPaths.add(staticPath);
-                tasks.push(preloadPath(staticPath, priority).catch((error) => {
-                    console.warn('[Dalila] Route prefetch failed:', error);
-                }));
-                continue;
-            }
-            if (!candidate.load)
-                continue;
-            if (seenDynamicPatterns.has(candidate.pattern))
-                continue;
-            seenDynamicPatterns.add(candidate.pattern);
-            tasks.push(candidate.load().catch((error) => {
-                console.warn('[Dalila] Route module prefetch failed:', error);
-            }));
-        }
-        if (tasks.length > 0) {
-            await Promise.allSettled(tasks);
-        }
-    }
-    function findDeepestBoundaryIndex(matchStack, type) {
-        for (let i = matchStack.length - 1; i >= 0; i -= 1) {
-            if (matchStack[i].route[type])
-                return i;
-        }
-        return -1;
     }
     function toRedirectNavigationOptions(options) {
         return {
@@ -623,27 +278,13 @@ export function createRouter(config) {
         activeLeafRoute = null;
         activeLeafData = undefined;
         activeLeafCtx = null;
-        if (cleanup) {
-            try {
-                cleanup();
-            }
-            catch (error) {
-                console.error('[Dalila] Error in onRouteMount cleanup lifecycle hook:', error);
-            }
-        }
-        if (onRouteUnmount) {
-            try {
-                const result = onRouteUnmount(outletElement, data, ctx);
-                if (result && typeof result.then === 'function') {
-                    void result.catch((error) => {
-                        console.error('[Dalila] Error in onRouteUnmount lifecycle hook:', error);
-                    });
-                }
-            }
-            catch (error) {
-                console.error('[Dalila] Error in onRouteUnmount lifecycle hook:', error);
-            }
-        }
+        runRouteUnmountLifecycleEffects({
+            cleanup,
+            onRouteUnmount,
+            outletElement,
+            data,
+            ctx
+        });
     }
     /**
      * Mount nodes into outlet and remove loading state
@@ -655,6 +296,121 @@ export function createRouter(config) {
             outletElement.removeAttribute('d-loading');
             outletElement.setAttribute('d-ready', '');
         });
+    }
+    async function runAfterNavigateSafely(finishSuccessfulTransition, ctx) {
+        try {
+            await finishSuccessfulTransition();
+        }
+        catch (error) {
+            console.error('[Dalila] afterNavigate failed:', error);
+            if (hooks.onError) {
+                hooks.onError(error, ctx);
+            }
+        }
+    }
+    function renderErrorBoundary(matchStack, location, scope, signal, fallbackCtx, error) {
+        const errorIndex = findDeepestBoundaryIndex(matchStack, 'error');
+        const errorFn = errorIndex !== -1 ? matchStack[errorIndex].route.error : errorView;
+        if (!errorFn)
+            return;
+        try {
+            const errorCtx = errorIndex !== -1
+                ? createRouteCtx(createRouteState(matchStack[errorIndex], location), scope, signal)
+                : fallbackCtx;
+            const result = withScope(scope, () => errorFn(errorCtx, error));
+            renderWrappedBoundary({
+                matchStack,
+                ctx: errorCtx,
+                content: result,
+                leafIndex: errorIndex !== -1 ? errorIndex : matchStack.length - 1,
+                wrapWithLayouts,
+                mountToOutlet
+            });
+        }
+        catch (renderError) {
+            console.error('[Dalila] Error view failed:', renderError);
+        }
+    }
+    function renderGlobalNotFound(ctx, scope) {
+        try {
+            if (notFoundView) {
+                const result = withScope(scope, () => notFoundView(ctx));
+                mountRenderedContent(mountToOutlet, result);
+            }
+            else {
+                mountToOutlet();
+            }
+        }
+        catch (error) {
+            console.error('[Dalila] notFoundView failed:', error);
+        }
+    }
+    function renderSegmentNotFound(matchStack, location, scope, signal, ctx) {
+        const notFoundIndex = findDeepestBoundaryIndex(matchStack, 'notFound');
+        try {
+            if (notFoundIndex !== -1) {
+                const boundaryMatch = matchStack[notFoundIndex];
+                const boundaryState = createRouteState(boundaryMatch, location);
+                const boundaryCtx = createRouteCtx(boundaryState, scope, signal);
+                const result = withScope(scope, () => boundaryMatch.route.notFound(boundaryCtx));
+                renderWrappedBoundary({
+                    matchStack,
+                    ctx: boundaryCtx,
+                    content: result,
+                    leafIndex: notFoundIndex,
+                    wrapWithLayouts,
+                    mountToOutlet
+                });
+            }
+            else if (notFoundView) {
+                const result = withScope(scope, () => notFoundView(ctx));
+                renderWrappedBoundary({
+                    matchStack,
+                    ctx,
+                    content: result,
+                    leafIndex: matchStack.length - 1,
+                    wrapWithLayouts,
+                    mountToOutlet
+                });
+            }
+            else {
+                mountToOutlet();
+            }
+        }
+        catch (error) {
+            console.error('[Dalila] Segment notFound render failed:', error);
+            if (hooks.onError) {
+                hooks.onError(error, ctx);
+            }
+        }
+    }
+    function renderPendingBoundary(matchStack, location, scope, signal, ctx) {
+        const pendingIndex = findDeepestBoundaryIndex(matchStack, 'pending');
+        if (pendingIndex === -1 && !pendingView)
+            return;
+        try {
+            if (pendingIndex !== -1) {
+                const pendingMatch = matchStack[pendingIndex];
+                const pendingState = createRouteState(pendingMatch, location);
+                const pendingCtx = createRouteCtx(pendingState, scope, signal);
+                const result = withScope(scope, () => pendingMatch.route.pending(pendingCtx));
+                renderWrappedBoundary({
+                    matchStack,
+                    ctx: pendingCtx,
+                    content: result,
+                    leafIndex: pendingIndex,
+                    wrapWithLayouts,
+                    mountToOutlet
+                });
+            }
+            else if (pendingView) {
+                const result = withScope(scope, () => pendingView(ctx));
+                mountRenderedContent(mountToOutlet, result);
+            }
+        }
+        catch (error) {
+            console.error('[Dalila] Pending view failed:', error);
+        }
     }
     /**
      * Core navigation pipeline.
@@ -749,22 +505,7 @@ export function createRouter(config) {
                         currentLoaderController = new AbortController();
                         const errorSignal = currentLoaderController.signal;
                         const defaultErrorCtx = createRouteCtx(toState, errorScope, errorSignal);
-                        const errorIndex = findDeepestBoundaryIndex(matchStack, 'error');
-                        const errorFn = errorIndex !== -1 ? matchStack[errorIndex].route.error : errorView;
-                        if (errorFn) {
-                            try {
-                                const errorCtx = errorIndex !== -1
-                                    ? createRouteCtx(createRouteState(matchStack[errorIndex], location), errorScope, errorSignal)
-                                    : defaultErrorCtx;
-                                const result = withScope(errorScope, () => errorFn(errorCtx, error));
-                                const wrapped = wrapWithLayouts(matchStack, errorCtx, result, [], errorIndex !== -1 ? errorIndex : matchStack.length - 1, true);
-                                const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-                                mountToOutlet(...nodes);
-                            }
-                            catch (renderError) {
-                                console.error('[Dalila] Error view failed:', renderError);
-                            }
-                        }
+                        renderErrorBoundary(matchStack, location, errorScope, errorSignal, defaultErrorCtx, error);
                         if (hooks.onError) {
                             hooks.onError(error, defaultErrorCtx);
                         }
@@ -866,68 +607,14 @@ export function createRouter(config) {
         if (matchStack.length === 0) {
             console.warn(`[Dalila] No route found for path: ${location.pathname}`);
             commitRouteState();
-            try {
-                if (notFoundView) {
-                    const result = withScope(scope, () => notFoundView(ctx));
-                    const nodes = Array.isArray(result) ? result : [result];
-                    mountToOutlet(...nodes);
-                }
-                else {
-                    mountToOutlet();
-                }
-            }
-            catch (error) {
-                console.error('[Dalila] notFoundView failed:', error);
-            }
-            try {
-                await finishSuccessfulTransition();
-            }
-            catch (error) {
-                console.error('[Dalila] afterNavigate failed:', error);
-                if (hooks.onError) {
-                    hooks.onError(error, ctx);
-                }
-            }
+            renderGlobalNotFound(ctx, scope);
+            await runAfterNavigateSafely(finishSuccessfulTransition, ctx);
             return;
         }
         if (!isExactMatch) {
             commitRouteState();
-            const notFoundIndex = findDeepestBoundaryIndex(matchStack, 'notFound');
-            try {
-                if (notFoundIndex !== -1) {
-                    const boundaryMatch = matchStack[notFoundIndex];
-                    const boundaryState = createRouteState(boundaryMatch, location);
-                    const boundaryCtx = createRouteCtx(boundaryState, scope, signal);
-                    const result = withScope(scope, () => boundaryMatch.route.notFound(boundaryCtx));
-                    const wrapped = wrapWithLayouts(matchStack, boundaryCtx, result, [], notFoundIndex, true);
-                    const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-                    mountToOutlet(...nodes);
-                }
-                else if (notFoundView) {
-                    const result = withScope(scope, () => notFoundView(ctx));
-                    const wrapped = wrapWithLayouts(matchStack, ctx, result, [], matchStack.length - 1, true);
-                    const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-                    mountToOutlet(...nodes);
-                }
-                else {
-                    mountToOutlet();
-                }
-            }
-            catch (error) {
-                console.error('[Dalila] Segment notFound render failed:', error);
-                if (hooks.onError) {
-                    hooks.onError(error, ctx);
-                }
-            }
-            try {
-                await finishSuccessfulTransition();
-            }
-            catch (error) {
-                console.error('[Dalila] afterNavigate failed:', error);
-                if (hooks.onError) {
-                    hooks.onError(error, ctx);
-                }
-            }
+            renderSegmentNotFound(matchStack, location, scope, signal, ctx);
+            await runAfterNavigateSafely(finishSuccessfulTransition, ctx);
             return;
         }
         const exactLeafMatch = matchStack[matchStack.length - 1];
@@ -942,28 +629,7 @@ export function createRouter(config) {
             }
         }
         // Show deepest pending boundary if available
-        const pendingIndex = findDeepestBoundaryIndex(matchStack, 'pending');
-        if (pendingIndex !== -1 || pendingView) {
-            try {
-                if (pendingIndex !== -1) {
-                    const pendingMatch = matchStack[pendingIndex];
-                    const pendingState = createRouteState(pendingMatch, location);
-                    const pendingCtx = createRouteCtx(pendingState, scope, signal);
-                    const result = withScope(scope, () => pendingMatch.route.pending(pendingCtx));
-                    const wrapped = wrapWithLayouts(matchStack, pendingCtx, result, [], pendingIndex, true);
-                    const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-                    mountToOutlet(...nodes);
-                }
-                else if (pendingView) {
-                    const result = withScope(scope, () => pendingView(ctx));
-                    const nodes = Array.isArray(result) ? result : [result];
-                    mountToOutlet(...nodes);
-                }
-            }
-            catch (error) {
-                console.error('[Dalila] Pending view failed:', error);
-            }
-        }
+        renderPendingBoundary(matchStack, location, scope, signal, ctx);
         // Validate all matches first, then load data in parallel
         let dataStack;
         try {
@@ -987,22 +653,7 @@ export function createRouter(config) {
             if (!isAbortError(error)) {
                 console.error('[Dalila] Loader failed:', error);
                 statusSignal.set({ state: 'error', to: toState, error });
-                const errorIndex = findDeepestBoundaryIndex(matchStack, 'error');
-                const errorFn = errorIndex !== -1 ? matchStack[errorIndex].route.error : errorView;
-                if (errorFn) {
-                    try {
-                        const errorCtx = errorIndex !== -1
-                            ? createRouteCtx(createRouteState(matchStack[errorIndex], location), scope, signal)
-                            : ctx;
-                        const result = withScope(scope, () => errorFn(errorCtx, error));
-                        const wrapped = wrapWithLayouts(matchStack, errorCtx, result, [], errorIndex !== -1 ? errorIndex : matchStack.length - 1, true);
-                        const nodes = Array.isArray(wrapped) ? wrapped : [wrapped];
-                        mountToOutlet(...nodes);
-                    }
-                    catch (err) {
-                        console.error('[Dalila] Error view failed:', err);
-                    }
-                }
+                renderErrorBoundary(matchStack, location, scope, signal, ctx, error);
                 if (hooks.onError) {
                     hooks.onError(error, ctx);
                 }
@@ -1052,44 +703,13 @@ export function createRouter(config) {
     /** Compose and mount the view stack (leaf view wrapped by parent layouts). */
     function mountViewStack(matchStack, ctx, dataStack, navToken) {
         try {
-            let content = null;
-            let leafRoute = null;
-            let leafData = undefined;
-            for (let i = matchStack.length - 1; i >= 0; i--) {
-                const match = matchStack[i];
-                const data = dataStack[i];
-                const route = match.route;
-                if (i === matchStack.length - 1) {
-                    leafRoute = route;
-                    leafData = data;
-                    if (!route.view) {
-                        console.warn(`[Dalila] Leaf route ${match.path} has no view function`);
-                        return;
-                    }
-                    content = withScope(ctx.scope, () => route.view(ctx, data));
-                    if (!route.layout && content) {
-                        const tagLayout = resolveTagLayout(match);
-                        if (tagLayout) {
-                            const childNodes = Array.isArray(content) ? content : [content];
-                            content = withScope(ctx.scope, () => tagLayout(ctx, childNodes, data));
-                        }
-                    }
-                }
-                else {
-                    if (content) {
-                        const childNodes = Array.isArray(content) ? content : [content];
-                        if (route.layout) {
-                            content = withScope(ctx.scope, () => route.layout(ctx, childNodes, data));
-                        }
-                        else {
-                            const tagLayout = resolveTagLayout(match);
-                            if (tagLayout) {
-                                content = withScope(ctx.scope, () => tagLayout(ctx, childNodes, data));
-                            }
-                        }
-                    }
-                }
-            }
+            const { content, leafRoute, leafData } = composeViewStack({
+                matchStack,
+                ctx,
+                dataStack,
+                withScopeRender: (fn) => withScope(ctx.scope, fn),
+                resolveTagLayout
+            });
             if (content) {
                 const nodes = Array.isArray(content) ? content : [content];
                 mountToOutlet(...nodes);
@@ -1097,57 +717,16 @@ export function createRouter(config) {
                 activeRouteUnmountHook = leafRoute?.onRouteUnmount ?? null;
                 activeLeafData = leafData;
                 activeLeafCtx = ctx;
-                // Call onRouteMount lifecycle hook if present
-                const onRouteMount = leafRoute?.onRouteMount;
-                if (onRouteMount) {
-                    queueMicrotask(() => {
-                        if (navigationToken !== navToken)
-                            return;
-                        if (activeLeafRoute !== leafRoute)
-                            return;
-                        try {
-                            const result = onRouteMount(outletElement, leafData, ctx);
-                            if (typeof result === 'function') {
-                                if (navigationToken === navToken && activeLeafRoute === leafRoute) {
-                                    activeRouteMountCleanup = result;
-                                }
-                                else {
-                                    try {
-                                        result();
-                                    }
-                                    catch (cleanupError) {
-                                        console.error('[Dalila] Error in stale onRouteMount cleanup lifecycle hook:', cleanupError);
-                                    }
-                                }
-                                return;
-                            }
-                            if (result && typeof result.then === 'function') {
-                                void result
-                                    .then((resolved) => {
-                                    if (typeof resolved !== 'function')
-                                        return;
-                                    if (navigationToken === navToken && activeLeafRoute === leafRoute) {
-                                        activeRouteMountCleanup = resolved;
-                                    }
-                                    else {
-                                        try {
-                                            resolved();
-                                        }
-                                        catch (cleanupError) {
-                                            console.error('[Dalila] Error in stale async onRouteMount cleanup lifecycle hook:', cleanupError);
-                                        }
-                                    }
-                                })
-                                    .catch((error) => {
-                                    console.error('[Dalila] Error in onRouteMount lifecycle hook:', error);
-                                });
-                            }
-                        }
-                        catch (error) {
-                            console.error('[Dalila] Error in onRouteMount lifecycle hook:', error);
-                        }
-                    });
-                }
+                scheduleRouteMountLifecycle({
+                    onRouteMount: leafRoute?.onRouteMount,
+                    outletElement,
+                    leafData,
+                    ctx,
+                    isCurrent: () => navigationToken === navToken && activeLeafRoute === leafRoute,
+                    setCleanup: (cleanup) => {
+                        activeRouteMountCleanup = cleanup;
+                    }
+                });
             }
         }
         catch (error) {
@@ -1353,6 +932,9 @@ export function createRouter(config) {
             return;
         preload(href);
     }
+    function href(target) {
+        return applyBase(buildHref(target));
+    }
     function navigate(path, options = {}) {
         return transition(resolveTo(path), {
             replace: options.replace,
@@ -1369,32 +951,10 @@ export function createRouter(config) {
         window.history.back();
     }
     function invalidateByTag(tag) {
-        const normalizedTag = tag.trim();
-        if (!normalizedTag)
-            return;
-        for (const [key, tags] of [...preloadTagsByKey.entries()]) {
-            if (!tags.has(normalizedTag))
-                continue;
-            preloadCache.delete(key);
-        }
+        preloadCacheManager.invalidateByTag(tag);
     }
     function invalidateWhere(predicate) {
-        for (const [key, preloadEntry] of [...preloadCache.entries()]) {
-            const metadata = preloadMetadataByKey.get(key);
-            if (!metadata)
-                continue;
-            let shouldInvalidate = false;
-            try {
-                shouldInvalidate = Boolean(predicate(toRouterPreloadCacheEntry(key, preloadEntry, metadata)));
-            }
-            catch (error) {
-                console.error('[Dalila] invalidateWhere predicate failed:', error);
-                return;
-            }
-            if (shouldInvalidate) {
-                preloadCache.delete(key);
-            }
-        }
+        preloadCacheManager.invalidateWhere(predicate);
     }
     /**
      * Warm the preload cache for a path.
@@ -1453,13 +1013,7 @@ export function createRouter(config) {
             };
             preloadCache.set(key, entry);
             const metadata = createPreloadMetadata(match, location);
-            preloadMetadataByKey.set(key, metadata);
-            if (metadata.tags.length > 0) {
-                preloadTagsByKey.set(key, new Set(metadata.tags));
-            }
-            else {
-                preloadTagsByKey.delete(key);
-            }
+            preloadCacheManager.setMetadata(key, metadata);
             const settled = entry.promise
                 .then((data) => {
                 withSchedulerPriority(priority, () => {
@@ -1485,6 +1039,14 @@ export function createRouter(config) {
             await Promise.allSettled(pending);
         }
     }
+    const { collectPrefetchCandidates, prefetchCandidates } = createRouterPrefetchHelpers({
+        routes,
+        routeManifestEntries,
+        normalizePath,
+        normalizeTags,
+        joinRoutePaths,
+        preloadPath
+    });
     function preload(path) {
         void preloadPath(path, 'low').catch((error) => {
             console.warn('[Dalila] Route prefetch failed:', error);
@@ -1542,10 +1104,8 @@ export function createRouter(config) {
             currentScope.dispose();
             currentScope = null;
         }
-        preloadCache.clear();
+        preloadCacheManager.clear();
         transitionCoalescing.clear();
-        preloadTagsByKey.clear();
-        preloadMetadataByKey.clear();
         scrollPositions.clear();
     }
     const router = {
@@ -1555,6 +1115,7 @@ export function createRouter(config) {
         push,
         replace,
         back,
+        href,
         preload,
         invalidateByTag,
         invalidateWhere,
@@ -1572,4 +1133,63 @@ export function createTypedNavigate(router, buildPath) {
     return ((pattern, params, options) => {
         return router.navigate(buildPath(pattern, params), options);
     });
+}
+function encodePathParam(value) {
+    return encodeURIComponent(String(value));
+}
+function encodeCatchAllParam(value) {
+    if (Array.isArray(value))
+        return value.map(encodePathParam).join('/');
+    return encodePathParam(value);
+}
+export function buildPath(pattern, params = {}) {
+    let path = pattern;
+    const usedKeys = new Set();
+    path = path.replace(/:([A-Za-z0-9_]+)\*\?/g, (_m, key) => {
+        usedKeys.add(key);
+        const value = params[key];
+        if (value == null || value === '')
+            return '';
+        return encodeCatchAllParam(value);
+    });
+    path = path.replace(/:([A-Za-z0-9_]+)\*/g, (_m, key) => {
+        usedKeys.add(key);
+        const value = params[key];
+        if (value == null || value === '') {
+            throw new Error(`[Dalila] Missing required catch-all route param "${key}" for pattern "${pattern}"`);
+        }
+        return encodeCatchAllParam(value);
+    });
+    path = path.replace(/:([A-Za-z0-9_]+)/g, (_m, key) => {
+        usedKeys.add(key);
+        const value = params[key];
+        if (value == null || value === '') {
+            throw new Error(`[Dalila] Missing required route param "${key}" for pattern "${pattern}"`);
+        }
+        return encodePathParam(value);
+    });
+    path = path.replace(/\/{2,}/g, '/');
+    return normalizePath(path);
+}
+export function buildHref(target) {
+    const path = buildPath(target.path, target.params);
+    const query = new URLSearchParams();
+    if (target.query) {
+        for (const [key, raw] of Object.entries(target.query)) {
+            if (raw == null)
+                continue;
+            if (Array.isArray(raw)) {
+                for (const item of raw) {
+                    if (item == null)
+                        continue;
+                    query.append(key, String(item));
+                }
+                continue;
+            }
+            query.set(key, String(raw));
+        }
+    }
+    const queryString = query.toString();
+    const hashValue = target.hash ? (target.hash.startsWith('#') ? target.hash : `#${target.hash}`) : '';
+    return `${path}${queryString ? `?${queryString}` : ''}${hashValue}`;
 }

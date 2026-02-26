@@ -1,8 +1,11 @@
 export {
   createRouter,
   createTypedNavigate,
+  buildPath,
+  buildHref,
   type RouterStatus,
   type Router,
+  type RouterNavigateTarget,
   type ScrollBehavior,
   type LifecycleHooks,
   type RouterConfig,

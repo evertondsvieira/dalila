@@ -15,10 +15,11 @@ export type RouterStatus = {
 export interface Router {
     start(): void;
     stop(): void;
-    navigate(path: string, options?: NavigateOptions): Promise<void>;
-    push(path: string): Promise<void>;
-    replace(path: string): Promise<void>;
+    navigate(path: string | RouterNavigateTarget, options?: NavigateOptions): Promise<void>;
+    push(path: string | RouterNavigateTarget): Promise<void>;
+    replace(path: string | RouterNavigateTarget): Promise<void>;
     back(): void;
+    href(target: RouterNavigateTarget): string;
     preload(path: string): void;
     invalidateByTag(tag: string): void;
     invalidateWhere(predicate: (entry: RouterPreloadCacheEntry) => boolean): void;
@@ -80,6 +81,12 @@ export interface RouterPreloadCacheEntry {
     score?: number;
     status: 'pending' | 'fulfilled' | 'rejected';
 }
+export interface RouterNavigateTarget {
+    path: string;
+    params?: Record<string, unknown>;
+    query?: Record<string, unknown>;
+    hash?: string;
+}
 /** Return the most recently created router instance (or null). */
 export declare function getCurrentRouter(): Router | null;
 /**
@@ -101,3 +108,5 @@ export interface TypedNavigate<TPatterns extends string = string, TParamMap exte
 }
 /** Create a type-safe navigate function bound to a router and a generated `buildPath`. */
 export declare function createTypedNavigate<TPatterns extends string = string, TParamMap extends Record<TPatterns, Record<string, any>> = Record<string, Record<string, any>>>(router: Router, buildPath: (pattern: TPatterns, params: TParamMap[TPatterns]) => string): TypedNavigate<TPatterns, TParamMap>;
+export declare function buildPath(pattern: string, params?: Record<string, unknown>): string;
+export declare function buildHref(target: RouterNavigateTarget): string;
