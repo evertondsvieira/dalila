@@ -23,6 +23,9 @@
   ],
   "author": "Everton Da Silva Vieira",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/evertondsvieira/dalila.git"

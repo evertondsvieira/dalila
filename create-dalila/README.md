@@ -5,7 +5,7 @@ Scaffold a new Dalila project with one command.
 ## Usage
 
 ```bash
-npm create dalila my-app
+npm create dalila@latest my-app
 cd my-app
 npm install
 npm run dev
@@ -13,10 +13,14 @@ npm run dev
 
 Open http://localhost:4242 to see your app.
 
+## Requirements
+
+- Node.js `>=22.6.0`
+
 ## What's Included
 
-- Counter example with signals and computed values
-- Hot reload development server + route generation watcher
+- File-based router starter (`src/app`)
+- Dev server + route generation watcher
 - TypeScript support out of the box
 - Minimal CSS styling
 
@@ -24,9 +28,14 @@ Open http://localhost:4242 to see your app.
 
 ```
 my-app/
-├── index.html      # Main HTML file
+├── dev.mjs         # Runs route watcher + dev server
+├── index.html      # App shell
 ├── src/
-│   ├── main.ts     # Application entry point
+│   ├── app/
+│   │   ├── layout.html
+│   │   ├── page.html
+│   │   └── page.ts
+│   ├── main.ts     # Router bootstrap
 │   └── style.css   # Styles
 ├── package.json
 └── tsconfig.json
@@ -35,8 +44,10 @@ my-app/
 ## Scripts
 
 - `npm run dev` - Start dev server and route watcher
+- `npm run routes` - Generate route files once
+- `npm run routes:watch` - Watch route files and regenerate outputs
 - `npm run build` - Compile TypeScript
 
 ## Learn More
 
-- [Dalila Documentation](https://github.com/evertonccarvalho/dalila)
+- [Dalila Documentation](https://github.com/evertondsvieira/dalila)

@@ -11,8 +11,11 @@
     "preview": "dalila-dev --dist",
     "postinstall": "dalila routes generate"
   },
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "dependencies": {
-    "dalila": "latest"
+    "dalila": "^1.9.21"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

@@ -15,6 +15,7 @@ const green = (text) => `\x1b[32m${text}\x1b[0m`;
 const cyan = (text) => `\x1b[36m${text}\x1b[0m`;
 const yellow = (text) => `\x1b[33m${text}\x1b[0m`;
 const bold = (text) => `\x1b[1m${text}\x1b[0m`;
+const MIN_NODE = { major: 22, minor: 6, patch: 0 };
 
 function printHelp() {
   console.log(`
@@ -32,6 +33,80 @@ ${bold('Options:')}
   -h, --help     Show this help message
   -v, --version  Show version
 `);
+}
+
+function compareVersions(a, b) {
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+
+function parseNodeVersion(version) {
+  const [major = '0', minor = '0', patch = '0'] = version.split('.');
+  return {
+    major: Number.parseInt(major, 10) || 0,
+    minor: Number.parseInt(minor, 10) || 0,
+    patch: Number.parseInt(patch, 10) || 0,
+  };
+}
+
+function ensureSupportedNode() {
+  const current = parseNodeVersion(process.versions.node);
+  if (compareVersions(current, MIN_NODE) >= 0) return;
+
+  console.error(
+    `${yellow('Error:')} Node.js ${MIN_NODE.major}.${MIN_NODE.minor}.${MIN_NODE.patch}+ is required to create and run Dalila apps.\n`
+  );
+  console.error(`Current version: ${process.versions.node}`);
+  console.error('Please upgrade Node.js and try again.\n');
+  process.exit(1);
+}
+
+function suggestPackageName(input) {
+  return (input || 'my-app')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._~-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[._-]+/, '')
+    .replace(/[._-]+$/, '') || 'my-app';
+}
+
+function validateProjectName(name) {
+  const trimmed = name.trim();
+  const errors = [];
+
+  if (trimmed.length === 0) {
+    errors.push('Project name cannot be empty.');
+  }
+  if (trimmed !== name) {
+    errors.push('Project name cannot start or end with spaces.');
+  }
+  if (trimmed.length > 214) {
+    errors.push('Project name must be 214 characters or fewer.');
+  }
+  if (trimmed.includes('/')) {
+    errors.push('Use an unscoped package name (e.g. "my-app").');
+  }
+  if (/[A-Z]/.test(trimmed)) {
+    errors.push('Project name must be lowercase.');
+  }
+  if (trimmed.startsWith('.') || trimmed.startsWith('_')) {
+    errors.push('Project name cannot start with "." or "_".');
+  }
+  if (!/^[a-z0-9][a-z0-9._~-]*$/.test(trimmed)) {
+    errors.push('Use only lowercase letters, numbers, ".", "_", "~", and "-".');
+  }
+  if (trimmed === 'node_modules' || trimmed === 'favicon.ico') {
+    errors.push(`"${trimmed}" is not a valid package name.`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    suggested: suggestPackageName(trimmed),
+  };
 }
 
 function copyDir(src, dest) {
@@ -57,6 +132,8 @@ function updatePackageJson(projectPath, projectName) {
 }
 
 function main() {
+  ensureSupportedNode();
+
   // Handle flags
   if (args.includes('-h') || args.includes('--help')) {
     printHelp();
@@ -75,6 +152,17 @@ function main() {
     console.log(`  npm create dalila ${cyan('<project-name>')}\n`);
     console.log('For example:');
     console.log(`  npm create dalila ${cyan('my-app')}\n`);
+    process.exit(1);
+  }
+
+  const validation = validateProjectName(projectName);
+  if (!validation.valid) {
+    console.error(`${yellow('Error:')} Invalid project name "${projectName}".\n`);
+    for (const error of validation.errors) {
+      console.error(`- ${error}`);
+    }
+    console.error('\nTry something like:');
+    console.error(`  npm create dalila ${cyan(validation.suggested)}\n`);
     process.exit(1);
   }
 
