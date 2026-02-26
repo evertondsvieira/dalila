@@ -58,7 +58,9 @@ bind(document.getElementById('app')!, ctx);
 ### Core
 
 - [Signals](./docs/core/signals.md)
+- [Effects Guide](./docs/core/effects-guide.md)
 - [Scopes](./docs/core/scope.md)
+- [Scopes Guide](./docs/core/scopes-guide.md)
 - [Persist](./docs/core/persist.md)
 - [Context](./docs/context.md)
 - [Scheduler](./docs/core/scheduler.md)
@@ -88,11 +90,6 @@ bind(document.getElementById('app')!, ctx);
 - [Template Check CLI](./docs/cli/check.md)
 - [Devtools Extension](./devtools-extension/README.md)
 
-Firefox extension workflows:
-
-- `npm run devtools:firefox:run` — launch Firefox with extension loaded for dev
-- `npm run devtools:firefox:build` — package extension artifact for submission/signing
-
 ## Packages
 
 ```txt
@@ -110,6 +107,7 @@ npm install
 npm run build
 npm run serve   # Dev server with HMR
 npm test
+npm run test:watch
 ```
 
 ## License

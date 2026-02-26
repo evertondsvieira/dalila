@@ -89,50 +89,52 @@ npm install dalila
 
 ### Phase 1 — Fundamentals
 
-1. [Signals](./core/signals.md) — Reactive primitives (`signal`, `computed`, `effect`)
-2. [Scopes](./core/scope.md) — Lifecycle management and cleanup
-3. [Template Binding](./runtime/bind.md) — `bind()`, `mount()`, directives and transitions
+1. [Signals](./core/signals.md) — Reactive primitives (`signal`, `computed`, `effect`, `batch`, `untrack`)
+2. [Effects Guide](./core/effects-guide.md) — Choosing between `effect`, `effectAsync`, `watch`, `onCleanup`
+3. [Scopes](./core/scope.md) — Lifecycle management and cleanup
+4. [Scopes Guide](./core/scopes-guide.md) — when manual scopes help and when they don't
+5. [Template Binding](./runtime/bind.md) — `bind()`, `mount()`, directives and transitions
 
 ### Phase 2 — Building UI
 
-4. [Template Spec](./template-spec.md) — Binding syntax and directive model
-5. [when](./core/when.md) — Boolean conditional rendering
-6. [match](./core/match.md) — Value-based conditional rendering (switch-style)
-7. [for](./core/for.md) — List rendering with keyed diffing
-8. [Components](./runtime/component.md) — `defineComponent`, props/emits/refs/slots
+6. [Template Spec](./template-spec.md) — Binding syntax and directive model (HTML-first runtime)
+7. [when](./core/when.md) — Boolean conditional rendering
+8. [match](./core/match.md) — Value-based conditional rendering (switch-style)
+9. [for](./core/for.md) — List rendering with keyed diffing
+10. [Components](./runtime/component.md) — `defineComponent`, props/emits/refs/slots
 
 ### Phase 3 — Data and State
 
-9. [Resources](./core/resource.md) — Async state with loading/error
-10. [Forms](./forms.md) — DOM-first form management and validation
-11. [Persist](./core/persist.md) — Storage sync for signals
+11. [Resources](./core/resource.md) — Async state with loading/error
+12. [Forms](./forms.md) — DOM-first form management and validation
+13. [Persist](./core/persist.md) — Storage sync for signals
 
 ### Phase 4 — Advanced Data
 
-12. [Query](./core/query.md) — Cached queries
-13. [Mutations](./core/mutation.md) — Write operations
-14. [Keys](./core/key.md) — Cache key encoding
+14. [Query](./core/query.md) — Cached queries
+15. [Mutations](./core/mutation.md) — Write operations
+16. [Keys](./core/key.md) — Cache key encoding
 
 ### Phase 5 — Routing
 
-15. [Router](./router.md) — Client-side routing and route generation
+17. [Router](./router.md) — Client-side routing and route generation
 
 ### Phase 6 — Advanced Runtime
 
-16. [Lazy Loading](./runtime/lazy.md) — `createLazyComponent`, `d-lazy`, `createSuspense`
-17. [Error Boundary](./runtime/boundary.md) — `createErrorBoundary`, `withErrorBoundary`, `d-boundary`
-18. [Context](./context.md) — Dependency injection and lookup rules
-19. [Virtual Lists](./core/virtual.md) — Windowed rendering for large datasets
-20. [FOUC Prevention](./runtime/fouc-prevention.md) — Loading token behavior
+18. [Lazy Loading](./runtime/lazy.md) — `createLazyComponent`, `d-lazy`, `createSuspense`
+19. [Error Boundary](./runtime/boundary.md) — `createErrorBoundary`, `withErrorBoundary`, `d-boundary`
+20. [Context](./context.md) — Dependency injection and lookup rules
+21. [Virtual Lists](./core/virtual.md) — Windowed rendering for large datasets (`d-virtual-each`)
+22. [FOUC Prevention](./runtime/fouc-prevention.md) — Loading token behavior
 
 ### Tooling and Ecosystem
 
-21. [Scheduler](./core/scheduler.md) — Batching and read/write coordination
-22. [Dev Mode](./core/dev.md) — Development helpers and warnings
-23. [HTTP](./http.md) — Fetch client, interceptors and XSRF helpers
-24. [UI Components](./ui.md) — Built-in UI component library
-25. [Template Check CLI](./cli/check.md) — `dalila check` static analysis
-26. [Devtools Extension](../devtools-extension/README.md) — Inspect signals/effects/scopes
+23. [Scheduler](./core/scheduler.md) — Batching (`batch()`) and read/write coordination
+24. [Dev Mode](./core/dev.md) — Development helpers and warnings
+25. [HTTP](./http.md) — Fetch client, interceptors and XSRF helpers
+26. [UI Components](./ui.md) — Built-in UI component library
+27. [Template Check CLI](./cli/check.md) — `dalila check` static analysis
+28. [Devtools Extension](../devtools-extension/README.md) — Inspect signals/effects/scopes
 
 ## Comparison with Other Frameworks
 
@@ -194,7 +196,7 @@ Dalila is written in TypeScript with full type inference:
 const count = signal(0);        // Signal<number>
 const name = signal("Alice");   // Signal<string>
 
-const greeting = computed(() => `Hello, ${name()}!`); // Signal<string>
+const greeting = computed(() => `Hello, ${name()}!`); // Signal<string> (read-only by behavior)
 
 // Type error: Argument of type 'string' is not assignable
 count.set("invalid");

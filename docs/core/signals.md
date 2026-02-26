@@ -90,6 +90,7 @@ age.set(30);  // → logs "Age changed to: 30"
 3. **`effect`** — Side effect that re-runs on dependency changes
 4. **`readonly`** — Read-only contract for an existing signal
 5. **`debounceSignal` / `throttleSignal`** — Time-based derived signals
+6. **`batch` / `untrack`** — Performance and dependency-control fundamentals
 
 ## API Reference
 
@@ -116,7 +117,7 @@ function effect(fn: () => void): () => void  // Returns dispose function
 ### computed
 
 ```ts
-function computed<T>(fn: () => T): Signal<T>  // Read-only signal
+function computed<T>(fn: () => T): ComputedSignal<T>
 ```
 
 ### readonly
@@ -155,10 +156,32 @@ function throttleSignal<T>(
 
 Defaults: `leading = true`, `trailing = true`.
 
+### Convenience aliases
+
+```ts
+debounce(s, ms)  // alias of debounceSignal(s, ms)
+throttle(s, ms)  // alias of throttleSignal(s, ms)
+```
+
 ### untrack
 
 ```ts
 function untrack<T>(fn: () => T): T  // Read without creating dependency
+```
+
+### batch (scheduler)
+
+```ts
+function batch<T>(fn: () => T): T
+```
+
+Use `batch()` when applying multiple signal writes that should notify dependents once.
+
+```ts
+batch(() => {
+  firstName.set('Ada');
+  lastName.set('Lovelace');
+});
 ```
 
 ### Error handling

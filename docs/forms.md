@@ -123,13 +123,46 @@ interface Form<T> {
   focus(path?: string): void;
   fieldArray<TItem = unknown>(path: string): FieldArray<TItem>;
   watch(path: string, fn: (next: unknown, prev: unknown) => void): () => void;
-
-  // Internal (used by runtime bindings)
-  _registerField(path: string, element: HTMLElement): () => void;
-  _getFormElement(): HTMLFormElement | null;
-  _setFormElement(form: HTMLFormElement): void;
+  field(path: string): FormFieldRef;
+}
+interface FormFieldRef {
+  path: string;
+  error(): string | null;
+  touched(): boolean;
+  dirty(): boolean;
+  focus(): void;
+  watch(fn: (next: unknown, prev: unknown) => void): () => void;
 }
 ```
+
+### `createFormFromSchema(schema, options?)`
+
+Shortcut for the schema-first case. Equivalent to `createForm({ ...options, schema })`.
+
+```ts
+import { createFormFromSchema, zodAdapter } from 'dalila/form';
+
+const form = createFormFromSchema(zodAdapter(UserSchema), {
+  validateOn: 'blur',
+  defaultValues: { name: '', email: '' }
+});
+```
+
+### `form.field(path)`
+
+Creates a per-field helper to reduce repeated `error/touched/dirty/focus/watch` calls.
+
+```ts
+const email = form.field('user.email');
+
+email.error();
+email.touched();
+email.dirty();
+email.focus();
+const stop = email.watch((next, prev) => console.log(next, prev));
+```
+
+Internal runtime hooks used by `d-form`/`d-field` are intentionally not part of the public `Form<T>` type.
 
 ```ts
 interface FormSubmitContext {
