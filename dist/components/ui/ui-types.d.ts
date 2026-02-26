@@ -1,4 +1,4 @@
-import type { Signal } from "../../core/signal.js";
+import type { ComputedSignal, ReadonlySignal, Signal } from "../../core/signal.js";
 export interface DialogOptions {
     closeOnBackdrop?: boolean;
     closeOnEscape?: boolean;
@@ -56,9 +56,9 @@ export interface Tabs {
     _attachTo(el: HTMLElement): void;
 }
 export interface TabBindings {
-    tabClass: Signal<string>;
-    selected: Signal<string>;
-    visible: Signal<boolean>;
+    tabClass: ComputedSignal<string>;
+    selected: ComputedSignal<string>;
+    visible: ComputedSignal<boolean>;
 }
 export interface DropdownOptions {
     closeOnSelect?: boolean;
@@ -84,7 +84,7 @@ export interface Combobox {
     query: Signal<string>;
     value: Signal<string>;
     label: Signal<string>;
-    filtered: Signal<ComboboxOption[]>;
+    filtered: ReadonlySignal<ComboboxOption[]>;
     highlightedIndex: Signal<number>;
     show(): void;
     close(): void;
@@ -103,7 +103,7 @@ export interface Accordion {
     toggle(itemId: string): void;
     open(itemId: string): void;
     close(itemId: string): void;
-    isOpen(itemId: string): Signal<boolean>;
+    isOpen(itemId: string): ReadonlySignal<boolean>;
     _attachTo(el: HTMLElement): void;
 }
 export interface CalendarDay {
@@ -125,8 +125,8 @@ export interface Calendar {
     year: Signal<number>;
     month: Signal<number>;
     selected: Signal<Date | null>;
-    title: Signal<string>;
-    days: Signal<CalendarDay[]>;
+    title: ReadonlySignal<string>;
+    days: ReadonlySignal<CalendarDay[]>;
     dayLabels: string[];
     prev(): void;
     next(): void;

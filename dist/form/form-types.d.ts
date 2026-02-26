@@ -128,21 +128,6 @@ export interface Form<T> {
      */
     focus(path?: string): void;
     /**
-     * Internal: register a field element
-     * @internal
-     */
-    _registerField(path: string, element: HTMLElement): () => void;
-    /**
-     * Internal: get form element
-     * @internal
-     */
-    _getFormElement(): HTMLFormElement | null;
-    /**
-     * Internal: set form element
-     * @internal
-     */
-    _setFormElement(form: HTMLFormElement): void;
-    /**
      * Create or get a field array
      */
     fieldArray<TItem = unknown>(path: string): FieldArray<TItem>;
@@ -151,10 +136,34 @@ export interface Form<T> {
      * Returns an idempotent unsubscribe function.
      */
     watch(path: string, fn: (next: unknown, prev: unknown) => void): () => void;
+    /**
+     * Get helpers scoped to a specific field path.
+     * Useful for reducing repetitive `form.error("x")` / `form.touched("x")` calls.
+     */
+    field(path: string): FormFieldRef;
 }
+/**
+ * Runtime-only hooks used by `dalila/runtime` form directives.
+ * Kept separate from `Form<T>` so app IntelliSense shows only public APIs.
+ */
+export interface FormInternals {
+    _registerField(path: string, element: HTMLElement): () => void;
+    _getFormElement(): HTMLFormElement | null;
+    _setFormElement(form: HTMLFormElement): void;
+}
+/** Internal runtime shape (public form API + runtime hooks). */
+export type InternalForm<T> = Form<T> & FormInternals;
 export interface FieldArrayItem<T = unknown> {
     key: string;
     value?: T;
+}
+export interface FormFieldRef {
+    path: string;
+    error(): string | null;
+    touched(): boolean;
+    dirty(): boolean;
+    focus(): void;
+    watch(fn: (next: unknown, prev: unknown) => void): () => void;
 }
 export interface FieldArray<TItem = unknown> {
     /**

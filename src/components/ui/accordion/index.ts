@@ -1,4 +1,4 @@
-import { signal, computed, type Signal } from "../../../core/signal.js";
+import { signal, computed, type ReadonlySignal, type Signal } from "../../../core/signal.js";
 import { getCurrentScope } from "../../../core/scope.js";
 import type { Accordion, AccordionOptions } from "../ui-types.js";
 
@@ -38,9 +38,9 @@ export function createAccordion(options: AccordionOptions = {}): Accordion {
     });
   };
 
-  const _isOpenCache = new Map<string, Signal<boolean>>();
+  const _isOpenCache = new Map<string, ReadonlySignal<boolean>>();
 
-  const isOpen = (itemId: string): Signal<boolean> => {
+  const isOpen = (itemId: string): ReadonlySignal<boolean> => {
     let sig = _isOpenCache.get(itemId);
     if (!sig) {
       sig = computed(() => openItems().has(itemId));

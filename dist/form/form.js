@@ -11,257 +11,19 @@
  */
 import { signal } from '../core/signal.js';
 import { getCurrentScope } from '../core/scope.js';
+import { createFieldArray } from './field-array.js';
+import { findFormFieldElement, resetFormDomFields } from './form-dom.js';
+import { parseFormData } from './parse-form-data.js';
+import { cssEscape, getNestedValue, setNestedValue } from './path-utils.js';
+import { createPathWatchStore } from './path-watchers.js';
+import { createValidationController, isPromiseLike } from './validation-pipeline.js';
 // Wrapped Handler Symbol
 /**
  * Symbol to mark handlers that have been wrapped by handleSubmit().
  * Used by bindForm to avoid double-wrapping.
  */
 export const WRAPPED_HANDLER = Symbol('dalila.wrappedHandler');
-// FormData Parser
-/**
- * Parse FormData into a nested object structure.
- *
- * Supports:
- * - Simple fields: "email" → { email: "..." }
- * - Nested objects: "user.name" → { user: { name: "..." } }
- * - Arrays: "phones[0].number" → { phones: [{ number: "..." }] }
- * - Checkboxes: single = boolean, multiple = array of values
- * - Select multiple: array of selected values
- * - Radio: single value
- * - Files: File object
- *
- * ## Checkbox Parsing Contract
- *
- * HTML FormData omits unchecked checkboxes entirely. To resolve this ambiguity,
- * parseFormData() inspects the DOM to distinguish between "field missing" vs "checkbox unchecked".
- *
- * ### Single Checkbox (one input with unique name)
- * When there is exactly ONE checkbox with a given name:
- * - Checked (with or without value) → `true`
- * - Unchecked → `false`
- * - Value attribute is ignored (always returns boolean)
- *
- * Example:
- * ```html
- * <input type="checkbox" name="agree" />
- * ```
- * Result: `{ agree: false }` (unchecked) or `{ agree: true }` (checked)
- *
- * ### Multiple Checkboxes (same name, multiple inputs)
- * When there are MULTIPLE checkboxes with the same name:
- * - Result is ALWAYS an array
- * - Some checked → `["value1", "value2"]`
- * - None checked → `[]`
- * - One checked → `["value1"]` (still an array!)
- *
- * Example:
- * ```html
- * <input type="checkbox" name="colors" value="red" checked />
- * <input type="checkbox" name="colors" value="blue" />
- * <input type="checkbox" name="colors" value="green" checked />
- * ```
- * Result: `{ colors: ["red", "green"] }`
- *
- * ### Edge Cases
- * - Radio buttons: Unchecked radio → field absent (standard HTML behavior)
- * - Select multiple: Always returns array (like multiple checkboxes)
- *
- * @param form - The form element to parse (used for DOM inspection)
- * @param fd - FormData instance from the form
- * @returns Parsed form data with nested structure
- */
-export function parseFormData(form, fd) {
-    const result = {};
-    // Step 1: Identify all enabled checkboxes in the form (to handle unchecked ones)
-    // Disabled checkboxes are omitted by native FormData, so we must exclude them too
-    const allCheckboxes = form.querySelectorAll('input[type="checkbox"]:not(:disabled)');
-    const checkboxesByName = new Map();
-    for (const checkbox of Array.from(allCheckboxes)) {
-        const input = checkbox;
-        const name = input.name;
-        if (!name)
-            continue; // Skip unnamed checkboxes
-        if (!checkboxesByName.has(name)) {
-            checkboxesByName.set(name, []);
-        }
-        checkboxesByName.get(name).push(input);
-    }
-    // Step 2: Identify enabled select[multiple] fields
-    // Disabled selects are omitted by native FormData, so we must exclude them too
-    const allSelectMultiple = form.querySelectorAll('select[multiple]:not(:disabled)');
-    const selectMultipleNames = new Set();
-    for (const select of Array.from(allSelectMultiple)) {
-        const name = select.name;
-        if (name)
-            selectMultipleNames.add(name);
-    }
-    // Step 3: Process all FormData entries (use getAll to handle multi-value fields)
-    const processedNames = new Set();
-    // Get unique field names from FormData
-    const fieldNames = new Set();
-    for (const [name] of fd.entries()) {
-        fieldNames.add(name);
-    }
-    for (const name of fieldNames) {
-        // Skip checkboxes (handled separately in Step 4)
-        if (checkboxesByName.has(name)) {
-            continue;
-        }
-        processedNames.add(name);
-        const element = form.elements.namedItem(name);
-        // Handle select[multiple] - always use getAll
-        if (selectMultipleNames.has(name)) {
-            const values = fd.getAll(name);
-            setNestedValue(result, name, values);
-            continue;
-        }
-        // Get all values for this name
-        const allValues = fd.getAll(name);
-        // If multiple values exist (e.g., repeated inputs), use array
-        if (allValues.length > 1) {
-            setNestedValue(result, name, allValues);
-            continue;
-        }
-        // Single value processing
-        const value = allValues[0];
-        let finalValue = value;
-        if (element && 'type' in element) {
-            const input = element;
-            if (input.type === 'file') {
-                finalValue = value; // File object
-            }
-            else if (input.type === 'number') {
-                const num = parseFloat(value);
-                finalValue = isNaN(num) ? value : num;
-            }
-            else if (input.type === 'radio') {
-                finalValue = value;
-            }
-        }
-        setNestedValue(result, name, finalValue);
-    }
-    // Step 4: Handle all checkbox fields (including unchecked ones)
-    for (const [name, checkboxes] of checkboxesByName) {
-        const isSingleCheckbox = checkboxes.length === 1;
-        const checkedValues = fd.getAll(name);
-        if (isSingleCheckbox) {
-            // Single checkbox → boolean
-            // checked → true, unchecked → false
-            setNestedValue(result, name, checkedValues.length > 0);
-        }
-        else {
-            // Multiple checkboxes → always array
-            // checked → array of values, none checked → []
-            setNestedValue(result, name, checkedValues);
-        }
-        processedNames.add(name);
-    }
-    // Step 5: Handle select[multiple] with no selection (not in FormData)
-    for (const name of selectMultipleNames) {
-        if (!processedNames.has(name)) {
-            // No selection → empty array
-            setNestedValue(result, name, []);
-            processedNames.add(name);
-        }
-    }
-    return result;
-}
-/**
- * Set a value in a nested object using dot/bracket notation.
- * Examples:
- * - "email" → obj.email
- * - "user.name" → obj.user.name
- * - "phones[0].number" → obj.phones[0].number
- */
-function setNestedValue(obj, path, value) {
-    const parts = parsePath(path);
-    let current = obj;
-    for (let i = 0; i < parts.length - 1; i++) {
-        const part = parts[i];
-        const next = parts[i + 1];
-        if (!(part in current)) {
-            // Create object or array based on next part
-            current[part] = typeof next === 'number' ? [] : {};
-        }
-        current = current[part];
-    }
-    const lastPart = parts[parts.length - 1];
-    current[lastPart] = value;
-}
-/**
- * Parse a path string into an array of keys/indices.
- * Examples:
- * - "email" → ["email"]
- * - "user.name" → ["user", "name"]
- * - "phones[0].number" → ["phones", 0, "number"]
- */
-function parsePath(path) {
-    const parts = [];
-    let current = '';
-    let i = 0;
-    while (i < path.length) {
-        const char = path[i];
-        if (char === '.') {
-            if (current) {
-                parts.push(current);
-                current = '';
-            }
-            i++;
-        }
-        else if (char === '[') {
-            if (current) {
-                parts.push(current);
-                current = '';
-            }
-            // Find closing bracket
-            const closeIndex = path.indexOf(']', i);
-            if (closeIndex === -1) {
-                throw new Error(`Invalid path: missing closing bracket in "${path}"`);
-            }
-            const index = path.slice(i + 1, closeIndex);
-            const parsed = parseInt(index, 10);
-            // Numeric index → array access; non-numeric → object key
-            parts.push(isNaN(parsed) ? index : parsed);
-            i = closeIndex + 1;
-            // Skip dot after bracket if present
-            if (path[i] === '.')
-                i++;
-        }
-        else {
-            current += char;
-            i++;
-        }
-    }
-    if (current) {
-        parts.push(current);
-    }
-    return parts;
-}
-/**
- * Get a nested value from an object using a path.
- */
-function getNestedValue(obj, path) {
-    if (!obj)
-        return undefined;
-    const parts = parsePath(path);
-    let current = obj;
-    for (const part of parts) {
-        if (current == null)
-            return undefined;
-        current = current[part];
-    }
-    return current;
-}
-/**
- * Escape a string for safe use inside a CSS attribute selector.
- * Uses CSS.escape when available, falls back to escaping all non-word chars.
- */
-function cssEscape(value) {
-    if (typeof CSS !== 'undefined' && CSS.escape) {
-        return CSS.escape(value);
-    }
-    return value.replace(/([^\w-])/g, '\\$1');
-}
+export { parseFormData };
 // Form Implementation
 export function createForm(options = {}) {
     const scope = getCurrentScope();
@@ -275,7 +37,6 @@ export function createForm(options = {}) {
     // Registry
     const fieldRegistry = new Map();
     const fieldArrayRegistry = new Map();
-    const pathWatchers = new Set();
     // Form element reference
     let formElement = null;
     // Submit abort controller
@@ -312,64 +73,17 @@ export function createForm(options = {}) {
             return true;
         return false;
     }
-    function emitWatchCallback(callback, next, prev) {
-        try {
-            callback(next, prev);
-        }
-        catch (err) {
+    const pathWatchStore = createPathWatchStore({
+        readPathValue,
+        isPathRelated,
+        onCallbackError: (err) => {
             if (typeof console !== 'undefined') {
                 console.error('[Dalila] Error in form.watch callback:', err);
             }
-        }
-    }
-    function isPlainObject(value) {
-        return Object.prototype.toString.call(value) === '[object Object]';
-    }
-    function areValuesEqual(a, b) {
-        if (Object.is(a, b))
-            return true;
-        if (Array.isArray(a) && Array.isArray(b)) {
-            if (a.length !== b.length)
-                return false;
-            for (let i = 0; i < a.length; i++) {
-                if (!areValuesEqual(a[i], b[i]))
-                    return false;
-            }
-            return true;
-        }
-        if (isPlainObject(a) && isPlainObject(b)) {
-            const aKeys = Object.keys(a);
-            const bKeys = Object.keys(b);
-            if (aKeys.length !== bKeys.length)
-                return false;
-            for (const key of aKeys) {
-                if (!(key in b))
-                    return false;
-                if (!areValuesEqual(a[key], b[key]))
-                    return false;
-            }
-            return true;
-        }
-        return false;
-    }
+        },
+    });
     function notifyWatchers(changedPath, opts = {}) {
-        if (pathWatchers.size === 0)
-            return;
-        const preferFieldArrayPaths = opts.preferFieldArrayPaths != null
-            ? new Set(opts.preferFieldArrayPaths)
-            : opts.preferFieldArrayPath
-                ? new Set([opts.preferFieldArrayPath])
-                : undefined;
-        for (const watcher of pathWatchers) {
-            if (changedPath && !isPathRelated(changedPath, watcher.path))
-                continue;
-            const next = readPathValue(watcher.path, preferFieldArrayPaths);
-            if (areValuesEqual(next, watcher.lastValue))
-                continue;
-            const prev = watcher.lastValue;
-            watcher.lastValue = next;
-            emitWatchCallback(watcher.callback, next, prev);
-        }
+        pathWatchStore.notify({ changedPath, ...opts });
     }
     // Initialize defaults
     (async () => {
@@ -406,189 +120,13 @@ export function createForm(options = {}) {
     // Validation mode
     const validateOn = options.validateOn ?? 'submit';
     let hasSubmitted = false;
-    let validationRunSeq = 0;
-    let formValidationRunId = 0;
-    let formInvalidationId = 0;
-    const latestFieldValidationByPath = new Map();
-    function beginValidation(path) {
-        if (path) {
-            // Field-level validation should invalidate pending full-form validations,
-            // but keep other field paths independent.
-            formInvalidationId += 1;
-            const runId = ++validationRunSeq;
-            latestFieldValidationByPath.set(path, runId);
-            return {
-                kind: 'path',
-                path,
-                runId,
-                formRunIdAtStart: formValidationRunId,
-                formInvalidationIdAtStart: formInvalidationId,
-            };
-        }
-        // Full-form validation invalidates previous full-form and field-level runs.
-        formValidationRunId += 1;
-        latestFieldValidationByPath.clear();
-        const runId = ++validationRunSeq;
-        return {
-            kind: 'form',
-            runId,
-            formRunIdAtStart: formValidationRunId,
-            formInvalidationIdAtStart: formInvalidationId,
-        };
-    }
-    function isValidationCurrent(token) {
-        if (token.kind === 'form') {
-            return token.formRunIdAtStart === formValidationRunId &&
-                token.formInvalidationIdAtStart === formInvalidationId;
-        }
-        if (!token.path)
-            return false;
-        return token.formRunIdAtStart === formValidationRunId &&
-            latestFieldValidationByPath.get(token.path) === token.runId;
-    }
-    function isPromiseLike(value) {
-        return !!value && typeof value.then === 'function';
-    }
-    function mergeValidationOutcomes(outcomes) {
-        const mergedFieldErrors = {};
-        let formError = undefined;
-        let value;
-        let hasValue = false;
-        for (const outcome of outcomes) {
-            for (const [path, message] of Object.entries(outcome.fieldErrors)) {
-                if (!(path in mergedFieldErrors)) {
-                    mergedFieldErrors[path] = message;
-                }
-            }
-            if (formError == null && typeof outcome.formError === 'string' && outcome.formError.length > 0) {
-                formError = outcome.formError;
-            }
-            if (outcome.hasValue) {
-                hasValue = true;
-                value = outcome.value;
-            }
-        }
-        return { fieldErrors: mergedFieldErrors, formError, value, hasValue };
-    }
-    function normalizeLegacyValidationResult(result) {
-        if (!result || typeof result !== 'object') {
-            return { fieldErrors: {} };
-        }
-        if ('fieldErrors' in result || 'formError' in result) {
-            const typedResult = result;
-            return {
-                fieldErrors: typedResult.fieldErrors ?? {},
-                formError: typedResult.formError,
-            };
-        }
-        return { fieldErrors: result };
-    }
-    function normalizeSchemaValidationResult(result) {
-        const fieldErrors = {};
-        let formError = result.formError;
-        const hasValue = Object.prototype.hasOwnProperty.call(result, 'value');
-        for (const issue of result.issues ?? []) {
-            if (issue.path && !(issue.path in fieldErrors)) {
-                fieldErrors[issue.path] = issue.message;
-                continue;
-            }
-            if (!issue.path && formError == null) {
-                formError = issue.message;
-            }
-        }
-        return { fieldErrors, formError, value: result.value, hasValue };
-    }
-    function runLegacyValidation(data) {
-        if (!options.validate)
-            return { fieldErrors: {} };
-        const result = options.validate(data);
-        if (isPromiseLike(result)) {
-            return result
-                .then((resolved) => normalizeLegacyValidationResult(resolved))
-                .catch((error) => ({
-                fieldErrors: {},
-                formError: error instanceof Error ? error.message : 'Validation failed',
-            }));
-        }
-        return normalizeLegacyValidationResult(result);
-    }
-    function runSchemaValidation(data, path) {
-        if (!options.schema)
-            return { fieldErrors: {} };
-        const schema = options.schema;
-        const execute = () => {
-            if (path && schema.validateField) {
-                return schema.validateField(path, getNestedValue(data, path), data);
-            }
-            return schema.validate(data);
-        };
-        const normalizeMappedError = (error) => {
-            const mapped = schema.mapErrors?.(error);
-            if (Array.isArray(mapped)) {
-                if (mapped.length === 0) {
-                    return {
-                        fieldErrors: {},
-                        formError: error instanceof Error ? error.message : 'Schema validation failed',
-                    };
-                }
-                return normalizeSchemaValidationResult({ issues: mapped });
-            }
-            if (mapped && typeof mapped === 'object') {
-                const mappedFormError = mapped.formError;
-                if (typeof mappedFormError === 'string' && mappedFormError.length > 0) {
-                    return {
-                        fieldErrors: {},
-                        formError: mappedFormError,
-                    };
-                }
-                return {
-                    fieldErrors: {},
-                    formError: error instanceof Error ? error.message : 'Schema validation failed',
-                };
-            }
-            return {
-                fieldErrors: {},
-                formError: error instanceof Error ? error.message : 'Schema validation failed',
-            };
-        };
-        try {
-            const result = execute();
-            if (isPromiseLike(result)) {
-                return result
-                    .then((resolved) => normalizeSchemaValidationResult(resolved))
-                    .catch((error) => normalizeMappedError(error));
-            }
-            return normalizeSchemaValidationResult(result);
-        }
-        catch (error) {
-            return normalizeMappedError(error);
-        }
-    }
-    function applyValidationOutcome(outcome, path) {
-        if (path && options.schema?.validateField) {
-            errors.update((prev) => {
-                const next = {};
-                for (const [key, message] of Object.entries(prev)) {
-                    if (!isPathRelated(key, path)) {
-                        next[key] = message;
-                    }
-                }
-                for (const [key, message] of Object.entries(outcome.fieldErrors)) {
-                    if (isPathRelated(key, path)) {
-                        next[key] = message;
-                    }
-                }
-                return next;
-            });
-            formErrorSignal.set(outcome.formError ?? null);
-        }
-        else {
-            errors.set(outcome.fieldErrors);
-            formErrorSignal.set(outcome.formError ?? null);
-        }
-        return Object.keys(outcome.fieldErrors).length === 0 &&
-            !(typeof outcome.formError === 'string' && outcome.formError.length > 0);
-    }
+    const validationController = createValidationController({
+        options,
+        getNestedValue,
+        isPathRelated,
+        errors,
+        formErrorSignal,
+    });
     // Error Management
     function setError(path, message) {
         errors.update((prev) => ({ ...prev, [path]: message }));
@@ -619,24 +157,29 @@ export function createForm(options = {}) {
         return formErrorSignal();
     }
     function watch(path, fn) {
-        const watcher = {
-            path,
-            callback: fn,
-            lastValue: readPathValue(path),
-        };
-        pathWatchers.add(watcher);
+        const watcher = pathWatchStore.add(path, fn);
         let active = true;
         const unsubscribe = () => {
             if (!active)
                 return;
             active = false;
-            pathWatchers.delete(watcher);
+            pathWatchStore.remove(watcher);
         };
         const ownerScope = getCurrentScope();
         if (ownerScope) {
             ownerScope.onCleanup(unsubscribe);
         }
         return unsubscribe;
+    }
+    function field(path) {
+        return {
+            path,
+            error: () => error(path),
+            touched: () => touched(path),
+            dirty: () => dirty(path),
+            focus: () => focus(path),
+            watch: (fn) => watch(path, fn),
+        };
     }
     // Touched / Dirty Management
     function touched(path) {
@@ -664,53 +207,12 @@ export function createForm(options = {}) {
             return next;
         });
     }
-    function resolveValidationOutcome(data, opts = {}) {
-        if (!options.schema && !options.validate) {
-            return { fieldErrors: {}, value: data, hasValue: true };
-        }
-        const runLegacyAfterSchema = (schemaOutcome) => {
-            if (!options.validate)
-                return schemaOutcome;
-            const legacyInput = schemaOutcome.hasValue ? schemaOutcome.value : data;
-            const legacyOutcome = runLegacyValidation(legacyInput);
-            if (!isPromiseLike(legacyOutcome)) {
-                return mergeValidationOutcomes([schemaOutcome, legacyOutcome]);
-            }
-            return Promise.resolve(legacyOutcome).then((resolvedLegacy) => mergeValidationOutcomes([schemaOutcome, resolvedLegacy]));
-        };
-        if (options.schema) {
-            const schemaOutcome = runSchemaValidation(data, opts.path);
-            if (!isPromiseLike(schemaOutcome)) {
-                return runLegacyAfterSchema(schemaOutcome);
-            }
-            return Promise.resolve(schemaOutcome).then((resolvedSchema) => runLegacyAfterSchema(resolvedSchema));
-        }
-        return runLegacyValidation(data);
-    }
-    function finalizeValidation(token, sourceData, outcome, opts = {}) {
-        if (!isValidationCurrent(token)) {
-            return { isValid: false, data: sourceData };
-        }
-        const isValid = applyValidationOutcome(outcome, opts.path);
-        const data = outcome.hasValue ? outcome.value : sourceData;
-        return { isValid, data };
-    }
     // Validation
     function validate(data, opts = {}) {
-        const token = beginValidation(opts.path);
-        const outcome = resolveValidationOutcome(data, opts);
-        if (!isPromiseLike(outcome)) {
-            return finalizeValidation(token, data, outcome, opts).isValid;
-        }
-        return outcome.then((resolved) => finalizeValidation(token, data, resolved, opts).isValid);
+        return validationController.validate(data, opts);
     }
     function validateForSubmit(data) {
-        const token = beginValidation();
-        const outcome = resolveValidationOutcome(data);
-        if (!isPromiseLike(outcome)) {
-            return finalizeValidation(token, data, outcome);
-        }
-        return outcome.then((resolved) => finalizeValidation(token, data, resolved));
+        return validationController.validateForSubmit(data);
     }
     // Field Registry
     function _registerField(path, element) {
@@ -897,20 +399,9 @@ export function createForm(options = {}) {
         wrappedHandler[WRAPPED_HANDLER] = true;
         return wrappedHandler;
     }
-    // Focus Management
-    // Find element by current DOM path instead of stale registry
-    // After d-array reorders, data-field-path is updated but registry has old keys
-    function findFieldElement(path) {
-        if (!formElement)
-            return null;
-        const escapePath = cssEscape(path);
-        // Prioritize [d-field] to avoid matching hidden inputs
-        // Try data-field-path first (set by d-array), then name attribute
-        return formElement.querySelector(`[d-field][data-field-path="${escapePath}"], [d-field][name="${escapePath}"]`);
-    }
     function focus(path) {
         if (path) {
-            const el = findFieldElement(path);
+            const el = findFormFieldElement(formElement, path);
             if (el && 'focus' in el) {
                 el.focus();
             }
@@ -921,7 +412,7 @@ export function createForm(options = {}) {
         if (errorEntries.length === 0)
             return;
         const [firstErrorPath] = errorEntries[0];
-        const el = findFieldElement(firstErrorPath);
+        const el = findFormFieldElement(formElement, firstErrorPath);
         if (el && 'focus' in el) {
             el.focus();
         }
@@ -931,52 +422,8 @@ export function createForm(options = {}) {
         if (nextDefaults !== undefined) {
             defaultValues = nextDefaults;
         }
-        // Reset form element
-        if (formElement) {
-            formElement.reset();
-            // Find fields by DOM query instead of stale registry
-            // After d-array reorders, data-field-path reflects current indices
-            const allFields = formElement.querySelectorAll('[d-field]');
-            for (const el of allFields) {
-                // Get current path from DOM (handles reordered arrays)
-                const fieldPath = el.getAttribute('data-field-path') || el.getAttribute('name');
-                if (!fieldPath)
-                    continue;
-                const defaultValue = getNestedValue(defaultValues, fieldPath);
-                const input = el;
-                if (defaultValue !== undefined) {
-                    if (input.type === 'checkbox') {
-                        // Respect checkbox contract (single = boolean, multiple = array)
-                        if (Array.isArray(defaultValue)) {
-                            // Multiple checkboxes: check if value is in array
-                            input.checked = defaultValue.includes(input.value);
-                        }
-                        else {
-                            // Single checkbox: use boolean value
-                            input.checked = !!defaultValue;
-                        }
-                    }
-                    else if (input.type === 'radio') {
-                        input.checked = input.value === String(defaultValue);
-                    }
-                    else if (input.tagName === 'SELECT') {
-                        const select = el;
-                        if (select.multiple && Array.isArray(defaultValue)) {
-                            // Handle select multiple
-                            for (const option of Array.from(select.options)) {
-                                option.selected = defaultValue.includes(option.value);
-                            }
-                        }
-                        else {
-                            select.value = String(defaultValue);
-                        }
-                    }
-                    else {
-                        input.value = String(defaultValue);
-                    }
-                }
-            }
-        }
+        // Reset form element + reapply defaults to d-field controls.
+        resetFormDomFields(formElement, defaultValues);
         // Reset state
         clearErrors();
         touchedSet.set(new Set());
@@ -1047,10 +494,10 @@ export function createForm(options = {}) {
             submitController?.abort();
             fieldRegistry.clear();
             fieldArrayRegistry.clear();
-            pathWatchers.clear();
+            pathWatchStore.clear();
         });
     }
-    return {
+    const api = {
         handleSubmit,
         reset,
         setError,
@@ -1064,348 +511,18 @@ export function createForm(options = {}) {
         submitCount,
         focus,
         watch,
+        field,
         _registerField,
         _getFormElement,
         _setFormElement,
         fieldArray,
     };
+    return api;
 }
-function createFieldArray(basePath, options) {
-    const keys = signal([]);
-    const values = signal(new Map());
-    let keyCounter = 0;
-    function generateKey() {
-        return `${basePath}_${keyCounter++}`;
-    }
-    // Helper to remap meta-state paths when array order changes
-    function remapMetaState(oldIndices, newIndices) {
-        if (!options.errors && !options.touchedSet && !options.dirtySet)
-            return;
-        // Build index mapping: oldIndex -> newIndex
-        const indexMap = new Map();
-        for (let i = 0; i < oldIndices.length; i++) {
-            indexMap.set(oldIndices[i], newIndices[i]);
-        }
-        // Remap errors
-        if (options.errors) {
-            options.errors.update((prev) => {
-                const next = {};
-                for (const [path, message] of Object.entries(prev)) {
-                    const newPath = remapPath(path, indexMap);
-                    next[newPath] = message;
-                }
-                return next;
-            });
-        }
-        // Remap touched
-        if (options.touchedSet) {
-            options.touchedSet.update((prev) => {
-                const next = new Set();
-                for (const path of prev) {
-                    next.add(remapPath(path, indexMap));
-                }
-                return next;
-            });
-        }
-        // Remap dirty
-        if (options.dirtySet) {
-            options.dirtySet.update((prev) => {
-                const next = new Set();
-                for (const path of prev) {
-                    next.add(remapPath(path, indexMap));
-                }
-                return next;
-            });
-        }
-    }
-    function remapPath(path, indexMap) {
-        // Match paths like "basePath[index].field" or "basePath[index]"
-        const regex = new RegExp(`^${escapeRegExp(basePath)}\\[(\\d+)\\](.*)$`);
-        const match = path.match(regex);
-        if (!match)
-            return path;
-        const oldIndex = parseInt(match[1], 10);
-        const rest = match[2];
-        const newIndex = indexMap.get(oldIndex);
-        if (newIndex === undefined)
-            return path;
-        return `${basePath}[${newIndex}]${rest}`;
-    }
-    function escapeRegExp(string) {
-        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-    // Accessors
-    function fields() {
-        const currentKeys = keys();
-        const currentValues = values();
-        return currentKeys.map((key) => ({
-            key,
-            value: currentValues.get(key),
-        }));
-    }
-    function length() {
-        return keys().length;
-    }
-    function _getIndex(key) {
-        return keys().indexOf(key);
-    }
-    function _translatePath(path) {
-        // Translate index-based path to key-based path
-        // Example: "phones[0].number" → "phones:key123.number"
-        const match = path.match(/^([^\[]+)\[(\d+)\](.*)$/);
-        if (!match)
-            return null;
-        const [, arrayPath, indexStr, rest] = match;
-        if (arrayPath !== basePath)
-            return null;
-        const index = parseInt(indexStr, 10);
-        const currentKeys = keys();
-        const key = currentKeys[index];
-        if (!key)
-            return null;
-        return `${arrayPath}:${key}${rest}`;
-    }
-    // Mutations
-    function append(value) {
-        const items = Array.isArray(value) ? value : [value];
-        const newKeys = items.map(() => generateKey());
-        keys.update((prev) => [...prev, ...newKeys]);
-        values.update((prev) => {
-            const next = new Map(prev);
-            newKeys.forEach((key, i) => next.set(key, items[i]));
-            return next;
-        });
-        options.onMutate?.();
-    }
-    function remove(key) {
-        const removeIndex = _getIndex(key);
-        const currentLength = keys().length;
-        keys.update((prev) => prev.filter((k) => k !== key));
-        values.update((prev) => {
-            const next = new Map(prev);
-            next.delete(key);
-            return next;
-        });
-        // Clear meta-state for the removed index, then remap remaining indices
-        // to keep errors/touched/dirty aligned with current rows.
-        if (removeIndex >= 0) {
-            const prefix = `${basePath}[${removeIndex}]`;
-            // Clear errors for removed item
-            if (options.errors) {
-                options.errors.update((prev) => {
-                    const next = {};
-                    for (const [path, message] of Object.entries(prev)) {
-                        if (!path.startsWith(prefix)) {
-                            next[path] = message;
-                        }
-                    }
-                    return next;
-                });
-            }
-            // Clear touched for removed item
-            if (options.touchedSet) {
-                options.touchedSet.update((prev) => {
-                    const next = new Set();
-                    for (const path of prev) {
-                        if (!path.startsWith(prefix)) {
-                            next.add(path);
-                        }
-                    }
-                    return next;
-                });
-            }
-            // Clear dirty for removed item
-            if (options.dirtySet) {
-                options.dirtySet.update((prev) => {
-                    const next = new Set();
-                    for (const path of prev) {
-                        if (!path.startsWith(prefix)) {
-                            next.add(path);
-                        }
-                    }
-                    return next;
-                });
-            }
-            // Remap indices after removed item (shift down)
-            const oldIndices = [];
-            const newIndices = [];
-            for (let i = removeIndex + 1; i < currentLength; i++) {
-                oldIndices.push(i);
-                newIndices.push(i - 1);
-            }
-            if (oldIndices.length > 0) {
-                remapMetaState(oldIndices, newIndices);
-            }
-        }
-        options.onMutate?.();
-    }
-    function removeAt(index) {
-        if (index < 0 || index >= keys().length)
-            return;
-        const key = keys()[index];
-        if (key)
-            remove(key);
-    }
-    function insert(index, value) {
-        const len = keys().length;
-        if (index < 0 || index > len)
-            return;
-        const key = generateKey();
-        const currentLength = len;
-        // Remap meta-state so indices at and after insert point shift up
-        const oldIndices = [];
-        const newIndices = [];
-        for (let i = index; i < currentLength; i++) {
-            oldIndices.push(i);
-            newIndices.push(i + 1);
-        }
-        if (oldIndices.length > 0) {
-            remapMetaState(oldIndices, newIndices);
-        }
-        keys.update((prev) => {
-            const next = [...prev];
-            next.splice(index, 0, key);
-            return next;
-        });
-        values.update((prev) => {
-            const next = new Map(prev);
-            next.set(key, value);
-            return next;
-        });
-        options.onMutate?.();
-    }
-    function move(fromIndex, toIndex) {
-        const len = keys().length;
-        if (fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len)
-            return;
-        if (fromIndex === toIndex)
-            return;
-        // Build index remapping for meta-state
-        const oldIndices = [];
-        const newIndices = [];
-        if (fromIndex < toIndex) {
-            // Moving forward: items between shift down
-            oldIndices.push(fromIndex);
-            newIndices.push(toIndex);
-            for (let i = fromIndex + 1; i <= toIndex; i++) {
-                oldIndices.push(i);
-                newIndices.push(i - 1);
-            }
-        }
-        else {
-            // Moving backward: items between shift up
-            oldIndices.push(fromIndex);
-            newIndices.push(toIndex);
-            for (let i = toIndex; i < fromIndex; i++) {
-                oldIndices.push(i);
-                newIndices.push(i + 1);
-            }
-        }
-        remapMetaState(oldIndices, newIndices);
-        keys.update((prev) => {
-            const next = [...prev];
-            const [item] = next.splice(fromIndex, 1);
-            next.splice(toIndex, 0, item);
-            return next;
-        });
-        options.onMutate?.();
-    }
-    function swap(indexA, indexB) {
-        const len = keys().length;
-        if (indexA < 0 || indexA >= len || indexB < 0 || indexB >= len)
-            return;
-        if (indexA === indexB)
-            return;
-        // Remap meta-state for swap
-        remapMetaState([indexA, indexB], [indexB, indexA]);
-        keys.update((prev) => {
-            const next = [...prev];
-            [next[indexA], next[indexB]] = [next[indexB], next[indexA]];
-            return next;
-        });
-        options.onMutate?.();
-    }
-    function replace(newValues) {
-        const newKeys = newValues.map(() => generateKey());
-        // Clear all meta-state for this array (full replacement)
-        if (options.errors) {
-            options.errors.update((prev) => {
-                const next = {};
-                for (const [path, message] of Object.entries(prev)) {
-                    if (!path.startsWith(`${basePath}[`)) {
-                        next[path] = message;
-                    }
-                }
-                return next;
-            });
-        }
-        if (options.touchedSet) {
-            options.touchedSet.update((prev) => {
-                const next = new Set();
-                for (const path of prev) {
-                    if (!path.startsWith(`${basePath}[`)) {
-                        next.add(path);
-                    }
-                }
-                return next;
-            });
-        }
-        if (options.dirtySet) {
-            options.dirtySet.update((prev) => {
-                const next = new Set();
-                for (const path of prev) {
-                    if (!path.startsWith(`${basePath}[`)) {
-                        next.add(path);
-                    }
-                }
-                return next;
-            });
-        }
-        keys.set(newKeys);
-        values.set(new Map(newKeys.map((key, i) => [key, newValues[i]])));
-        options.onMutate?.();
-    }
-    function update(key, value) {
-        values.update((prev) => {
-            const next = new Map(prev);
-            next.set(key, value);
-            return next;
-        });
-        options.onMutate?.();
-    }
-    function updateAt(index, value) {
-        if (index < 0 || index >= keys().length)
-            return;
-        const key = keys()[index];
-        if (key)
-            update(key, value);
-    }
-    function clear() {
-        // Clear meta-state to prevent stale errors/touched/dirty
-        // on new items appended after clear(). Delegate to replace([])
-        // which already handles full meta-state cleanup.
-        replace([]);
-    }
-    // Cleanup
-    if (options.scope) {
-        options.scope.onCleanup(() => {
-            clear();
-        });
-    }
-    return {
-        fields,
-        append,
-        remove,
-        removeAt,
-        insert,
-        move,
-        swap,
-        replace,
-        update,
-        updateAt,
-        clear,
-        length,
-        _getIndex,
-        _translatePath,
-    };
+/**
+ * Convenience factory for the common schema-first case.
+ * Equivalent to `createForm({ ...options, schema })`.
+ */
+export function createFormFromSchema(schema, options = {}) {
+    return createForm({ ...options, schema });
 }

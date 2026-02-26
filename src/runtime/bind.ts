@@ -11,10 +11,39 @@ import { effect, createScope, withScope, isInDevMode, signal, Signal, computeVir
 import { schedule, withSchedulerPriority, type SchedulerPriority } from '../core/scheduler.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
-import type { Component, SetupContext, ComponentDefinition } from './component.js';
-import { isComponent, normalizePropDef, coercePropValue, kebabToCamel, camelToKebab } from './component.js';
+import type { Component, TypedSetupContext, ComponentDefinition } from './component.js';
+import { isComponent, camelToKebab } from './component.js';
 import { observeLazyElement, getLazyComponent } from './lazy.js';
 import { bindBoundary } from './boundary.js';
+import {
+  ensureButtonTypeForSelector,
+  queryIncludingRoot,
+  updateNestedArrayDataPaths,
+} from './array-directive-dom.js';
+import { bindSlotFragments, extractSlots, fillSlots } from './internal/components/component-slots.js';
+import { resolveComponentProps as resolveComponentPropsFromElement } from './internal/components/component-props.js';
+import { createListCloneRegistry } from './internal/list/list-clone-registry.js';
+import { createListBoundCloneFactory } from './internal/list/list-clone-factory.js';
+import { createListKeyResolver } from './internal/list/list-keying.js';
+import { type ListItemMetadataSignals, updateListItemMetadata } from './internal/list/list-metadata.js';
+import { insertOrderedClonesBefore, recreateChangedOrderedClones, removeMissingKeys } from './internal/list/list-reconcile.js';
+import { createFrameRerender, createQueuedListRerender, runWithResolvedPriority } from './internal/list/list-scheduler.js';
+import {
+  clearVirtualListApi,
+  clampVirtual,
+  createVirtualSpacer,
+  getElementPositionPath,
+  getVirtualRestoreKey,
+  getVirtualScrollRestoreValue,
+  readVirtualCallbackOption,
+  readVirtualHeightOption,
+  readVirtualListApi,
+  readVirtualMeasureOption,
+  readVirtualNumberOption,
+  setVirtualListApi,
+  setVirtualScrollRestoreValue,
+  VirtualHeightsIndex,
+} from './internal/virtual/virtual-list-helpers.js';
 
 // ============================================================================
 // Types
@@ -2073,323 +2102,10 @@ function bindMatch(
 // d-virtual-each Directive
 // ============================================================================
 
-function readVirtualNumberOption(
-  raw: string | null,
-  ctx: BindContext,
-  label: string
-): number | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  const asNumber = Number(trimmed);
-  if (Number.isFinite(asNumber)) return asNumber;
-
-  const fromCtx = ctx[trimmed];
-  if (fromCtx === undefined) {
-    warn(`${label}: "${trimmed}" not found in context`);
-    return null;
-  }
-
-  const resolved = resolve(fromCtx);
-  if (typeof resolved === 'number' && Number.isFinite(resolved)) return resolved;
-
-  const numericFromString = Number(resolved);
-  if (Number.isFinite(numericFromString)) return numericFromString;
-
-  warn(`${label}: "${trimmed}" must resolve to a finite number`);
-  return null;
-}
-
-function readVirtualHeightOption(raw: string | null, ctx: BindContext): string | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  const asNumber = Number(trimmed);
-  if (Number.isFinite(asNumber)) return `${asNumber}px`;
-
-  const fromCtx = ctx[trimmed];
-  if (fromCtx !== undefined) {
-    const resolved = resolve(fromCtx);
-    if (typeof resolved === 'number' && Number.isFinite(resolved)) return `${resolved}px`;
-    if (typeof resolved === 'string' && resolved.trim()) return resolved.trim();
-  }
-
-  return trimmed;
-}
-
-function readVirtualMeasureOption(raw: string | null, ctx: BindContext): boolean {
-  if (!raw) return false;
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  if (trimmed.toLowerCase() === 'auto') return true;
-
-  const fromCtx = ctx[trimmed];
-  if (fromCtx === undefined) return false;
-  const resolved = resolve(fromCtx);
-  if (resolved === true) return true;
-  if (typeof resolved === 'string' && resolved.trim().toLowerCase() === 'auto') return true;
-  return false;
-}
-
-function readVirtualCallbackOption(
-  raw: string | null,
-  ctx: BindContext,
-  label: string
-): (() => unknown) | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  const fromCtx = ctx[trimmed];
-  if (fromCtx === undefined) {
-    warn(`${label}: "${trimmed}" not found in context`);
-    return null;
-  }
-
-  if (typeof fromCtx === 'function' && !isSignal(fromCtx)) {
-    return fromCtx as () => unknown;
-  }
-
-  if (isSignal(fromCtx)) {
-    const resolved = fromCtx();
-    if (typeof resolved === 'function') {
-      return resolved as () => unknown;
-    }
-  }
-
-  warn(`${label}: "${trimmed}" must resolve to a function`);
-  return null;
-}
-
-function createVirtualSpacer(template: Element, kind: 'top' | 'bottom'): HTMLElement {
-  const spacer = template.cloneNode(false) as HTMLElement;
-
-  spacer.removeAttribute('id');
-  spacer.removeAttribute('class');
-
-  for (const attr of Array.from(spacer.attributes)) {
-    if (attr.name.startsWith('d-')) {
-      spacer.removeAttribute(attr.name);
-    }
-  }
-
-  spacer.textContent = '';
-  spacer.setAttribute('aria-hidden', 'true');
-  spacer.setAttribute('data-dalila-virtual-spacer', kind);
-  spacer.style.height = '0px';
-  spacer.style.margin = '0';
-  spacer.style.padding = '0';
-  spacer.style.border = '0';
-  spacer.style.pointerEvents = 'none';
-  spacer.style.visibility = 'hidden';
-  spacer.style.listStyle = 'none';
-
-  return spacer;
-}
-
-const virtualScrollRestoreCache = new Map<string, number>();
-const VIRTUAL_SCROLL_RESTORE_CACHE_MAX_ENTRIES = 256;
-
-function getVirtualScrollRestoreValue(key: string): number | undefined {
-  const value = virtualScrollRestoreCache.get(key);
-  if (value === undefined) return undefined;
-  // Touch entry to keep LRU ordering.
-  virtualScrollRestoreCache.delete(key);
-  virtualScrollRestoreCache.set(key, value);
-  return value;
-}
-
-function setVirtualScrollRestoreValue(key: string, value: number): void {
-  virtualScrollRestoreCache.delete(key);
-  virtualScrollRestoreCache.set(key, value);
-  while (virtualScrollRestoreCache.size > VIRTUAL_SCROLL_RESTORE_CACHE_MAX_ENTRIES) {
-    const oldestKey = virtualScrollRestoreCache.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    virtualScrollRestoreCache.delete(oldestKey);
-  }
-}
-
-function clampVirtual(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function getElementPositionPath(el: Element): string {
-  const parts: string[] = [];
-  let current: Element | null = el;
-
-  while (current) {
-    const tag = current.tagName.toLowerCase();
-    const parentEl: Element | null = current.parentElement;
-    if (!parentEl) {
-      parts.push(tag);
-      break;
-    }
-
-    let index = 1;
-    let sib: Element | null = current.previousElementSibling;
-    while (sib) {
-      index++;
-      sib = sib.previousElementSibling;
-    }
-
-    parts.push(`${tag}:${index}`);
-    current = parentEl;
-  }
-
-  return parts.reverse().join('>');
-}
-
-const virtualRestoreDocumentIds = new WeakMap<Document, number>();
-let nextVirtualRestoreDocumentId = 0;
-
-function getVirtualRestoreDocumentId(doc: Document): number {
-  const existing = virtualRestoreDocumentIds.get(doc);
-  if (existing !== undefined) return existing;
-  const next = ++nextVirtualRestoreDocumentId;
-  virtualRestoreDocumentIds.set(doc, next);
-  return next;
-}
-
-function getVirtualRestoreKey(
-  doc: Document,
-  templatePath: string,
-  scrollContainer: HTMLElement | null,
-  bindingName: string,
-  keyBinding: string | null
-): string {
-  const locationPath = typeof window !== 'undefined'
-    ? `${window.location.pathname}${window.location.search}`
-    : '';
-  const containerIdentity = scrollContainer?.id
-    ? `#${scrollContainer.id}`
-    : (scrollContainer ? getElementPositionPath(scrollContainer) : '');
-  const docId = getVirtualRestoreDocumentId(doc);
-  return `${docId}|${locationPath}|${bindingName}|${keyBinding ?? ''}|${containerIdentity}|${templatePath}`;
-}
-
-class VirtualHeightsIndex {
-  private itemCount = 0;
-  private estimatedHeight = 1;
-  private tree: number[] = [0];
-  private overrides = new Map<number, number>();
-
-  constructor(itemCount: number, estimatedHeight: number) {
-    this.reset(itemCount, estimatedHeight);
-  }
-
-  get count(): number {
-    return this.itemCount;
-  }
-
-  snapshotOverrides(): Map<number, number> {
-    return new Map(this.overrides);
-  }
-
-  reset(itemCount: number, estimatedHeight: number, seed?: Map<number, number>): void {
-    this.itemCount = Number.isFinite(itemCount) ? Math.max(0, Math.floor(itemCount)) : 0;
-    this.estimatedHeight = Number.isFinite(estimatedHeight) ? Math.max(1, estimatedHeight) : 1;
-    this.tree = new Array(this.itemCount + 1).fill(0);
-    this.overrides.clear();
-
-    for (let i = 0; i < this.itemCount; i++) {
-      this.addAt(i + 1, this.estimatedHeight);
-    }
-
-    if (!seed) return;
-    for (const [index, height] of seed.entries()) {
-      if (index < 0 || index >= this.itemCount) continue;
-      this.set(index, height);
-    }
-  }
-
-  set(index: number, height: number): boolean {
-    if (!Number.isFinite(height) || height <= 0) return false;
-    if (index < 0 || index >= this.itemCount) return false;
-
-    const next = Math.max(1, height);
-    const current = this.get(index);
-    if (Math.abs(next - current) < 0.5) return false;
-
-    this.addAt(index + 1, next - current);
-    if (Math.abs(next - this.estimatedHeight) < 0.5) {
-      this.overrides.delete(index);
-    } else {
-      this.overrides.set(index, next);
-    }
-    return true;
-  }
-
-  get(index: number): number {
-    if (index < 0 || index >= this.itemCount) return this.estimatedHeight;
-    return this.overrides.get(index) ?? this.estimatedHeight;
-  }
-
-  prefix(endExclusive: number): number {
-    if (endExclusive <= 0) return 0;
-    const clampedEnd = Math.min(this.itemCount, Math.max(0, Math.floor(endExclusive)));
-    let i = clampedEnd;
-    let sum = 0;
-    while (i > 0) {
-      sum += this.tree[i];
-      i -= i & -i;
-    }
-    return sum;
-  }
-
-  total(): number {
-    return this.prefix(this.itemCount);
-  }
-
-  lowerBound(target: number): number {
-    if (this.itemCount === 0 || target <= 0) return 0;
-
-    let idx = 0;
-    let bit = 1;
-    while ((bit << 1) <= this.itemCount) bit <<= 1;
-
-    let sum = 0;
-    while (bit > 0) {
-      const next = idx + bit;
-      if (next <= this.itemCount && sum + this.tree[next] < target) {
-        idx = next;
-        sum += this.tree[next];
-      }
-      bit >>= 1;
-    }
-    return Math.min(this.itemCount, idx);
-  }
-
-  indexAtOffset(offset: number): number {
-    if (this.itemCount === 0) return 0;
-    if (!Number.isFinite(offset) || offset <= 0) return 0;
-    const totalHeight = this.total();
-    if (offset >= totalHeight) return this.itemCount - 1;
-    const idx = this.lowerBound(offset + 0.0001);
-    return clampVirtual(idx, 0, this.itemCount - 1);
-  }
-
-  private addAt(treeIndex: number, delta: number): void {
-    let i = treeIndex;
-    while (i <= this.itemCount) {
-      this.tree[i] += delta;
-      i += i & -i;
-    }
-  }
-}
-
 type VirtualListApi = VirtualListController;
 
-type VirtualHostElement = HTMLElement & { __dalilaVirtualList?: VirtualListApi };
-
-function readVirtualListApi(target: Element | null): VirtualListApi | null {
-  if (!target) return null;
-  return (target as VirtualHostElement).__dalilaVirtualList ?? null;
-}
-
 export function getVirtualListController(target: Element | null): VirtualListController | null {
-  return readVirtualListApi(target);
+  return readVirtualListApi<VirtualListApi>(target);
 }
 
 export function scrollToVirtualIndex(
@@ -2397,7 +2113,7 @@ export function scrollToVirtualIndex(
   index: number,
   options?: VirtualScrollToIndexOptions
 ): boolean {
-  const controller = readVirtualListApi(target);
+  const controller = readVirtualListApi<VirtualListApi>(target);
   if (!controller) return false;
   controller.scrollToIndex(index, options);
   return true;
@@ -2426,14 +2142,15 @@ function bindVirtualEach(
 
     const itemHeightBinding = normalizeBinding(el.getAttribute('d-virtual-item-height'));
     const itemHeightRaw = itemHeightBinding ?? el.getAttribute('d-virtual-item-height');
-    const itemHeightValue = readVirtualNumberOption(itemHeightRaw, ctx, 'd-virtual-item-height');
+    const itemHeightValue = readVirtualNumberOption(itemHeightRaw, ctx, 'd-virtual-item-height', { warn, resolve });
     const fixedItemHeight = Number.isFinite(itemHeightValue as number) && (itemHeightValue as number) > 0
       ? (itemHeightValue as number)
       : NaN;
 
     const dynamicHeight = readVirtualMeasureOption(
       normalizeBinding(el.getAttribute('d-virtual-measure')) ?? el.getAttribute('d-virtual-measure'),
-      ctx
+      ctx,
+      { resolve }
     );
 
     if (!dynamicHeight && (!Number.isFinite(fixedItemHeight) || fixedItemHeight <= 0)) {
@@ -2454,7 +2171,8 @@ function bindVirtualEach(
     const estimatedHeightValue = readVirtualNumberOption(
       estimatedHeightRaw,
       ctx,
-      'd-virtual-estimated-height'
+      'd-virtual-estimated-height',
+      { warn, resolve }
     );
     const estimatedItemHeight = Number.isFinite(estimatedHeightValue as number) && (estimatedHeightValue as number) > 0
       ? (estimatedHeightValue as number)
@@ -2462,20 +2180,22 @@ function bindVirtualEach(
 
     const overscanBinding = normalizeBinding(el.getAttribute('d-virtual-overscan'));
     const overscanRaw = overscanBinding ?? el.getAttribute('d-virtual-overscan');
-    const overscanValue = readVirtualNumberOption(overscanRaw, ctx, 'd-virtual-overscan');
+    const overscanValue = readVirtualNumberOption(overscanRaw, ctx, 'd-virtual-overscan', { warn, resolve });
     const overscan = Number.isFinite(overscanValue as number)
       ? Math.max(0, Math.floor(overscanValue as number))
       : 6;
 
     const viewportHeight = readVirtualHeightOption(
       normalizeBinding(el.getAttribute('d-virtual-height')) ?? el.getAttribute('d-virtual-height'),
-      ctx
+      ctx,
+      { resolve }
     );
 
     const onEndReached = readVirtualCallbackOption(
       normalizeBinding(el.getAttribute('d-virtual-infinite')) ?? el.getAttribute('d-virtual-infinite'),
       ctx,
-      'd-virtual-infinite'
+      'd-virtual-infinite',
+      { warn, isSignal }
     );
 
     let binding = ctx[bindingName];
@@ -2523,151 +2243,49 @@ function bindVirtualEach(
       scrollContainer.scrollTop = Math.max(0, savedScrollTop as number);
     }
 
-    const clonesByKey = new Map<string, Element>();
-    const disposesByKey = new Map<string, DisposeFunction>();
     const observedElements = new Set<Element>();
-    type MetadataSignals = {
-      $index: Signal<number>;
-      $count: Signal<number>;
-      $first: Signal<boolean>;
-      $last: Signal<boolean>;
-      $odd: Signal<boolean>;
-      $even: Signal<boolean>;
-    };
-    const metadataByKey = new Map<string, MetadataSignals>();
-    const itemsByKey = new Map<string, unknown>();
-    const objectKeyIds = new WeakMap<object, number>();
-    const symbolKeyIds = new Map<symbol, number>();
-    let nextObjectKeyId = 0;
-    let nextSymbolKeyId = 0;
-    const missingKeyWarned = new Set<string>();
     let warnedNonArray = false;
     let warnedViewportFallback = false;
     let heightsIndex = dynamicHeight ? new VirtualHeightsIndex(0, estimatedItemHeight) : null;
-
-    const getObjectKeyId = (value: object): number => {
-      const existing = objectKeyIds.get(value);
-      if (existing !== undefined) return existing;
-      const next = ++nextObjectKeyId;
-      objectKeyIds.set(value, next);
-      return next;
-    };
-
-    const keyValueToString = (value: unknown, index: number): string => {
-      if (value === null || value === undefined) return `idx:${index}`;
-      const type = typeof value;
-      if (type === 'string' || type === 'number' || type === 'boolean' || type === 'bigint') {
-        return `${type}:${String(value)}`;
-      }
-      if (type === 'symbol') {
-        const sym = value as symbol;
-        let id = symbolKeyIds.get(sym);
-        if (id === undefined) {
-          id = ++nextSymbolKeyId;
-          symbolKeyIds.set(sym, id);
-        }
-        return `sym:${id}`;
-      }
-      if (type === 'object' || type === 'function') {
-        return `obj:${getObjectKeyId(value as object)}`;
-      }
-      return `idx:${index}`;
-    };
-
-    const readKeyValue = (item: unknown, index: number): unknown => {
-      if (keyBinding) {
-        if (keyBinding === '$index') return index;
-        if (keyBinding === 'item') return item;
-        if (typeof item === 'object' && item !== null && keyBinding in (item as Record<string, unknown>)) {
-          return (item as Record<string, unknown>)[keyBinding];
-        }
-        const warnId = `${keyBinding}:${index}`;
-        if (!missingKeyWarned.has(warnId)) {
-          warn(`d-virtual-each: key "${keyBinding}" not found on item at index ${index}. Falling back to index key.`);
-          missingKeyWarned.add(warnId);
-        }
-        return index;
-      }
-
-      if (typeof item === 'object' && item !== null) {
-        const obj = item as Record<string, unknown>;
-        if ('id' in obj) return obj.id;
-        if ('key' in obj) return obj.key;
-      }
-      return index;
-    };
+    const { keyValueToString, readKeyValue } = createListKeyResolver({
+      keyBinding,
+      itemAliases: ['item'],
+      directiveName: 'd-virtual-each',
+      warn,
+    });
 
     let rowResizeObserver: ResizeObserver | null = null;
+    const registry = createListCloneRegistry<ListItemMetadataSignals>({
+      onBeforeRemoveClone: (clone) => {
+        if (rowResizeObserver && observedElements.has(clone)) {
+          rowResizeObserver.unobserve(clone);
+          observedElements.delete(clone);
+        }
+      },
+    });
+    const { clonesByKey, metadataByKey, itemsByKey } = registry;
 
-    function createClone(key: string, item: unknown, index: number, count: number): Element {
-      const clone = template.cloneNode(true) as Element;
-
-      const itemCtx = Object.create(ctx) as BindContext;
-      if (typeof item === 'object' && item !== null) {
-        Object.assign(itemCtx, item as Record<string, unknown>);
-      }
-
-      const metadata: MetadataSignals = {
-        $index: signal(index),
-        $count: signal(count),
-        $first: signal(index === 0),
-        $last: signal(index === count - 1),
-        $odd: signal(index % 2 !== 0),
-        $even: signal(index % 2 === 0),
-      };
-      metadataByKey.set(key, metadata);
-      itemsByKey.set(key, item);
-
-      itemCtx.item = item;
-      itemCtx.key = key;
-      itemCtx.$index = metadata.$index;
-      itemCtx.$count = metadata.$count;
-      itemCtx.$first = metadata.$first;
-      itemCtx.$last = metadata.$last;
-      itemCtx.$odd = metadata.$odd;
-      itemCtx.$even = metadata.$even;
-
-      clone.setAttribute('data-dalila-internal-bound', '');
-      clone.setAttribute('data-dalila-virtual-index', String(index));
-      const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
-      disposesByKey.set(key, dispose);
-      clonesByKey.set(key, clone);
-
-      return clone;
-    }
+    const createClone = createListBoundCloneFactory({
+      template,
+      parentCtx: ctx,
+      alias: 'item',
+      decorateClone: (clone, index) => {
+        clone.setAttribute('data-dalila-virtual-index', String(index));
+      },
+      bindClone: (clone, itemCtx) => bind(clone, itemCtx as BindContext, { _skipLifecycle: true }),
+      register: registry.register,
+    });
 
     function updateCloneMetadata(key: string, index: number, count: number): void {
       const metadata = metadataByKey.get(key);
-      if (metadata) {
-        metadata.$index.set(index);
-        metadata.$count.set(count);
-        metadata.$first.set(index === 0);
-        metadata.$last.set(index === count - 1);
-        metadata.$odd.set(index % 2 !== 0);
-        metadata.$even.set(index % 2 === 0);
-      }
+      updateListItemMetadata(metadata, index, count);
       const clone = clonesByKey.get(key);
       if (clone) {
         clone.setAttribute('data-dalila-virtual-index', String(index));
       }
     }
 
-    function removeKey(key: string): void {
-      const clone = clonesByKey.get(key);
-      if (clone && rowResizeObserver && observedElements.has(clone)) {
-        rowResizeObserver.unobserve(clone);
-        observedElements.delete(clone);
-      }
-      clone?.remove();
-      clonesByKey.delete(key);
-      metadataByKey.delete(key);
-      itemsByKey.delete(key);
-      const dispose = disposesByKey.get(key);
-      if (dispose) {
-        dispose();
-        disposesByKey.delete(key);
-      }
-    }
+    const removeKey = (key: string) => registry.removeKey(key);
 
     let currentItems: unknown[] = [];
     let lastEndReachedCount = -1;
@@ -2811,26 +2429,14 @@ function bindVirtualEach(
         orderedKeys.push(key);
       }
 
-      for (let i = 0; i < orderedClones.length; i++) {
-        const key = orderedKeys[i];
-        if (!changedKeys.has(key)) continue;
+      recreateChangedOrderedClones(orderedClones, orderedKeys, changedKeys, (key, orderedIndex) => {
         removeKey(key);
-        orderedClones[i] = createClone(key, items[start + i], start + i, items.length);
-      }
+        return createClone(key, items[start + orderedIndex], start + orderedIndex, items.length);
+      });
 
-      for (const key of Array.from(clonesByKey.keys())) {
-        if (nextKeys.has(key)) continue;
-        removeKey(key);
-      }
+      removeMissingKeys(clonesByKey.keys(), nextKeys, removeKey);
 
-      let referenceNode: Node = bottomSpacer;
-      for (let i = orderedClones.length - 1; i >= 0; i--) {
-        const clone = orderedClones[i];
-        if (clone.nextSibling !== referenceNode) {
-          parent.insertBefore(clone, referenceNode);
-        }
-        referenceNode = clone;
-      }
+      insertOrderedClonesBefore(parent, orderedClones, bottomSpacer);
 
       if (dynamicHeight && rowResizeObserver) {
         const nextObserved = new Set<Element>(orderedClones);
@@ -2851,21 +2457,13 @@ function bindVirtualEach(
 
     let framePending = false;
     let virtualListDisposed = false;
-
-    const scheduleRender = () => {
-      if (virtualListDisposed) return;
-      if (framePending) return;
-      framePending = true;
-      const listRenderPriority = resolveListRenderPriority();
-
-      schedule(() => {
-        framePending = false;
-        if (virtualListDisposed) return;
-        withSchedulerPriority(listRenderPriority, () => {
-          renderVirtualList(currentItems);
-        });
-      }, { priority: listRenderPriority });
-    };
+    const scheduleRender = createFrameRerender({
+      resolvePriority: resolveListRenderPriority,
+      isDisposed: () => virtualListDisposed,
+      isPending: () => framePending,
+      setPending: (pending) => { framePending = pending; },
+      render: () => renderVirtualList(currentItems),
+    });
 
     const onScroll = () => scheduleRender();
     const onResize = () => scheduleRender();
@@ -2940,7 +2538,7 @@ function bindVirtualEach(
     };
 
     if (scrollContainer) {
-      (scrollContainer as VirtualHostElement).__dalilaVirtualList = virtualApi;
+      setVirtualListApi(scrollContainer, virtualApi);
     }
 
     if (isSignal(binding)) {
@@ -2959,20 +2557,14 @@ function bindVirtualEach(
         }
         if (!hasRenderedInitialSignalPass) {
           hasRenderedInitialSignalPass = true;
-          const listRenderPriority = resolveListRenderPriority();
-          withSchedulerPriority(listRenderPriority, () => {
-            renderVirtualList(currentItems);
-          });
+          runWithResolvedPriority(resolveListRenderPriority, () => renderVirtualList(currentItems));
           return;
         }
         scheduleRender();
       });
     } else if (Array.isArray(binding)) {
       replaceItems(binding);
-      const listRenderPriority = resolveListRenderPriority();
-      withSchedulerPriority(listRenderPriority, () => {
-        renderVirtualList(currentItems);
-      });
+      runWithResolvedPriority(resolveListRenderPriority, () => renderVirtualList(currentItems));
     } else {
       warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
     }
@@ -2992,10 +2584,7 @@ function bindVirtualEach(
       observedElements.clear();
       if (scrollContainer) {
         setVirtualScrollRestoreValue(restoreKey, scrollContainer.scrollTop);
-        const host = scrollContainer as VirtualHostElement;
-        if (host.__dalilaVirtualList === virtualApi) {
-          delete host.__dalilaVirtualList;
-        }
+        clearVirtualListApi(scrollContainer, virtualApi);
       }
       for (const key of Array.from(clonesByKey.keys())) removeKey(key);
       topSpacer.remove();
@@ -3051,131 +2640,26 @@ function bindEach(
     el.removeAttribute('d-key');
 
     const template = el;
-    const clonesByKey = new Map<string, Element>();
-    const disposesByKey = new Map<string, DisposeFunction>();
-    type MetadataSignals = {
-      $index: Signal<number>;
-      $count: Signal<number>;
-      $first: Signal<boolean>;
-      $last: Signal<boolean>;
-      $odd: Signal<boolean>;
-      $even: Signal<boolean>;
-    };
-    const metadataByKey = new Map<string, MetadataSignals>();
-    const itemsByKey = new Map<string, unknown>();
-    const objectKeyIds = new WeakMap<object, number>();
-    const symbolKeyIds = new Map<symbol, number>();
-    let nextObjectKeyId = 0;
-    let nextSymbolKeyId = 0;
-    const missingKeyWarned = new Set<string>();
+    const registry = createListCloneRegistry<ListItemMetadataSignals>();
+    const { clonesByKey, metadataByKey, itemsByKey } = registry;
+    const { keyValueToString, readKeyValue } = createListKeyResolver({
+      keyBinding,
+      itemAliases: [alias, 'item'],
+      directiveName: 'd-each',
+      warn,
+    });
 
-    const getObjectKeyId = (value: object): number => {
-      const existing = objectKeyIds.get(value);
-      if (existing !== undefined) return existing;
-      const next = ++nextObjectKeyId;
-      objectKeyIds.set(value, next);
-      return next;
-    };
-
-    const keyValueToString = (value: unknown, index: number): string => {
-      if (value === null || value === undefined) return `idx:${index}`;
-      const type = typeof value;
-      if (type === 'string' || type === 'number' || type === 'boolean' || type === 'bigint') {
-        return `${type}:${String(value)}`;
-      }
-      if (type === 'symbol') {
-        const sym = value as symbol;
-        let id = symbolKeyIds.get(sym);
-        if (id === undefined) {
-          id = ++nextSymbolKeyId;
-          symbolKeyIds.set(sym, id);
-        }
-        return `sym:${id}`;
-      }
-      if (type === 'object' || type === 'function') {
-        return `obj:${getObjectKeyId(value as object)}`;
-      }
-      return `idx:${index}`;
-    };
-
-    const readKeyValue = (item: unknown, index: number): unknown => {
-      if (keyBinding) {
-        if (keyBinding === '$index') return index;
-        if (keyBinding === alias || keyBinding === 'item') return item;
-        if (typeof item === 'object' && item !== null && keyBinding in (item as Record<string, unknown>)) {
-          return (item as Record<string, unknown>)[keyBinding];
-        }
-        const warnId = `${keyBinding}:${index}`;
-        if (!missingKeyWarned.has(warnId)) {
-          warn(`d-each: key "${keyBinding}" not found on item at index ${index}. Falling back to index key.`);
-          missingKeyWarned.add(warnId);
-        }
-        return index;
-      }
-
-      if (typeof item === 'object' && item !== null) {
-        const obj = item as Record<string, unknown>;
-        if ('id' in obj) return obj.id;
-        if ('key' in obj) return obj.key;
-      }
-      return index;
-    };
-
-    function createClone(key: string, item: unknown, index: number, count: number): Element {
-      const clone = template.cloneNode(true) as Element;
-
-      // Inherit parent ctx via prototype so values and handlers defined
-      // outside the loop remain accessible inside each iteration.
-      const itemCtx = Object.create(ctx) as BindContext;
-      if (typeof item === 'object' && item !== null) {
-        Object.assign(itemCtx, item as Record<string, unknown>);
-      }
-
-      const metadata: MetadataSignals = {
-        $index: signal(index),
-        $count: signal(count),
-        $first: signal(index === 0),
-        $last: signal(index === count - 1),
-        $odd: signal(index % 2 !== 0),
-        $even: signal(index % 2 === 0),
-      };
-      metadataByKey.set(key, metadata);
-      itemsByKey.set(key, item);
-
-      // Expose item under the alias name + positional / collection helpers.
-      itemCtx[alias] = item;
-      if (alias !== 'item') {
-        itemCtx.item = item; // backward compat
-      }
-      itemCtx.key = key;
-      itemCtx.$index = metadata.$index;
-      itemCtx.$count = metadata.$count;
-      itemCtx.$first = metadata.$first;
-      itemCtx.$last = metadata.$last;
-      itemCtx.$odd = metadata.$odd;
-      itemCtx.$even = metadata.$even;
-
-      // Mark BEFORE bind() so the parent's subsequent global passes
-      // (text, attrs, events …) skip this subtree entirely.
-      clone.setAttribute('data-dalila-internal-bound', '');
-
-      const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
-      disposesByKey.set(key, dispose);
-      clonesByKey.set(key, clone);
-
-      return clone;
-    }
+    const createClone = createListBoundCloneFactory({
+      template,
+      parentCtx: ctx,
+      alias,
+      bindClone: (clone, itemCtx) => bind(clone, itemCtx as BindContext, { _skipLifecycle: true }),
+      register: registry.register,
+    });
 
     function updateCloneMetadata(key: string, index: number, count: number): void {
       const metadata = metadataByKey.get(key);
-      if (metadata) {
-        metadata.$index.set(index);
-        metadata.$count.set(count);
-        metadata.$first.set(index === 0);
-        metadata.$last.set(index === count - 1);
-        metadata.$odd.set(index % 2 !== 0);
-        metadata.$even.set(index % 2 === 0);
-      }
+      updateListItemMetadata(metadata, index, count);
     }
 
     function renderList(items: unknown[]) {
@@ -3207,75 +2691,30 @@ function bindEach(
         orderedKeys.push(key);
       }
 
-      for (let i = 0; i < orderedClones.length; i++) {
-        const clone = orderedClones[i];
-        const item = items[i];
-        const key = orderedKeys[i];
-        if (!changedKeys.has(key)) continue;
+      const removeKey = (key: string): void => registry.removeKey(key);
 
-        clone.remove();
-        const dispose = disposesByKey.get(key);
-        if (dispose) {
-          dispose();
-          disposesByKey.delete(key);
-        }
-        clonesByKey.delete(key);
-        metadataByKey.delete(key);
-        itemsByKey.delete(key);
+      recreateChangedOrderedClones(orderedClones, orderedKeys, changedKeys, (key, orderedIndex) => {
+        removeKey(key);
+        return createClone(key, items[orderedIndex], orderedIndex, items.length);
+      });
 
-        orderedClones[i] = createClone(key, item, i, items.length);
-      }
-
-      for (const [key, clone] of clonesByKey) {
-        if (nextKeys.has(key)) continue;
-        clone.remove();
-        clonesByKey.delete(key);
-        metadataByKey.delete(key);
-        itemsByKey.delete(key);
-        const dispose = disposesByKey.get(key);
-        if (dispose) {
-          dispose();
-          disposesByKey.delete(key);
-        }
-      }
+      removeMissingKeys(clonesByKey.keys(), nextKeys, removeKey);
 
       const parent = comment.parentNode;
       if (!parent) return;
 
-      let referenceNode: Node = comment;
-      for (let i = orderedClones.length - 1; i >= 0; i--) {
-        const clone = orderedClones[i];
-        if (clone.nextSibling !== referenceNode) {
-          parent.insertBefore(clone, referenceNode);
-        }
-        referenceNode = clone;
-      }
+      insertOrderedClonesBefore(parent, orderedClones, comment);
     }
 
     let lowPriorityRenderQueued = false;
     let listRenderDisposed = false;
-    let pendingListItems: unknown[] | null = null;
-    const scheduleLowPriorityListRender = (items: unknown[]) => {
-      if (listRenderDisposed) return;
-      const listRenderPriority = resolveListRenderPriority();
-      pendingListItems = items;
-      if (lowPriorityRenderQueued) return;
-
-      lowPriorityRenderQueued = true;
-      schedule(() => {
-        lowPriorityRenderQueued = false;
-        if (listRenderDisposed) {
-          pendingListItems = null;
-          return;
-        }
-        const next = pendingListItems;
-        pendingListItems = null;
-        if (!next) return;
-        withSchedulerPriority(listRenderPriority, () => {
-          renderList(next);
-        });
-      }, { priority: listRenderPriority });
-    };
+    const scheduleLowPriorityListRender = createQueuedListRerender<unknown[]>({
+      resolvePriority: resolveListRenderPriority,
+      isDisposed: () => listRenderDisposed,
+      isQueued: () => lowPriorityRenderQueued,
+      setQueued: (queued) => { lowPriorityRenderQueued = queued; },
+      render: renderList,
+    });
 
     if (isSignal(binding)) {
       let hasRenderedInitialSignalPass = false;
@@ -3285,19 +2724,13 @@ function bindEach(
         const items = Array.isArray(value) ? value : [];
         if (!hasRenderedInitialSignalPass) {
           hasRenderedInitialSignalPass = true;
-          const listRenderPriority = resolveListRenderPriority();
-          withSchedulerPriority(listRenderPriority, () => {
-            renderList(items);
-          });
+          runWithResolvedPriority(resolveListRenderPriority, () => renderList(items));
           return;
         }
         scheduleLowPriorityListRender(items);
       });
     } else if (Array.isArray(binding)) {
-      const listRenderPriority = resolveListRenderPriority();
-      withSchedulerPriority(listRenderPriority, () => {
-        renderList(binding);
-      });
+      runWithResolvedPriority(resolveListRenderPriority, () => renderList(binding));
     } else {
       warn(`d-each: "${bindingName}" is not an array or signal`);
     }
@@ -3305,13 +2738,7 @@ function bindEach(
     cleanups.push(() => {
       listRenderDisposed = true;
       lowPriorityRenderQueued = false;
-      pendingListItems = null;
-      for (const clone of clonesByKey.values()) clone.remove();
-      for (const dispose of disposesByKey.values()) dispose();
-      clonesByKey.clear();
-      disposesByKey.clear();
-      metadataByKey.clear();
-      itemsByKey.clear();
+      registry.cleanup();
     });
   }
 }
@@ -4166,9 +3593,7 @@ function bindArray(
 
       // Update field names and d-field to include full path
       // Include clone root itself (for primitive arrays like <input d-each="items" d-field="value">)
-      const fields: Element[] = [];
-      if (clone.hasAttribute('d-field')) fields.push(clone);
-      fields.push(...Array.from(clone.querySelectorAll('[d-field]')));
+      const fields = queryIncludingRoot(clone, 'd-field');
 
       for (const field of fields) {
         const relativeFieldPath = field.getAttribute('d-field');
@@ -4181,9 +3606,7 @@ function bindArray(
       }
 
       // Also update d-error elements to use full path (including root)
-      const errors: Element[] = [];
-      if (clone.hasAttribute('d-error')) errors.push(clone);
-      errors.push(...Array.from(clone.querySelectorAll('[d-error]')));
+      const errors = queryIncludingRoot(clone, 'd-error');
 
       for (const errorEl of errors) {
         const relativeErrorPath = errorEl.getAttribute('d-error');
@@ -4194,24 +3617,15 @@ function bindArray(
       }
 
       // Update nested d-array elements to use full path (for nested field arrays)
-      const nestedArrays = clone.querySelectorAll('[d-array]');
-      for (const nestedArr of nestedArrays) {
-        const relativeArrayPath = nestedArr.getAttribute('d-array');
-        if (relativeArrayPath) {
-          const fullPath = `${arrayPath}[${index}].${relativeArrayPath}`;
-          nestedArr.setAttribute('data-array-path', fullPath);
-        }
-      }
+      updateNestedArrayDataPaths(clone, arrayPath, index);
 
       // Set type="button" on array control buttons to prevent form submit
       // Buttons like d-on-click="$remove" inside templates aren't processed by
       // bindArrayOperations (they don't exist yet), so set it here during clone creation
-      const controlButtons = clone.querySelectorAll('button[d-on-click*="$remove"], button[d-on-click*="$moveUp"], button[d-on-click*="$moveDown"], button[d-on-click*="$swap"]');
-      for (const btn of controlButtons) {
-        if (btn.getAttribute('type') !== 'button') {
-          btn.setAttribute('type', 'button');
-        }
-      }
+      ensureButtonTypeForSelector(
+        clone,
+        'button[d-on-click*="$remove"], button[d-on-click*="$moveUp"], button[d-on-click*="$moveDown"], button[d-on-click*="$swap"]'
+      );
 
       const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
       disposesByKey.set(key, dispose);
@@ -4223,9 +3637,7 @@ function bindArray(
     function updateCloneIndex(clone: Element, key: string, value: unknown, index: number, count: number): void {
       // Update field names with new index (values stay in DOM)
       // Include clone root itself (for primitive arrays)
-      const fields: Element[] = [];
-      if (clone.hasAttribute('d-field')) fields.push(clone);
-      fields.push(...Array.from(clone.querySelectorAll('[d-field]')));
+      const fields = queryIncludingRoot(clone, 'd-field');
 
       for (const field of fields) {
         const relativeFieldPath = field.getAttribute('d-field');
@@ -4237,9 +3649,7 @@ function bindArray(
       }
 
       // Update d-error elements (including root)
-      const errors: Element[] = [];
-      if (clone.hasAttribute('d-error')) errors.push(clone);
-      errors.push(...Array.from(clone.querySelectorAll('[d-error]')));
+      const errors = queryIncludingRoot(clone, 'd-error');
 
       for (const errorEl of errors) {
         const relativeErrorPath = errorEl.getAttribute('d-error');
@@ -4250,14 +3660,7 @@ function bindArray(
       }
 
       // Update nested d-array paths
-      const nestedArrays = clone.querySelectorAll('[d-array]');
-      for (const nestedArr of nestedArrays) {
-        const relativeArrayPath = nestedArr.getAttribute('d-array');
-        if (relativeArrayPath) {
-          const fullPath = `${arrayPath}[${index}].${relativeArrayPath}`;
-          nestedArr.setAttribute('data-array-path', fullPath);
-        }
-      }
+      updateNestedArrayDataPaths(clone, arrayPath, index);
 
       // Update metadata signals with new index values
       const metadata = metadataByKey.get(key);
@@ -4384,9 +3787,12 @@ function bindArrayOperations(
   fieldArray: any,
   cleanups: DisposeFunction[]
 ): void {
+  ensureButtonTypeForSelector(container, '[d-remove]');
+  ensureButtonTypeForSelector(container, '[d-move-up], [d-move-down]');
+
   // d-append: append new item
   const appendButtons = container.querySelectorAll('[d-append]');
-  for (const btn of appendButtons) {
+  for (const btn of Array.from(appendButtons)) {
     // Set type="button" to prevent form submit
     // Inside <form>, buttons default to type="submit"
     if (btn.getAttribute('type') !== 'button' && btn.tagName === 'BUTTON') {
@@ -4407,23 +3813,8 @@ function bindArrayOperations(
     cleanups.push(() => btn.removeEventListener('click', handler));
   }
 
-  // d-remove: remove item (uses context from bindArray)
-  const removeButtons = container.querySelectorAll('[d-remove]');
-  for (const btn of removeButtons) {
-    // This is handled in the item context during bindArray
-    // Just prevent default if it's a button
-    if (btn.getAttribute('type') !== 'button' && btn.tagName === 'BUTTON') {
-      btn.setAttribute('type', 'button');
-    }
-  }
-
-  // d-move-up, d-move-down: handled in item context
-  const moveButtons = container.querySelectorAll('[d-move-up], [d-move-down]');
-  for (const btn of moveButtons) {
-    if (btn.getAttribute('type') !== 'button' && btn.tagName === 'BUTTON') {
-      btn.setAttribute('type', 'button');
-    }
-  }
+  // d-remove / d-move-* handlers are provided by item context in bindArray.
+  // We only normalize button type above to avoid accidental form submission.
 }
 
 // ============================================================================
@@ -4449,150 +3840,6 @@ function bindRef(root: Element, refs: Map<string, Element>): void {
 // ============================================================================
 // Component System
 // ============================================================================
-
-function extractSlots(el: Element): { defaultSlot: DocumentFragment; namedSlots: Map<string, DocumentFragment> } {
-  const getSlotName = (node: Element): string | null => {
-    const raw = node.getAttribute('d-slot') ?? node.getAttribute('slot');
-    if (!raw) return null;
-    const name = raw.trim();
-    return name || null;
-  };
-
-  const namedSlots = new Map<string, DocumentFragment>();
-  const defaultSlot = document.createDocumentFragment();
-  for (const child of Array.from(el.childNodes)) {
-    if (child instanceof Element && child.tagName === 'TEMPLATE') {
-      const name = getSlotName(child);
-      if (name) {
-        const frag = namedSlots.get(name) ?? document.createDocumentFragment();
-        frag.append(...Array.from((child as HTMLTemplateElement).content.childNodes));
-        namedSlots.set(name, frag);
-      } else {
-        defaultSlot.appendChild(child);
-      }
-    } else if (child instanceof Element) {
-      const name = getSlotName(child);
-      if (name) {
-        const frag = namedSlots.get(name) ?? document.createDocumentFragment();
-        child.removeAttribute('d-slot');
-        child.removeAttribute('slot');
-        frag.appendChild(child);
-        namedSlots.set(name, frag);
-      } else {
-        defaultSlot.appendChild(child);
-      }
-    } else {
-      defaultSlot.appendChild(child);
-    }
-  }
-  return { defaultSlot, namedSlots };
-}
-
-function fillSlots(root: Element, defaultSlot: DocumentFragment, namedSlots: Map<string, DocumentFragment>): void {
-  for (const slotEl of Array.from(root.querySelectorAll('slot[name]'))) {
-    const name = slotEl.getAttribute('name')!;
-    const content = namedSlots.get(name);
-    if (content && content.childNodes.length > 0) slotEl.replaceWith(content);
-  }
-  const defaultSlotEl = root.querySelector('slot:not([name])');
-  if (defaultSlotEl && defaultSlot.childNodes.length > 0) defaultSlotEl.replaceWith(defaultSlot);
-}
-
-function bindSlotFragments(
-  defaultSlot: DocumentFragment,
-  namedSlots: Map<string, DocumentFragment>,
-  parentCtx: BindContext,
-  events: string[],
-  cleanups: DisposeFunction[]
-): void {
-  const bindFrag = (frag: DocumentFragment) => {
-    if (frag.childNodes.length === 0) return;
-    const container = document.createElement('div');
-    container.setAttribute('data-dalila-internal-bound', '');
-    container.appendChild(frag);
-    const handle = bind(container, parentCtx, { events, _skipLifecycle: true, _internal: true });
-    cleanups.push(handle);
-    while (container.firstChild) frag.appendChild(container.firstChild);
-  };
-  bindFrag(defaultSlot);
-  for (const frag of namedSlots.values()) bindFrag(frag);
-}
-
-function resolveComponentProps(
-  el: Element,
-  parentCtx: BindContext,
-  def: ComponentDefinition
-): Record<string, Signal<unknown>> {
-  const props: Record<string, Signal<unknown>> = {};
-  const schema = def.props ?? {};
-  const hasSchema = Object.keys(schema).length > 0;
-  const PREFIX = 'd-props-';
-
-  for (const attr of Array.from(el.attributes)) {
-    if (!attr.name.startsWith(PREFIX)) continue;
-    const kebab = attr.name.slice(PREFIX.length);
-    const propName = kebabToCamel(kebab);
-    if (hasSchema && !(propName in schema)) {
-      warn(`Component <${def.tag}>: d-props-${kebab} is not declared in props schema`);
-    }
-    const bindingName = normalizeBinding(attr.value);
-    if (!bindingName) continue;
-
-    const parentValue = parentCtx[bindingName];
-    if (parentValue === undefined) {
-      warn(`d-props-${kebab}: "${bindingName}" not found in parent context`);
-    }
-
-    // Read raw value — signals and zero-arity functions (getters/computed-like) are
-    // unwrapped reactively; everything else passes through as-is.
-    const isGetter = !isSignal(parentValue) && typeof parentValue === 'function' && (parentValue as Function).length === 0;
-    const raw = isSignal(parentValue) ? parentValue() : isGetter ? (parentValue as Function)() : parentValue;
-    const propSignal = signal<unknown>(raw);
-
-    // Reactive sync: signals and zero-arity getters
-    if (isSignal(parentValue) || isGetter) {
-      effect(() => { propSignal.set(isSignal(parentValue) ? parentValue() : (parentValue as Function)()); });
-    }
-
-    props[propName] = propSignal;
-  }
-
-  for (const [propName, propOption] of Object.entries(schema)) {
-    if (props[propName]) continue;
-
-    const propDef = normalizePropDef(propOption);
-    const kebabPropName = camelToKebab(propName);
-    const attrName = el.hasAttribute(propName)
-      ? propName
-      : (el.hasAttribute(kebabPropName) ? kebabPropName : null);
-
-    if (attrName) {
-      const raw = el.getAttribute(attrName)!;
-      // Dev warning: Array/Object props should use d-props-*
-      if (propDef.type === Array || propDef.type === Object) {
-        warn(
-          `Component <${def.tag}>: prop "${propName}" has type ${propDef.type === Array ? 'Array' : 'Object'} ` +
-          `but received a static string attribute. Use d-props-${camelToKebab(propName)} to pass reactive data.`
-        );
-      }
-      props[propName] = signal(coercePropValue(raw, propDef.type));
-    } else {
-      if (propDef.default !== undefined) {
-        const defaultValue = typeof propDef.default === 'function'
-          ? (propDef.default as () => unknown)()
-          : propDef.default;
-        props[propName] = signal(defaultValue);
-      } else {
-        if (propDef.required) {
-          warn(`Component <${def.tag}>: required prop "${propName}" was not provided`);
-        }
-        props[propName] = signal(undefined);
-      }
-    }
-  }
-
-  return props;
-}
 
 function getComponentRegistry(ctx: BindContext): Map<string, Component> | null {
   const reg = ctx[COMPONENT_REGISTRY_KEY];
@@ -4685,10 +3932,14 @@ function bindComponents(
 
     withScope(componentScope, () => {
       // 4a. Resolve props
-      const propSignals = resolveComponentProps(el, ctx, def);
+      const propSignals = resolveComponentPropsFromElement(el, ctx, def, {
+        warn,
+        normalizeBinding,
+        isSignal,
+      });
 
       // 4b. Create ref accessor + emit
-      const setupCtx: SetupContext = {
+      const setupCtx: TypedSetupContext = {
         ref: (name: string) => componentHandle?.getRef(name) ?? null,
         refs: () => componentHandle?.getRefs() ?? Object.freeze({}),
         emit: (event: string, ...args: unknown[]) => {
@@ -4731,7 +3982,7 @@ function bindComponents(
       const parentScope = componentScope.parent;
       if (parentScope) {
         withScope(parentScope, () => {
-          bindSlotFragments(defaultSlot, namedSlots, ctx, events, cleanups);
+          bindSlotFragments(defaultSlot, namedSlots, ctx, events, cleanups, bind as any);
         });
       }
 
