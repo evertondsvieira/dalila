@@ -42,6 +42,7 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+sbom.cdx.json
 
 # Optional npm cache directory
 .npm
