@@ -2,6 +2,12 @@
  * Path and DOM selector helpers used by the forms module.
  */
 
+const UNSAFE_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
+
+export function isUnsafePathSegment(segment: string | number): boolean {
+  return typeof segment === 'string' && UNSAFE_PATH_SEGMENTS.has(segment);
+}
+
 /**
  * Parse a path string into an array of keys/indices.
  * Examples:
@@ -10,6 +16,28 @@
  * - "phones[0].number" → ["phones", 0, "number"]
  */
 export function parsePath(path: string): (string | number)[] {
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new Error('Invalid path: path must be a non-empty string');
+  }
+  if (path.startsWith('.') || path.endsWith('.')) {
+    throw new Error(`Invalid path: malformed dot notation in "${path}"`);
+  }
+  let inBracket = false;
+  for (let i = 0; i < path.length; i++) {
+    const char = path[i];
+    if (char === '[') {
+      inBracket = true;
+      continue;
+    }
+    if (char === ']') {
+      inBracket = false;
+      continue;
+    }
+    if (!inBracket && char === '.' && path[i + 1] === '.') {
+      throw new Error(`Invalid path: malformed dot notation in "${path}"`);
+    }
+  }
+
   const parts: (string | number)[] = [];
   let current = '';
   let i = 0;
@@ -33,6 +61,9 @@ export function parsePath(path: string): (string | number)[] {
         throw new Error(`Invalid path: missing closing bracket in "${path}"`);
       }
       const index = path.slice(i + 1, closeIndex);
+      if (index.length === 0) {
+        throw new Error(`Invalid path: empty bracket segment in "${path}"`);
+      }
       const parsed = parseInt(index, 10);
       parts.push(isNaN(parsed) ? index : parsed);
       i = closeIndex + 1;
@@ -55,6 +86,14 @@ export function parsePath(path: string): (string | number)[] {
  */
 export function setNestedValue(obj: any, path: string, value: any): void {
   const parts = parsePath(path);
+  if (parts.length === 0) {
+    throw new Error(`Invalid path: "${path}"`);
+  }
+  for (const part of parts) {
+    if (isUnsafePathSegment(part)) {
+      throw new Error(`[Dalila] Unsafe form path segment blocked: "${String(part)}" in "${path}"`);
+    }
+  }
   let current = obj;
 
   for (let i = 0; i < parts.length - 1; i++) {
@@ -98,4 +137,3 @@ export function cssEscape(value: string): string {
   }
   return value.replace(/([^\w-])/g, '\\$1');
 }
-

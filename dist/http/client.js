@@ -68,26 +68,29 @@ export function createHttpClient(config = {}) {
             responseType: requestConfig.responseType ?? defaultResponseType,
             headers: mergeHeaders(defaultHeaders, requestConfig.headers),
         };
-        // XSRF: Add token to header if configured
-        if (xsrf) {
-            const method = (mergedConfig.method || 'GET');
-            const safeMethods = xsrf.safeMethods || ['GET', 'HEAD', 'OPTIONS'];
-            if (requiresXsrfToken(method, safeMethods)) {
-                const cookieName = xsrf.cookieName || 'XSRF-TOKEN';
-                const token = getXsrfToken(cookieName);
-                if (token) {
-                    const headerName = xsrf.headerName || 'X-XSRF-TOKEN';
-                    mergedConfig.headers = {
-                        ...mergedConfig.headers,
-                        [headerName]: token,
-                    };
-                }
-            }
-        }
         try {
             // Run request interceptor
             if (onRequest) {
                 mergedConfig = await onRequest(mergedConfig);
+            }
+            // XSRF: Add token to header only for same-origin unsafe requests.
+            if (xsrf) {
+                const method = (mergedConfig.method || 'GET');
+                const safeMethods = xsrf.safeMethods || ['GET', 'HEAD', 'OPTIONS'];
+                if (requiresXsrfToken(method, safeMethods) && shouldAttachXsrfToken(mergedConfig)) {
+                    const cookieName = xsrf.cookieName || 'XSRF-TOKEN';
+                    const token = getXsrfToken(cookieName);
+                    if (token) {
+                        const headerName = xsrf.headerName || 'X-XSRF-TOKEN';
+                        removeUndefinedHeaderAliases(mergedConfig.headers, headerName);
+                        if (!hasHeaderName(mergedConfig.headers, headerName)) {
+                            mergedConfig.headers = {
+                                ...mergedConfig.headers,
+                                [headerName]: token,
+                            };
+                        }
+                    }
+                }
             }
             // Execute request
             let response = await fetchAdapter(mergedConfig);
@@ -168,6 +171,25 @@ export function createHttpClient(config = {}) {
         delete: deleteFn,
     };
 }
+function shouldAttachXsrfToken(config) {
+    if (typeof window === 'undefined' || typeof window.location === 'undefined') {
+        return false;
+    }
+    const pageUrl = new URL(window.location.href);
+    try {
+        const base = config.baseURL
+            ? new URL(config.baseURL, pageUrl)
+            : pageUrl;
+        const target = config.url
+            ? new URL(config.url, base)
+            : base;
+        const resolved = new URL(target, pageUrl);
+        return resolved.origin === window.location.origin;
+    }
+    catch {
+        return false;
+    }
+}
 /**
  * Merge headers (per-request headers override global headers).
  */
@@ -176,4 +198,29 @@ function mergeHeaders(globalHeaders, requestHeaders) {
         ...globalHeaders,
         ...requestHeaders,
     };
+}
+function hasHeaderName(headers, headerName) {
+    if (!headers)
+        return false;
+    const target = headerName.toLowerCase();
+    for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() !== target)
+            continue;
+        if (headers[key] === undefined)
+            continue;
+        return true;
+    }
+    return false;
+}
+function removeUndefinedHeaderAliases(headers, headerName) {
+    if (!headers)
+        return;
+    const target = headerName.toLowerCase();
+    for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() !== target)
+            continue;
+        if (headers[key] !== undefined)
+            continue;
+        delete headers[key];
+    }
 }

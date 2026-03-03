@@ -1,6 +1,7 @@
 /**
  * Path and DOM selector helpers used by the forms module.
  */
+export declare function isUnsafePathSegment(segment: string | number): boolean;
 /**
  * Parse a path string into an array of keys/indices.
  * Examples:

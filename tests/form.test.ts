@@ -7,6 +7,7 @@ import assert from 'node:assert';
 import { JSDOM } from 'jsdom';
 import { createForm, parseFormData, zodAdapter, valibotAdapter, yupAdapter } from '../dist/form/index.js';
 import { createScope, withScope } from '../dist/core/scope.js';
+import { setNestedValue } from '../dist/form/path-utils.js';
 
 type AnyFn = (...args: any[]) => any;
 type MockFn<T extends AnyFn> = T & { calls: Parameters<T>[]; callCount: number };
@@ -48,6 +49,41 @@ describe('parseFormData', () => {
     assert.deepStrictEqual(result, {
       email: 'test@example.com',
       password: 'secret123',
+    });
+  });
+
+  it('should block __proto__ path pollution in setNestedValue', () => {
+    const target: any = {};
+    assert.throws(() => setNestedValue(target, '__proto__.polluted', 'x'));
+    assert.equal(({} as any).polluted, undefined);
+  });
+
+  it('should block constructor.prototype path pollution in setNestedValue', () => {
+    const target: any = {};
+    assert.throws(() => setNestedValue(target, 'constructor.prototype.polluted', 'x'));
+    assert.equal(({} as any).polluted, undefined);
+  });
+
+  it('should ignore malicious form field path by throwing safely', () => {
+    const form = document.createElement('form');
+    form.innerHTML = `<input name="__proto__.x" value="pwn" />`;
+    const fd = new FormData(form);
+
+    assert.throws(() => parseFormData(form, fd));
+    assert.equal(({} as any).x, undefined);
+  });
+
+  it('should allow ".." inside bracket key segments', () => {
+    const form = document.createElement('form');
+    form.innerHTML = `<input name="filters[a..b]" value="ok" />`;
+
+    const fd = new FormData(form);
+    const result = parseFormData(form, fd);
+
+    assert.deepStrictEqual(result, {
+      filters: {
+        'a..b': 'ok',
+      },
     });
   });
 

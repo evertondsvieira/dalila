@@ -613,6 +613,18 @@ test('createPreloadScript: generates custom script', async () => {
   assert.ok(script.includes('document.body'), 'Should target body');
 });
 
+test('createPreloadScript: escapes inline script breakout sequences', async () => {
+  const { createPreloadScript } = await import('../dist/core/persist.js');
+
+  const script = createPreloadScript({
+    storageKey: `x'</script><script>alert(1)</script>`,
+    defaultValue: `</script><img src=x onerror=alert(1)>`,
+  });
+
+  assert.equal(script.includes('</script>'), false, 'Should not contain literal </script>');
+  assert.ok(script.includes('\\x3C/script\\x3E') || script.includes('\\x3C'), 'Should escape < characters');
+});
+
 test('preload script: executes without errors', async () => {
   const { createThemeScript } = await import('../dist/core/persist.js');
 

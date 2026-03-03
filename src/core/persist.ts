@@ -596,6 +596,14 @@ export interface PreloadScriptOptions {
   storageType?: 'localStorage' | 'sessionStorage';
 }
 
+function escapeInlineScriptContent(script: string): string {
+  return script
+    .replace(/</g, '\\x3C')
+    .replace(/-->/g, '--\\x3E')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 /**
  * Generate a minimal inline script to prevent FOUC.
  *
@@ -616,7 +624,8 @@ export function createPreloadScript(options: PreloadScriptOptions): string {
   const a = JSON.stringify(attribute);
 
   // Still minified
-  return `(function(){try{var s=${storageType}.getItem(${k});var v=s==null?${d}:JSON.parse(s);document.${target}.setAttribute(${a},v)}catch(e){document.${target}.setAttribute(${a},${d})}})();`;
+  const script = `(function(){try{var s=${storageType}.getItem(${k});var v=s==null?${d}:JSON.parse(s);document.${target}.setAttribute(${a},v)}catch(e){document.${target}.setAttribute(${a},${d})}})();`;
+  return escapeInlineScriptContent(script);
 }
 
 export function createThemeScript(storageKey: string, defaultTheme: string = 'light'): string {

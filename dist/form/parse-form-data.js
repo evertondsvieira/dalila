@@ -12,7 +12,7 @@ import { setNestedValue } from './path-utils.js';
  * - Files: File object
  */
 export function parseFormData(form, fd) {
-    const result = {};
+    const result = Object.create(null);
     const allCheckboxes = form.querySelectorAll('input[type="checkbox"]:not(:disabled)');
     const checkboxesByName = new Map();
     for (const checkbox of Array.from(allCheckboxes)) {
@@ -84,5 +84,5 @@ export function parseFormData(form, fd) {
             processedNames.add(name);
         }
     }
-    return result;
+    return Object.assign({}, result);
 }

@@ -60,8 +60,38 @@ const noCacheExtensions = new Set(['.html', '.js', '.mjs', '.ts', '.css']);
 // ============================================================================
 // Helpers
 // ============================================================================
+const DEV_SECURITY_HEADERS = Object.freeze({
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "script-src-attr 'none'",
+    "style-src 'self' 'unsafe-inline' https:",
+    "img-src 'self' data: blob: https: http:",
+    "font-src 'self' data: https:",
+    "connect-src 'self' ws: wss: http: https:",
+    "frame-src 'self' https:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+  ].join('; '),
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+});
+
+function createSecurityHeaders(headers = {}) {
+  return { ...DEV_SECURITY_HEADERS, ...headers };
+}
+
+function writeResponseHead(res, status, headers = {}) {
+  res.writeHead(status, createSecurityHeaders(headers));
+}
+
 function send(res, status, body, headers = {}) {
-  res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', ...headers });
+  writeResponseHead(res, status, { 'Content-Type': 'text/plain; charset=utf-8', ...headers });
   res.end(body);
 }
 
@@ -73,7 +103,12 @@ function send(res, status, body, headers = {}) {
  */
 function resolvePath(urlPath) {
   // Decode and clean the path
-  const decoded = decodeURIComponent(urlPath.split('?')[0].split('#')[0]);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath.split('?')[0].split('#')[0]);
+  } catch {
+    return null;
+  }
 
   // Remove leading slashes to always treat as relative path
   const relativePath = decoded.replace(/^\/+/, '').replace(/\\/g, '/');
@@ -93,8 +128,16 @@ function resolvePath(urlPath) {
   return normalizedPath;
 }
 
+function safeDecodeUrlPath(url) {
+  try {
+    return decodeURIComponent(url.split('?')[0].split('#')[0]);
+  } catch {
+    return null;
+  }
+}
+
 function getRequestPath(url) {
-  return decodeURIComponent(url.split('?')[0].split('#')[0]);
+  return safeDecodeUrlPath(url);
 }
 
 function normalizeHtmlRequestPath(requestPath) {
@@ -232,8 +275,14 @@ function findTypeScriptFiles(dir, files = []) {
  * Generate inline preload script
  */
 function generatePreloadScript(name, defaultValue, storageType = 'localStorage') {
-  // Minified inline script (same as createThemeScript)
-  return `(function(){try{var v=${storageType}.getItem('${name}');document.documentElement.setAttribute('data-theme',v?JSON.parse(v):'${defaultValue}')}catch(e){document.documentElement.setAttribute('data-theme','${defaultValue}')}})();`;
+  const k = JSON.stringify(name);
+  const d = JSON.stringify(defaultValue);
+  const script = `(function(){try{var v=${storageType}.getItem(${k});document.documentElement.setAttribute('data-theme',v?JSON.parse(v):${d})}catch(e){document.documentElement.setAttribute('data-theme',${d})}})();`;
+  return script
+    .replace(/</g, '\\x3C')
+    .replace(/-->/g, '--\\x3E')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 // ============================================================================
@@ -295,6 +344,7 @@ function injectBindings(html, requestPath) {
         "dalila/runtime": "${dalilaPath}/runtime/index.js",
         "dalila/router": "${dalilaPath}/router/index.js",
         "dalila/form": "${dalilaPath}/form/index.js",
+        "dalila/http": "${dalilaPath}/http/index.js",
         "dalila/components/ui": "${dalilaPath}/components/ui/index.js",
         "dalila/components/ui/dialog": "${dalilaPath}/components/ui/dialog/index.js",
         "dalila/components/ui/drawer": "${dalilaPath}/components/ui/drawer/index.js",
@@ -681,7 +731,7 @@ const server = http.createServer((req, res) => {
         'Cache-Control': 'no-store, no-cache, must-revalidate',
         'Pragma': 'no-cache',
       };
-      res.writeHead(status, headers);
+      writeResponseHead(res, status, headers);
       upstreamRes.pipe(res);
     });
 
@@ -695,7 +745,7 @@ const server = http.createServer((req, res) => {
 
   // SSE endpoint for HMR
   if (req.url.startsWith('/__hmr')) {
-    res.writeHead(200, {
+    writeResponseHead(res, 200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Connection': 'keep-alive',
@@ -715,6 +765,10 @@ const server = http.createServer((req, res) => {
   }
 
   const requestPath = getRequestPath(req.url);
+  if (!requestPath) {
+    send(res, 400, 'Bad Request');
+    return;
+  }
   const effectivePath =
     requestPath === '/' || requestPath === '/index.html' ? defaultEntry : requestPath;
   let resolvedRequestPath = effectivePath;
@@ -737,7 +791,7 @@ const server = http.createServer((req, res) => {
     if (stat.isDirectory()) {
       // Redirect directory URLs without trailing slash to include it
       if (!requestPath.endsWith('/')) {
-        res.writeHead(301, { 'Location': requestPath + '/' });
+        writeResponseHead(res, 301, { 'Location': requestPath + '/' });
         res.end();
         return;
       }
@@ -787,7 +841,7 @@ const server = http.createServer((req, res) => {
         return;
       }
       const escaped = source.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
-      res.writeHead(200, {
+      writeResponseHead(res, 200, {
         'Content-Type': 'text/javascript; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate',
       });
@@ -818,7 +872,7 @@ const server = http.createServer((req, res) => {
         });
 
         // No-cache headers for dev
-        res.writeHead(200, {
+        writeResponseHead(res, 200, {
           'Content-Type': 'text/javascript; charset=utf-8',
           'Cache-Control': 'no-store, no-cache, must-revalidate',
           'Pragma': 'no-cache',
@@ -855,12 +909,12 @@ const server = http.createServer((req, res) => {
 
             if (shouldInjectBindings(resolvedRequestPath, htmlSource)) {
               const html = injectBindings(htmlSource, resolvedRequestPath);
-              res.writeHead(200, headers);
+              writeResponseHead(res, 200, headers);
               res.end(html);
               return;
             }
 
-            res.writeHead(200, headers);
+            writeResponseHead(res, 200, headers);
             res.end(fallbackData);
           });
           return;
@@ -887,13 +941,13 @@ const server = http.createServer((req, res) => {
       const htmlSource = data.toString('utf8');
       if (shouldInjectBindings(resolvedRequestPath, htmlSource)) {
         const html = injectBindings(htmlSource, resolvedRequestPath);
-        res.writeHead(200, headers);
+        writeResponseHead(res, 200, headers);
         res.end(html);
         return;
       }
     }
 
-    res.writeHead(200, headers);
+    writeResponseHead(res, 200, headers);
     res.end(data);
   });
 });
@@ -1029,25 +1083,35 @@ const cleanup = () => {
   server.close();
 };
 
-process.on('SIGINT', () => {
-  cleanup();
-  process.exit(0);
-});
+module.exports = {
+  resolvePath,
+  getRequestPath,
+  safeDecodeUrlPath,
+  generatePreloadScript,
+  createSecurityHeaders,
+};
 
-process.on('SIGTERM', () => {
-  cleanup();
-  process.exit(0);
-});
+if (require.main === module) {
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(0);
+  });
 
-// ============================================================================
-// Startup
-// ============================================================================
-setupWatcher();
-startKeepalive();
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(0);
+  });
 
-server.listen(port, () => {
-  console.log('');
-  console.log('  🐰✂️  Dalila dev server');
-  console.log(`        http://localhost:${port}`);
-  console.log('');
-});
+  // ============================================================================
+  // Startup
+  // ============================================================================
+  setupWatcher();
+  startKeepalive();
+
+  server.listen(port, () => {
+    console.log('');
+    console.log('  🐰✂️  Dalila dev server');
+    console.log(`        http://localhost:${port}`);
+    console.log('');
+  });
+}

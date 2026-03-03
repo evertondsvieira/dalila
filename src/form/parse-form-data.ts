@@ -16,7 +16,7 @@ export function parseFormData<T = unknown>(
   form: HTMLFormElement,
   fd: FormData
 ): T {
-  const result: any = {};
+  const result: any = Object.create(null);
 
   const allCheckboxes = form.querySelectorAll('input[type="checkbox"]:not(:disabled)');
   const checkboxesByName = new Map<string, HTMLInputElement[]>();
@@ -97,5 +97,5 @@ export function parseFormData<T = unknown>(
     }
   }
 
-  return result as T;
+  return Object.assign({}, result) as T;
 }
