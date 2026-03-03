@@ -133,8 +133,15 @@ npm install dalila
 24. [Dev Mode](./core/dev.md) — Development helpers and warnings
 25. [HTTP](./http.md) — Fetch client, interceptors and XSRF helpers
 26. [UI Components](./ui.md) — Built-in UI component library
-27. [Template Check CLI](./cli/check.md) — `dalila check` static analysis
+27. [Template Check CLI](./cli/check.md) — `dalila check` template analysis + security smoke
 28. [Devtools Extension](../devtools-extension/README.md) — Inspect signals/effects/scopes
+29. [Security Release Notes](./security-release-notes.md) — Hardening changes and compatibility notes
+30. [Production Guide](./production.md) — Deployment, hardening and operational checklist
+31. [Security Hardening](./security-hardening.md) — Multi-tenant and high-risk deployment controls
+32. [Threat Model](./threat-model.md) — STRIDE template and release sign-off process
+33. [Recipes](./recipes.md) — Practical production patterns
+34. [Upgrade Guide](./upgrade.md) — Compatibility and migration notes
+35. [Release Checklist](./release-checklist.md) — Pre-release quality gate checklist
 
 ## Comparison with Other Frameworks
 

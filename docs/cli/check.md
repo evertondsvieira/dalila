@@ -1,8 +1,13 @@
 # dalila check
 
-Static analysis for route HTML templates.
+Static analysis for route HTML templates plus project security smoke.
 
-`dalila check` validates template identifiers against route context:
+`dalila check` does two things:
+
+1. Validates template identifiers against route context.
+2. Runs a project-level security smoke scan for obvious raw HTML / XSS footguns.
+
+Template validation uses:
 
 - Route params from the path (e.g. `[id]` -> `id`)
 - Built-ins: `params`, `query`, `path`, `fullPath`
@@ -13,6 +18,8 @@ It scans:
 
 - Text interpolations: `{expr}`
 - Directive expressions: `d-*` supported by the checker (events, conditionals, list/virtual list bindings, form directives, etc.)
+
+Security smoke scans project `.html`, `.ts`, and `.js` files under the selected path.
 
 ## Usage
 
@@ -31,6 +38,16 @@ With `--strict`, those routes fail with an explicit error, for example:
 - `... exports "loader", but its return type could not be inferred`
 
 Use strict mode in CI when you want enforceable loader/template type contracts.
+`--strict` changes only the template/type-inference checks. Security smoke still runs either way.
+
+## Security smoke
+
+Security smoke reports:
+
+- errors for inline `on*=` handlers and executable/dangerous URL protocols in HTML template sinks
+- warnings for review-required raw sinks such as `d-html`, `srcdoc`, `d-attr-srcdoc`, `fromHtml()`, `innerHTML` / `outerHTML`, `insertAdjacentHTML()`, and `document.write()`
+
+Warnings do not fail the command. Errors do.
 
 ## What counts as inferable loader data
 

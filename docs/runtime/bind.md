@@ -69,6 +69,30 @@ interface BindOptions {
 
   /** Error policy for component ctx.onMount() callbacks. Default: 'log' */
   onMountError?: 'log' | 'throw';
+
+  /** Optional sanitizer for raw HTML sinks (`d-html`) */
+  sanitizeHtml?: (html: string, context: {
+    sink: 'd-html';
+    bindingName: string;
+    element: Element;
+  }) => string;
+
+  /**
+   * Enabled by default. Set `false` to disable Dalila's built-in/default
+   * sanitizer for this scope and require an explicit `sanitizeHtml` policy.
+   */
+  useDefaultSanitizeHtml?: boolean;
+
+  /** Optional runtime security overrides */
+  security?: {
+    strict?: boolean;
+    blockRawHtmlAttrs?: boolean;
+    requireHtmlSanitizerForDHtml?: boolean;
+    warnAsError?: boolean;
+    trustedTypes?: boolean;
+    trustedTypesPolicyName?: string;
+    trustedTypesPolicy?: { createHTML: (html: string) => unknown } | null;
+  };
 }
 
 type DisposeFunction = () => void;
@@ -131,6 +155,21 @@ configure({
   ],
 });
 ```
+
+Security hardening example (global defaults):
+
+```ts
+import DOMPurify from 'dompurify';
+import { configure } from 'dalila/runtime';
+
+configure({
+  sanitizeHtml: (html) => DOMPurify.sanitize(html),
+  security: { strict: true, warnAsError: true },
+});
+```
+
+`warnAsError` is useful in CI/test environments to fail fast on security diagnostics without turning ordinary runtime warnings into hard failures.
+Trusted Types sinks are opt-in. Set `trustedTypes: true` and optionally `trustedTypesPolicyName` / `trustedTypesPolicy` when your app allows a compatible policy. If a supplied Trusted Types policy rejects HTML, Dalila aborts the sink write instead of falling back to a raw string.
 
 ### createPortalTarget
 
@@ -641,7 +680,17 @@ Sets `innerHTML` from a context value.  HTML tags are rendered, not escaped.
 | `null` / `undefined` | innerHTML is set to **empty string** |
 | anything else | stringified and set as innerHTML |
 
-> **Security:** `d-html` renders raw HTML.  In dev mode a warning is logged if the content matches known XSS patterns (`<script>`, `onerror=`, `javascript:`).  **Never use with unsanitised user input.** Use `{token}` for safe, escaped text output.
+> **Security:** `d-html` is sanitized by a built-in baseline sanitizer before rendering. In dev mode, Dalila also logs a **heuristic warning** when it detects common XSS patterns (`<script>`, `onerror=`, `javascript:`). For stricter policies, provide your own `sanitizeHtml` (for example with DOMPurify).
+
+`d-html` supports centralized sanitization with `sanitizeHtml` via `configure()` or per-call `bind(..., { sanitizeHtml })`.
+When `sanitizeHtml` is not provided, Dalila uses its built-in baseline sanitizer.
+Set `useDefaultSanitizeHtml: false` only when you intentionally want `d-html` to require an explicit custom sanitizer for that scope.
+
+#### Trust boundary for `d-html`
+
+- Safe source examples: static CMS snippets you sanitize on the server, trusted templates shipped with the app.
+- Unsafe source examples: form input, query params, API fields that may contain user HTML, rich-text content from unknown tenants.
+- If the source is not fully trusted, sanitize before passing to `d-html`.
 
 ---
 
@@ -677,6 +726,26 @@ Certain attributes must be set as DOM **properties** (not attributes) to reflect
 | `indeterminate` | `.indeterminate` | boolean |
 
 This means `d-attr-value` stays in sync even after the user has typed into an input — `setAttribute` alone cannot do that.
+
+#### Security (`d-attr-*`)
+
+`d-attr-*` is a generic attribute sink. Treat values as **untrusted by default** unless you control the source.
+
+- Dalila blocks inline event-handler attributes set via `d-attr-on*` (use `d-on-*` instead).
+- Dalila allows only a small safe protocol set on common URL attributes (`http:`, `https:`, `mailto:`, `tel:`, `sms:`, `blob:`) plus relative URLs.
+- Disallowed examples such as `javascript:`, `vbscript:`, `data:`, and `file:` are removed.
+- Attributes that embed HTML (for example `srcdoc`) are blocked in the default strict profile.
+- If you explicitly relax `security.blockRawHtmlAttrs`, those attributes become raw sinks and should receive only trusted/sanitized content.
+
+```html
+<!-- GOOD -->
+<button d-on-click="save">Save</button>
+<a d-attr-href="safeUrl"></a>
+
+<!-- BAD -->
+<button d-attr-onclick="handlerCode"></button>
+<a d-attr-href="userInput"></a> <!-- if userInput may be javascript:/data:/file: -->
+```
 
 ---
 
@@ -871,6 +940,28 @@ bind(root, { content: () => DOMPurify.sanitize(userInput()) });
 
 // BAD — raw user input goes directly into innerHTML
 bind(root, { content: userInput });
+```
+
+### 5.1 `fromHtml()` safety rule
+
+`fromHtml()` parses the provided string using `template.innerHTML`. Treat the `html` argument as **trusted template markup**, not as a sink for user-generated content.
+
+If the template itself contains local `d-html` bindings, pass `sanitizeHtml` in the `fromHtml()` options for that specific call:
+
+```ts
+fromHtml('<section><div d-html="content"></div></section>', {
+  data: { content: richText },
+  sanitizeHtml: (html) => DOMPurify.sanitize(html),
+  security: { strict: true },
+});
+```
+
+```ts
+// GOOD: trusted template + untrusted data bound safely
+fromHtml('<p d-text="bio"></p>', { data: { bio: userBio } });
+
+// BAD: user content concatenated into HTML string
+fromHtml(`<p>${userBio}</p>`);
 ```
 
 ### 6. Always call dispose()

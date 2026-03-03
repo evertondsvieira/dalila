@@ -175,6 +175,8 @@ await http.get('/users');
 await http.post('/users', { name: 'John' });
 ```
 
+> **Same-origin guard (security hardening):** When XSRF is enabled, Dalila only attaches the XSRF header to **same-origin** unsafe requests by default. Cross-origin requests (including absolute external URLs) do not receive the token.
+
 ### Custom XSRF Config
 
 ```ts
@@ -186,6 +188,24 @@ const http = createHttpClient({
   }
 });
 ```
+
+### XSRF + Interceptors (URL changes)
+
+XSRF attachment is evaluated **after** `onRequest`, so interceptors that rewrite `config.url` / `config.baseURL` cannot accidentally leak the token to another origin.
+
+```ts
+const http = createHttpClient({
+  xsrf: true,
+  onRequest: (config) => {
+    // If this changes to an external origin, XSRF header will be omitted
+    return config;
+  }
+});
+```
+
+### Compatibility Note (2026-03 hardening)
+
+If your app previously relied on sending XSRF headers to subdomains or other origins, that behavior is now blocked by default for safety. Use explicit custom headers in your interceptor for those scenarios only after reviewing the trust boundary.
 
 ### When to Use XSRF
 

@@ -27,6 +27,11 @@ const ErrorBoundary = createErrorBoundary({
 | `onError` | `(error: Error) => void` | Callback when error is caught |
 | `onReset` | `() => void` | Callback when error is reset |
 
+Security:
+- `fallback` is rendered as raw HTML (`innerHTML`) when the boundary enters error state.
+- Treat it as trusted template markup.
+- Do not concatenate unsanitized user input into the fallback template string.
+
 ## createErrorBoundaryState
 
 Creates `error/reset/hasError` state for component setup.
@@ -75,6 +80,7 @@ Behavior:
 - preserves the host element in DOM
 - swaps internal content between children and fallback
 - fallback subtree is bind-processed (so directives like `d-on-click="reset"` work)
+- fallback HTML is a raw template sink (`innerHTML`), so it must be trusted/sanitized
 
 ```html
 <div d-boundary="fallback template" d-boundary-error="errorSignal" d-boundary-reset="resetFn">

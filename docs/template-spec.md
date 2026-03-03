@@ -335,8 +335,13 @@ Virtual mode is vertical-only.
 | `ctx.html` is signal | Uses `html()` and updates reactively |
 | Otherwise | Renders once |
 
-`d-html` sets `innerHTML` directly. Values are **not sanitized** — only use
-trusted HTML or sanitize before binding.
+`d-html` sets `innerHTML` through Dalila's built-in baseline sanitizer.
+Use a custom `sanitizeHtml` policy for stricter allowlists.
+If you explicitly set `useDefaultSanitizeHtml: false`, `d-html` requires a custom `sanitizeHtml` policy or renders empty in the default strict profile.
+
+In dev mode, Dalila may emit warnings for suspicious patterns (for example
+`<script>`, inline handler attributes, `javascript:` URLs), but these checks are
+heuristics only and do **not** provide sanitization.
 
 ## 9.1 `d-text` Directive
 
@@ -377,6 +382,13 @@ Use `d-text` when you want to set the entire text content of an element to a sin
 
 `d-attr-*` removes the directive attribute and sets the target attribute to
 `String(value)` for any attribute name (e.g. `href`, `class`, `style`, `id`).
+
+Security notes:
+- `d-attr-on*` (inline event-handler attributes) are blocked. Use `d-on-*`.
+- Common URL attributes only allow a safe protocol set (`http:`, `https:`, `mailto:`, `tel:`, `sms:`, `blob:`) plus relative URLs.
+- Disallowed examples such as `javascript:`, `vbscript:`, `data:`, and `file:` are blocked.
+- HTML-bearing attributes such as `srcdoc` are blocked in the default strict profile.
+- If you explicitly relax `security.blockRawHtmlAttrs`, they become raw sinks and should only receive trusted/sanitized content.
 
 ## 10.1 `d-bind-*` Directive (Two-way Binding)
 

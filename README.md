@@ -89,6 +89,13 @@ bind(document.getElementById('app')!, ctx);
 
 - [Template Check CLI](./docs/cli/check.md)
 - [Devtools Extension](./devtools-extension/README.md)
+- [Production Guide](./docs/production.md)
+- [Security Hardening](./docs/security-hardening.md)
+- [Threat Model](./docs/threat-model.md)
+- [Recipes](./docs/recipes.md)
+- [Upgrade Guide](./docs/upgrade.md)
+- [Release Checklist](./docs/release-checklist.md)
+- [Security Release Notes](./docs/security-release-notes.md)
 
 ## Packages
 
