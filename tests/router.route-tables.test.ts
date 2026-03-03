@@ -166,3 +166,14 @@ test('RouteTables - static route outranks optional catch-all sibling', () => {
   assert.equal(result.exact, true);
   assert.equal(result.stack[0].path, '/docs');
 });
+
+test('RouteTables - malformed encoded route params do not throw and preserve raw segment', () => {
+  const routes = [
+    { path: '/users/:id', view: () => null }
+  ];
+
+  const result = findCompiledStackResult('/users/%E0%A4%A', routes);
+  assert.ok(result, 'should still match route');
+  assert.equal(result.exact, true);
+  assert.deepEqual(result.stack[0].params, { id: '%E0%A4%A' });
+});

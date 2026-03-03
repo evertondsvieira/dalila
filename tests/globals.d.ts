@@ -23,3 +23,18 @@ declare global {
     IntersectionObserver?: any;
   }
 }
+
+declare module "../dist/core/signal.js" {
+  interface ComputedSignal<T> {
+    set(value: T): void;
+    update(fn: (value: T) => T): void;
+  }
+}
+
+declare module "../dist/form/form-types.js" {
+  interface Form<T> {
+    _registerField(path: string, element: HTMLElement): () => void;
+    _getFormElement(): HTMLFormElement | null;
+    _setFormElement(form: HTMLFormElement): void;
+  }
+}

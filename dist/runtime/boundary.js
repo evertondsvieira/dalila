@@ -7,8 +7,10 @@
  * @module dalila/runtime/boundary
  */
 import { effect, signal } from '../core/index.js';
-import { bind } from './bind.js';
+import { isInDevMode } from '../core/dev.js';
+import { bind, warnSecurityRuntime } from './bind.js';
 import { defineComponent } from './component.js';
+import { hasExecutableHtmlSinkPattern, setElementInnerHTML } from './html-sinks.js';
 // ============================================================================
 // Error Boundary Component
 // ============================================================================
@@ -83,7 +85,7 @@ export function createErrorBoundary(options) {
  * Bind d-boundary directive - wraps children with error handling
  * This is typically used inside a component that provides error state
  */
-export function bindBoundary(root, ctx, cleanups) {
+export function bindBoundary(root, ctx, cleanups, options = {}) {
     const elements = qsaIncludingRoot(root, '[d-boundary]');
     const boundary = root.closest('[data-dalila-internal-bound]');
     const consumedNested = new WeakSet();
@@ -141,6 +143,9 @@ export function bindBoundary(root, ctx, cleanups) {
             }
             host.appendChild(container);
             mountedDispose = bind(container, childCtx, {
+                sanitizeHtml: options.sanitizeHtml,
+                useDefaultSanitizeHtml: options.useDefaultSanitizeHtml,
+                security: options.security,
                 _skipLifecycle: true,
             });
             mountedNode = container;
@@ -155,13 +160,17 @@ export function bindBoundary(root, ctx, cleanups) {
             const errorDisplay = document.createElement('div');
             errorDisplay.setAttribute('data-boundary-error', '');
             errorDisplay.setAttribute('data-dalila-internal-bound', '');
-            errorDisplay.innerHTML = fallbackTemplate;
+            warnBoundaryFallbackTemplate(fallbackTemplate);
+            setElementInnerHTML(errorDisplay, fallbackTemplate, options.security);
             const errorMsg = errorDisplay.querySelector('[data-error-message]');
             if (errorMsg) {
                 errorMsg.textContent = error.message;
             }
             host.appendChild(errorDisplay);
             mountedDispose = bind(errorDisplay, errorCtx, {
+                sanitizeHtml: options.sanitizeHtml,
+                useDefaultSanitizeHtml: options.useDefaultSanitizeHtml,
+                security: options.security,
                 _skipLifecycle: true,
             });
             mountedNode = errorDisplay;
@@ -220,6 +229,13 @@ function escapeAttribute(value) {
         .replace(/"/g, '&quot;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+}
+function warnBoundaryFallbackTemplate(template) {
+    if (!isInDevMode())
+        return;
+    if (!hasExecutableHtmlSinkPattern(template))
+        return;
+    warnSecurityRuntime('d-boundary: suspicious HTML detected in fallback template. Dev warning is heuristic only (not sanitization). Use trusted templates or sanitize before use.');
 }
 // ============================================================================
 // withErrorBoundary Helper

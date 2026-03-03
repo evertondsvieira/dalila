@@ -1,5 +1,6 @@
 export * from "./scope.js";
 export * from "./signal.js";
+export * from "./observability.js";
 export { watch, onCleanup, useEvent, useInterval, useTimeout, useFetch } from "./watch.js";
 export * from "./when.js";
 export * from "./match.js";

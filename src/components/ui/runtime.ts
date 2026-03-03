@@ -25,6 +25,8 @@ export interface MountUIOptions {
   events?: string[];
   theme?: boolean;
   sliderValue?: Signal<string>;
+  sanitizeHtml?: BindOptions["sanitizeHtml"];
+  security?: BindOptions["security"];
 
   dialogs?: Record<string, Dialog>;
   drawers?: Record<string, Drawer>;
@@ -444,6 +446,8 @@ export function mountUI(root: Element, options: MountUIOptions): () => void {
     cleanups.push(
       bind(mountedRoot, ctx, {
         events: options.events ?? DEFAULT_EVENTS,
+        sanitizeHtml: options.sanitizeHtml,
+        security: options.security,
       })
     );
 

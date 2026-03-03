@@ -8,6 +8,18 @@ import { defineComponent } from '../dist/runtime/component.js';
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
+async function captureWarns(fn) {
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => warns.push(args.map(String).join(' '));
+  try {
+    await fn();
+  } finally {
+    console.warn = origWarn;
+  }
+  return warns;
+}
+
 async function withDom(fn) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     url: 'http://localhost/',
@@ -153,6 +165,142 @@ test('d-boundary fallback is bind-processed and can trigger reset', async () => 
     assert.ok(root.querySelector('.child-content'));
 
     dispose();
+  });
+});
+
+test('d-boundary propagates sanitizeHtml/security to nested child and fallback binds', async () => {
+  await withDom(async (doc) => {
+    const error = signal(null);
+    const html = signal('<img src=x><b>ok</b>');
+
+    const warns: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: any[]) => warns.push(args.map(String).join(' '));
+
+    try {
+      const root = el(
+        doc,
+        `
+        <div>
+          <section
+            d-boundary="<iframe class='fb' d-attr-srcdoc='html'></iframe>"
+            d-boundary-error="error"
+          >
+            <div class="child" d-html="html"></div>
+          </section>
+        </div>
+        `
+      );
+
+      const dispose = bind(root, { error, html }, {
+        sanitizeHtml: (value) => value.replace(/<img[^>]*>/gi, ''),
+        security: { strict: true },
+      });
+      await tick(20);
+
+      const child = root.querySelector('.child');
+      assert.ok(child);
+      assert.equal(child.innerHTML, '<b>ok</b>');
+
+      error.set(new Error('boom'));
+      await tick(20);
+
+      const fb = root.querySelector('.fb');
+      assert.ok(fb);
+      assert.equal(fb.getAttribute('srcdoc'), null);
+      assert.ok(warns.some(w => w.includes('blocked raw HTML attribute')));
+
+      dispose();
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});
+
+test('d-boundary propagates useDefaultSanitizeHtml false to child and fallback binds', async () => {
+  await withDom(async (doc) => {
+    const error = signal<Error | null>(null);
+    const html = signal('<b>ok</b>');
+    const root = el(
+      doc,
+      `
+      <div>
+        <section
+          d-boundary="<div class='fb' d-html='html'></div>"
+          d-boundary-error="error"
+        >
+          <div class="child" d-html="html"></div>
+        </section>
+      </div>
+      `
+    );
+
+    const warns = await captureWarns(async () => {
+      bind(root, { error, html }, {
+        useDefaultSanitizeHtml: false,
+        security: { requireHtmlSanitizerForDHtml: true },
+      });
+      await tick(20);
+
+      const child = root.querySelector('.child');
+      assert.ok(child);
+      assert.equal(child.innerHTML, '');
+
+      error.set(new Error('boom'));
+      await tick(20);
+
+      const fallback = root.querySelector('.fb');
+      assert.ok(fallback);
+      assert.equal(fallback.innerHTML, '');
+    });
+
+    assert.ok(warns.some(w => w.includes('requires a custom sanitizeHtml()')));
+  });
+});
+
+test('d-boundary fallback warnings honor security.warnAsError', async () => {
+  await withDom(async (doc) => {
+    const error = signal(new Error('boom'));
+    const root = el(
+      doc,
+      `
+      <div>
+        <section
+          d-boundary="<img class='fallback' onerror=alert(1) src=x>"
+          d-boundary-error="error"
+        >
+          <span class="child-content">Safe Content</span>
+        </section>
+      </div>
+      `
+    );
+
+    assert.throws(() => {
+      bind(root, { error }, { security: { warnAsError: true } });
+    }, /d-boundary: suspicious HTML detected in fallback template/i);
+  });
+});
+
+test('d-boundary fallback warnings catch encoded data:text/html payloads', async () => {
+  await withDom(async (doc) => {
+    const error = signal(new Error('boom'));
+    const root = el(
+      doc,
+      `
+      <div>
+        <section
+          d-boundary="<iframe class='fallback' src='data:text/html,%3Cscript%3Ealert(1)%3C/script%3E'></iframe>"
+          d-boundary-error="error"
+        >
+          <span class="child-content">Safe Content</span>
+        </section>
+      </div>
+      `
+    );
+
+    assert.throws(() => {
+      bind(root, { error }, { security: { warnAsError: true } });
+    }, /d-boundary: suspicious HTML detected in fallback template/i);
   });
 });
 

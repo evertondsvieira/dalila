@@ -1,9 +1,33 @@
 /**
+ * Optional global error handler for reactive execution.
+ *
+ * The runtime keeps running even if an effect/computed throws:
+ * - if a handler is registered, we forward errors to it
+ * - otherwise we log to the console
+ */
+export type EffectErrorHandler = (error: Error, source: string) => void;
+/**
+ * Error type for failures that must escape reactive scheduling.
+ *
+ * Normal effect errors are reported and swallowed so the graph keeps running.
+ * FatalEffectError is reserved for opt-in fail-fast modes such as security
+ * gates that should still surface as uncaught failures when raised from effects.
+ */
+export declare class FatalEffectError extends Error {
+    constructor(message: string);
+}
+/**
  * Register a global error handler for effects/computed invalidations.
  *
  * Use this to report errors without crashing the reactive graph.
  */
-export declare function setEffectErrorHandler(handler: (error: Error, source: string) => void): void;
+export declare function setEffectErrorHandler(handler: EffectErrorHandler | null): void;
+/**
+ * Register the framework-level fallback error handler.
+ *
+ * User-provided handlers registered via `setEffectErrorHandler()` always win.
+ */
+export declare function setDefaultEffectErrorHandler(handler: EffectErrorHandler | null): void;
 export interface Signal<T> {
     /** Read the current value (with dependency tracking if inside an effect). */
     (): T;

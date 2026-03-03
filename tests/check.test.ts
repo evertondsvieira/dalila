@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { runCheck } from '../dist/cli/check.js';
+import { runSecuritySmokeChecks } from '../dist/cli/security-smoke.js';
 
 function withTempProject(run) {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dalila-check-'));
@@ -635,5 +636,121 @@ test('Check - braces in directive attribute values are not parsed as text interp
 
     const exitCode = await runCheck(appDir);
     assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
+  });
+});
+
+test('Security smoke - inline event handlers fail automatically', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.html', `<button onclick="alert(1)">boom</button>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /Dalila Security Smoke/);
+    assert.match(output, /Inline event handler found in template/);
+  });
+});
+
+test('Security smoke - d-html is reported as warning without failing the run', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.html', `<div d-html="content"></div>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 0);
+
+    const output = logs.join('\n');
+    assert.match(output, /d-html renders raw HTML/);
+    assert.match(output, /warning/);
+  });
+});
+
+test('Security smoke - scans project src when pointed at src root', async () => {
+  await withTempProject(async ({ rootDir, appDir, write, logs }) => {
+    write('src/main.ts', `document.body.innerHTML = userHtml;`);
+    write('src/app/page.html', `<div>ok</div>`);
+
+    const exitCode = await runSecuritySmokeChecks(path.join(rootDir, 'src'));
+    assert.equal(exitCode, 0);
+
+    const output = logs.join('\n');
+    assert.match(output, /src\/main\.ts|src\\main\.ts/);
+    assert.match(output, /Raw HTML sink assignment found in source/);
+  });
+});
+
+test('Security smoke - respects appDir scope and ignores sibling files', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/main.ts', `document.body.innerHTML = userHtml;`);
+    write('src/app/page.html', `<div>ok</div>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 0);
+
+    const output = logs.join('\n');
+    assert.doesNotMatch(output, /src\/main\.ts|src\\main\.ts/);
+    assert.match(output, /No dangerous template patterns found/);
+  });
+});
+
+test('Security smoke - custom attributes starting with on do not fail as inline handlers', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.html', `<my-card onboarding="flow-1"></my-card>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 0);
+
+    const output = logs.join('\n');
+    assert.doesNotMatch(output, /Inline event handler found in template/);
+    assert.match(output, /No dangerous template patterns found/);
+  });
+});
+
+test('Security smoke - on*= inside quoted attribute values does not fail as inline handler', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.html', `<div data-tooltip="onclick=copy"></div>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 0);
+
+    const output = logs.join('\n');
+    assert.doesNotMatch(output, /Inline event handler found in template/);
+    assert.match(output, /No dangerous template patterns found/);
+  });
+});
+
+test('Security smoke - SVG SMIL inline handlers fail automatically', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.html', `<svg><animate onbegin="alert(1)"></animate></svg>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /Inline event handler found in template/);
+  });
+});
+
+test('Security smoke - quoted > does not hide later inline handlers', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.html', `<div title="1 > 0" onclick="alert(1)"></div>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /Inline event handler found in template/);
+  });
+});
+
+test('Security smoke - quoted > does not hide later dangerous URLs', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.html', `<a title="1 > 0" href="javascript:alert(1)">x</a>`);
+
+    const exitCode = await runSecuritySmokeChecks(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /Executable javascript: URL found in template sink/);
   });
 });

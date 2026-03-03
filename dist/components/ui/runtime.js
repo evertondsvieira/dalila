@@ -354,6 +354,8 @@ export function mountUI(root, options) {
     withScope(scope, () => {
         cleanups.push(bind(mountedRoot, ctx, {
             events: options.events ?? DEFAULT_EVENTS,
+            sanitizeHtml: options.sanitizeHtml,
+            security: options.security,
         }));
         // Attach dialogs
         for (const [key, dialog] of Object.entries(options.dialogs ?? {})) {

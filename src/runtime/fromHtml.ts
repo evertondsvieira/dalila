@@ -9,8 +9,14 @@
  * @module dalila/runtime
  */
 
-import { bind } from './bind.js';
+import {
+  bind,
+  type RuntimeSecurityOptions,
+  type SanitizeHtmlFn,
+  resolveConfiguredRuntimeSecurityOptions,
+} from './bind.js';
 import type { Scope } from '../core/scope.js';
+import { setTemplateInnerHTML } from './html-sinks.js';
 
 export interface FromHtmlOptions<T extends Record<string, unknown> = Record<string, unknown>> {
   /** Bind context — keys map to {placeholder} tokens in the HTML */
@@ -19,10 +25,19 @@ export interface FromHtmlOptions<T extends Record<string, unknown> = Record<stri
   children?: Node | DocumentFragment | Node[];
   /** Route scope — registers bind cleanup automatically */
   scope?: Scope;
+  /** Optional sanitizer for local `d-html` binds inside this template. */
+  sanitizeHtml?: SanitizeHtmlFn;
+  /** Optional runtime security settings for parsing/binding this template. */
+  security?: RuntimeSecurityOptions;
 }
 
 /**
  * Parse an HTML string into a bound DOM element.
+ *
+ * Security:
+ * - `html` is parsed with `template.innerHTML`, so it must be trusted template markup.
+ * - Do not concatenate unsanitized user input into `html`.
+ * - For untrusted content, bind it as data (`{token}` / `d-text`) or sanitize first.
  *
  * @example
  * ```ts
@@ -39,10 +54,11 @@ export interface FromHtmlOptions<T extends Record<string, unknown> = Record<stri
 export function fromHtml<T extends Record<string, unknown>>(html: string, options: FromHtmlOptions<T>): HTMLElement;
 export function fromHtml(html: string, options?: FromHtmlOptions): HTMLElement;
 export function fromHtml(html: string, options: FromHtmlOptions = {}): HTMLElement {
-  const { data, children, scope } = options;
+  const { data, children, scope, sanitizeHtml, security } = options;
+  const resolvedSecurity = resolveConfiguredRuntimeSecurityOptions(security);
 
   const template = document.createElement('template');
-  template.innerHTML = html;
+  setTemplateInnerHTML(template, html, resolvedSecurity);
 
   const container = document.createElement('div');
   container.style.display = 'contents';
@@ -50,7 +66,7 @@ export function fromHtml(html: string, options: FromHtmlOptions = {}): HTMLEleme
 
   // Bind BEFORE inserting children so the layout's bind() only processes
   // the layout's own HTML — children are already bound by their own fromHtml() call.
-  const dispose = bind(container, data ?? {}, { _internal: true });
+  const dispose = bind(container, data ?? {}, { _internal: true, sanitizeHtml, security });
   if (scope) {
     scope.onCleanup(dispose);
   }

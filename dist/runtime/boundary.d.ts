@@ -8,7 +8,7 @@
  */
 import { signal, Signal } from '../core/index.js';
 import type { Component } from './component.js';
-import type { BindContext, DisposeFunction } from './bind.js';
+import type { BindContext, BindOptions, DisposeFunction } from './bind.js';
 export interface ErrorBoundaryOptions {
     /** Template to show when an error occurs */
     fallback: string;
@@ -55,7 +55,7 @@ export declare function createErrorBoundary(options: ErrorBoundaryOptions): Comp
  * Bind d-boundary directive - wraps children with error handling
  * This is typically used inside a component that provides error state
  */
-export declare function bindBoundary(root: Element, ctx: BindContext, cleanups: DisposeFunction[]): void;
+export declare function bindBoundary(root: Element, ctx: BindContext, cleanups: DisposeFunction[], options?: BindOptions): void;
 /**
  * Wraps a function with error boundary logic
  *

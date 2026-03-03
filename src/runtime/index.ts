@@ -12,9 +12,12 @@ export {
   autoBind,
   mount,
   configure,
+  installProductionRuntimeDefaults,
   createPortalTarget,
   getVirtualListController,
-  scrollToVirtualIndex
+  scrollToVirtualIndex,
+  defaultSanitizeHtml,
+  DEFAULT_RUNTIME_SECURITY,
 } from './bind.js';
 export type {
   BindOptions,
@@ -22,6 +25,9 @@ export type {
   BindData,
   DisposeFunction,
   BindHandle,
+  SanitizeHtmlFn,
+  SanitizeHtmlContext,
+  RuntimeSecurityOptions,
   TransitionConfig,
   VirtualListAlign,
   VirtualScrollToIndexOptions,
@@ -65,4 +71,3 @@ export type {
   ErrorBoundaryState,
   ErrorBoundaryResult,
 } from './boundary.js';
-

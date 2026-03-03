@@ -1,11 +1,13 @@
 import { type Signal } from "../../core/signal.js";
-import { type BindContext } from "../../runtime/bind.js";
+import { type BindContext, type BindOptions } from "../../runtime/bind.js";
 import type { Calendar, Combobox, Dialog, Drawer, Dropdown, Dropzone, PopoverMount, TabsMount, Toast } from "./ui-types.js";
 export interface MountUIOptions {
     context?: BindContext;
     events?: string[];
     theme?: boolean;
     sliderValue?: Signal<string>;
+    sanitizeHtml?: BindOptions["sanitizeHtml"];
+    security?: BindOptions["security"];
     dialogs?: Record<string, Dialog>;
     drawers?: Record<string, Drawer>;
     dropdowns?: Record<string, Dropdown>;

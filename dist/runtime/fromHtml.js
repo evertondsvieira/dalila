@@ -8,17 +8,19 @@
  *
  * @module dalila/runtime
  */
-import { bind } from './bind.js';
+import { bind, resolveConfiguredRuntimeSecurityOptions, } from './bind.js';
+import { setTemplateInnerHTML } from './html-sinks.js';
 export function fromHtml(html, options = {}) {
-    const { data, children, scope } = options;
+    const { data, children, scope, sanitizeHtml, security } = options;
+    const resolvedSecurity = resolveConfiguredRuntimeSecurityOptions(security);
     const template = document.createElement('template');
-    template.innerHTML = html;
+    setTemplateInnerHTML(template, html, resolvedSecurity);
     const container = document.createElement('div');
     container.style.display = 'contents';
     container.appendChild(template.content);
     // Bind BEFORE inserting children so the layout's bind() only processes
     // the layout's own HTML — children are already bound by their own fromHtml() call.
-    const dispose = bind(container, data ?? {}, { _internal: true });
+    const dispose = bind(container, data ?? {}, { _internal: true, sanitizeHtml, security });
     if (scope) {
         scope.onCleanup(dispose);
     }

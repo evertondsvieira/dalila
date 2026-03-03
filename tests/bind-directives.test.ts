@@ -14,8 +14,9 @@
  *  10  d-each keyed diff               (reuse/reorder nodes by key)
  *  11  null / undefined normalisation  (text, d-html, match all render '' not "undefined")
  *  12  d-attr boolean / removal        (false/null → remove, true → empty attr)
- *  13  d-html XSS warning              (dev-mode warn on <script> / onerror / javascript:)
- *  14  d-virtual-each                  (windowed rendering with scroll-driven updates)
+ *  13  d-html XSS warning              (dev-mode heuristic warning)
+ *  14  d-attr dangerous sink guardrails (inline handlers / javascript: blocked)
+ *  15  d-virtual-each                  (windowed rendering with scroll-driven updates)
  */
 
 import test   from 'node:test';
@@ -24,7 +25,9 @@ import { JSDOM } from 'jsdom';
 
 import { signal, computed }  from '../dist/core/signal.js';
 import { scheduleMicrotask } from '../dist/core/scheduler.js';
+import { isInDevMode, setDevMode } from '../dist/core/dev.js';
 import { bind, configure, createPortalTarget, scrollToVirtualIndex }    from '../dist/runtime/bind.js';
+import { fromHtml } from '../dist/runtime/fromHtml.js';
 
 // ─── shared helpers ─────────────────────────────────────────────────────────
 
@@ -81,6 +84,61 @@ async function captureWarns(fn: () => void | Promise<void>): Promise<string[]> {
   try { await fn(); }
   finally { console.warn = orig; }
   return warns;
+}
+
+async function captureZeroDelayTimeouts<T>(
+  fn: () => Promise<T> | T
+): Promise<Array<() => void>> {
+  const scheduled: Array<() => void> = [];
+  const originalSetTimeout = globalThis.setTimeout;
+
+  (globalThis as any).setTimeout = ((handler: TimerHandler, timeout?: number, ...args: any[]) => {
+    if (timeout === 0 && typeof handler === 'function') {
+      scheduled.push(() => handler(...args));
+      return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+    }
+    return originalSetTimeout(handler, timeout, ...args);
+  }) as typeof setTimeout;
+
+  try {
+    await fn();
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+
+  return scheduled;
+}
+
+async function withTrustedTypesInnerHtmlEnforcement(
+  doc: Document,
+  fn: () => void | Promise<void>
+): Promise<void> {
+  const descriptor = Object.getOwnPropertyDescriptor(doc.defaultView!.Element.prototype, 'innerHTML');
+  assert.ok(descriptor?.get);
+  assert.ok(descriptor?.set);
+
+  Object.defineProperty(doc.defaultView!.Element.prototype, 'innerHTML', {
+    configurable: true,
+    enumerable: descriptor.enumerable ?? false,
+    get: descriptor.get,
+    set(value: unknown) {
+      if (typeof value === 'string') {
+        throw new TypeError('TrustedHTML required');
+      }
+
+      const trustedHtml = value && typeof value === 'object' && '__trusted_html' in (value as Record<string, unknown>)
+        ? (value as Record<string, unknown>).__trusted_html
+        : value;
+
+      return descriptor.set!.call(this, String(trustedHtml ?? ''));
+    },
+  });
+
+  try {
+    await fn();
+  } finally {
+    Object.defineProperty(doc.defaultView!.Element.prototype, 'innerHTML', descriptor);
+  }
 }
 
 // ─── 1  Root-inclusive queries ──────────────────────────────────────────────
@@ -1443,9 +1501,854 @@ test('d-attr – reactive toggle: true → false → true', async () => {
   });
 });
 
+test('d-attr – blocks javascript: URL in href and warns', async () => {
+  await withDom(async (doc) => {
+    const url = signal(' javascript:alert(1)');
+    const root = el(doc, '<a d-attr-href="url">x</a>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { url });
+      await tick(10);
+    });
+
+    assert.equal(root.getAttribute('href'), null);
+    assert.ok(warns.some(w => w.includes('blocked dangerous URL protocol')));
+  });
+});
+
+test('d-attr – blocks data: and file: URL protocols on common URL attributes', async () => {
+  await withDom(async (doc) => {
+    const href = signal('data:text/html,%3Cscript%3Ealert(1)%3C/script%3E');
+    const src = signal('file:///etc/passwd');
+    const root = el(doc, `
+      <div>
+        <a id="link" d-attr-href="href">x</a>
+        <img id="image" d-attr-src="src" />
+      </div>
+    `);
+
+    const warns = await captureWarns(async () => {
+      bind(root, { href, src });
+      await tick(10);
+    });
+
+    const link = root.querySelector('#link');
+    const image = root.querySelector('#image');
+    assert.ok(link);
+    assert.ok(image);
+    assert.equal(link.getAttribute('href'), null);
+    assert.equal(image.getAttribute('src'), null);
+    assert.ok(warns.some(w => w.includes('blocked dangerous URL protocol')));
+  });
+});
+
+test('d-attr – allows safe URL protocols and relative URLs', async () => {
+  await withDom(async (doc) => {
+    const mailto = signal('mailto:test@example.com');
+    const blob = signal('blob:https://app.example/1234');
+    const relative = signal('/profile');
+    const root = el(doc, `
+      <div>
+        <a id="mailto" d-attr-href="mailto">email</a>
+        <a id="blob" d-attr-href="blob">blob</a>
+        <img id="relative" d-attr-src="relative" />
+      </div>
+    `);
+
+    bind(root, { mailto, blob, relative });
+    await tick(10);
+
+    assert.equal(root.querySelector('#mailto')?.getAttribute('href'), 'mailto:test@example.com');
+    assert.equal(root.querySelector('#blob')?.getAttribute('href'), 'blob:https://app.example/1234');
+    assert.equal(root.querySelector('#relative')?.getAttribute('src'), '/profile');
+  });
+});
+
+test('d-attr – blocks inline event handler attributes and warns', async () => {
+  await withDom(async (doc) => {
+    const handlerCode = signal('alert(1)');
+    const root = el(doc, '<button d-attr-onclick="handlerCode">x</button>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { handlerCode });
+      await tick(10);
+    });
+
+    assert.equal(root.getAttribute('onclick'), null);
+    assert.ok(warns.some(w => w.includes('inline event handler attributes are blocked')));
+  });
+});
+
+test('d-attr – blocks SVG SMIL inline handler attributes and warns', async () => {
+  await withDom(async (doc) => {
+    const handlerCode = signal('alert(1)');
+    const root = el(doc, '<svg><animate id="anim" d-attr-onbegin="handlerCode"></animate></svg>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { handlerCode });
+      await tick(10);
+    });
+
+    const animate = root.querySelector('#anim');
+    assert.ok(animate);
+    assert.equal(animate.getAttribute('onbegin'), null);
+    assert.ok(warns.some(w => w.includes('inline event handler attributes are blocked')));
+  });
+});
+
+test('d-attr – allows non-event custom attributes starting with on', async () => {
+  await withDom(async (doc) => {
+    const onboardingId = signal('flow-123');
+    const root = el(doc, '<my-card d-attr-onboarding-id="onboardingId"></my-card>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { onboardingId });
+      await tick(10);
+    });
+
+    assert.equal(root.getAttribute('onboarding-id'), 'flow-123');
+    assert.ok(!warns.some(w => w.includes('inline event handler attributes are blocked')));
+  });
+});
+
+test('d-attr – security.strict blocks srcdoc attribute', async () => {
+  await withDom(async (doc) => {
+    const srcdoc = signal('<script>alert(1)</script>');
+    const root = el(doc, '<iframe d-attr-srcdoc="srcdoc"></iframe>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { srcdoc }, { security: { strict: true } });
+      await tick(10);
+    });
+
+    assert.equal(root.getAttribute('srcdoc'), null);
+    assert.ok(warns.some(w => w.includes('blocked raw HTML attribute')));
+  });
+});
+
+test('d-attr – security.strict false does not inherit strict-only blockers from defaults', async () => {
+  await withDom(async (doc) => {
+    const srcdoc = signal('<p>ok</p>');
+    const root = el(doc, '<iframe d-attr-srcdoc="srcdoc"></iframe>');
+
+    bind(root, { srcdoc }, { security: { strict: false } });
+    await tick(10);
+
+    assert.equal(root.getAttribute('srcdoc'), '<p>ok</p>');
+  });
+});
+
+test('d-attr – blocks dangerous protocols on object data attributes', async () => {
+  await withDom(async (doc) => {
+    const url = signal('data:text/html,%3Cscript%3Ealert(1)%3C/script%3E');
+    const root = el(doc, '<object d-attr-data="url"></object>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { url });
+      await tick(10);
+    });
+
+    assert.equal(root.getAttribute('data'), null);
+    assert.ok(warns.some(w => w.includes('blocked dangerous URL protocol')));
+  });
+});
+
+test('d-attr – security.strict is propagated to d-each clone bindings', async () => {
+  await withDom(async (doc) => {
+    const items = signal(['<b>x</b>']);
+    const root = el(doc, '<iframe d-each="items" d-attr-srcdoc="item"></iframe>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { items }, { security: { strict: true } });
+      await tick(10);
+    });
+
+    const iframe = doc.querySelector('iframe');
+    assert.ok(iframe);
+    assert.equal(iframe.getAttribute('srcdoc'), null);
+    assert.ok(warns.some(w => w.includes('blocked raw HTML attribute')));
+  });
+});
+
+test('security.warnAsError – throws in dev mode instead of warning', async () => {
+  await withDom(async (doc) => {
+    const handlerCode = 'alert(1)';
+    const root = el(doc, '<button d-attr-onclick="handlerCode">x</button>');
+
+    assert.throws(() => {
+      bind(root, { handlerCode }, { security: { warnAsError: true } });
+    });
+  });
+});
+
+test('security.warnAsError – clears stale blocked href before throwing', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<a href="javascript:alert(1)" d-attr-href="href">x</a>');
+
+    assert.throws(() => {
+      bind(root, { href: 'javascript:alert(2)' }, { security: { warnAsError: true } });
+    }, /blocked dangerous URL protocol/i);
+
+    assert.equal(root.getAttribute('href'), null);
+  });
+});
+
+test('security.warnAsError – clears stale srcdoc before heuristic HTML errors', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<iframe srcdoc="<script>alert(1)</script>" d-attr-srcdoc="markup"></iframe>');
+
+    assert.throws(() => {
+      bind(root, { markup: '<script>alert(2)</script>' }, {
+        security: {
+          warnAsError: true,
+          strict: false,
+          blockRawHtmlAttrs: false,
+        },
+      });
+    }, /suspicious HTML detected/i);
+
+    assert.equal(root.getAttribute('srcdoc'), null);
+  });
+});
+
+test('security.warnAsError – signal-backed security warnings fail outside effect scheduling', async () => {
+  await withDom(async (doc) => {
+    const href = signal('https://example.com');
+    const root = el(doc, '<a d-attr-href="href">x</a>');
+    const dispose = bind(root, { href }, { security: { warnAsError: true } });
+    await tick(10);
+
+    try {
+      const scheduledFatalThrows = await captureZeroDelayTimeouts(async () => {
+        href.set('javascript:alert(1)');
+        await tick(20);
+      });
+
+      assert.equal(scheduledFatalThrows.length > 0, true);
+      assert.throws(() => {
+        scheduledFatalThrows[0]();
+      }, /blocked dangerous URL protocol/i);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test('security.warnAsError – non-security runtime warnings remain warnings', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-text="missing"></div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, {}, { security: { warnAsError: true } });
+      await tick(10);
+    });
+
+    assert.ok(warns.some(w => w.includes('d-text: "missing" not found in context')));
+  });
+});
+
+test('security.warnAsError – clears stale innerHTML before sanitizeHtml requirement errors', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"><script>alert(1)</script></div>');
+
+    assert.throws(() => {
+      bind(root, { content: '<b>blocked</b>' }, {
+        useDefaultSanitizeHtml: false,
+        security: {
+          warnAsError: true,
+          requireHtmlSanitizerForDHtml: true,
+        },
+      });
+    }, /requires a custom sanitizeHtml/i);
+
+    assert.equal(root.innerHTML, '');
+  });
+});
+
+test('security.warnAsError – allows d-html content made safe by the default sanitizer', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+
+    assert.doesNotThrow(() => {
+      bind(root, { content: '<script>alert(1)</script><b>ok</b>' }, {
+        security: { warnAsError: true },
+      });
+    });
+
+    assert.equal(root.innerHTML, '<b>ok</b>');
+  });
+});
+
+test('security.warnAsError – aborted bind rolls back effects and two-way listeners', async () => {
+  await withDom(async (doc) => {
+    const name = signal('start');
+    const originalSet = name.set.bind(name);
+    let setCalls = 0;
+    name.set = (nextValue) => {
+      setCalls++;
+      originalSet(nextValue);
+    };
+
+    const root = el(doc, `
+      <div>
+        <span class="value" d-text="name"></span>
+        <input class="field" d-bind-value="name" />
+        <div class="html" d-html="content"></div>
+      </div>
+    `);
+
+    assert.throws(() => {
+      bind(root, { name, content: '<b>blocked</b>' }, {
+        useDefaultSanitizeHtml: false,
+        security: {
+          warnAsError: true,
+          requireHtmlSanitizerForDHtml: true,
+        },
+      });
+    }, /requires a custom sanitizeHtml/i);
+
+    const valueEl = root.querySelector('.value');
+    const field = root.querySelector('.field') as HTMLInputElement | null;
+    assert.ok(valueEl);
+    assert.ok(field);
+    assert.equal(valueEl.textContent, 'start');
+    assert.equal(field.value, '');
+
+    setCalls = 0;
+    name.set('after-failure');
+    await tick(10);
+    assert.equal(setCalls, 1);
+    assert.equal(valueEl.textContent, 'start');
+    assert.equal(field.value, '');
+
+    setCalls = 0;
+    field.value = 'typed-while-failed';
+    field.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+    assert.equal(setCalls, 0);
+    assert.equal(name(), 'after-failure');
+
+    field.setAttribute('d-bind-value', 'name');
+    bind(root, { name, content: '<b>ok</b>' }, {
+      sanitizeHtml: (html) => html,
+      security: {
+        warnAsError: true,
+        requireHtmlSanitizerForDHtml: true,
+      },
+    });
+    await tick(10);
+
+    assert.equal(valueEl.textContent, 'after-failure');
+    assert.equal(field.value, 'after-failure');
+
+    setCalls = 0;
+    field.value = 'retry-success';
+    field.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+    await tick(10);
+    assert.equal(setCalls, 1);
+    assert.equal(name(), 'retry-success');
+  });
+});
+
+test('security.warnAsError – production mode does not throw on Trusted Types sink failures', async () => {
+  await withDom(async (doc) => {
+    const previousDevMode = isInDevMode();
+    setDevMode(false);
+
+    try {
+      const root = el(doc, '<div d-html="content"></div>');
+
+      assert.doesNotThrow(() => {
+        bind(root, { content: '<b>blocked</b>' }, {
+          security: {
+            trustedTypes: true,
+            trustedTypesPolicyName: 'prod-policy',
+            trustedTypesPolicy: {
+              createHTML: () => {
+                throw new Error('policy rejected markup');
+              },
+            },
+            warnAsError: true,
+          },
+        });
+      });
+
+      assert.equal(root.innerHTML, '');
+    } finally {
+      setDevMode(previousDevMode);
+    }
+  });
+});
+
+test('trustedTypes – html sinks do not auto-enable runtime policies by default', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const content = signal('<b>ok</b>');
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string) => {
+        calls.push(name);
+        return { createHTML: (input: string) => input };
+      },
+    };
+
+    try {
+      bind(root, { content });
+      await tick(10);
+
+      assert.equal(calls.length, 0);
+      assert.equal(root.innerHTML.includes('<b>ok</b>'), true);
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – runtime uses "dalila" as the default policy name', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string, rules: { createHTML: (input: string) => string }) => {
+        calls.push(name);
+        return { createHTML: rules.createHTML };
+      },
+    };
+
+    try {
+      bind(root, { content: '<b>ok</b>' }, {
+        security: {
+          trustedTypes: true,
+        },
+      });
+      await tick(10);
+
+      assert.ok(calls.includes('dalila'));
+      assert.equal(root.innerHTML.includes('<b>ok</b>'), true);
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – creates and uses runtime policy for HTML sinks when available', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const content = signal('<b>ok</b>');
+
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string, rules: { createHTML: (input: string) => string }) => {
+        calls.push(name);
+        return { createHTML: rules.createHTML };
+      },
+    };
+
+    try {
+      bind(root, { content }, { security: { trustedTypes: true, trustedTypesPolicyName: 'dalila-test' } });
+      await tick(10);
+      assert.ok(calls.includes('dalila-test'));
+      assert.equal(root.innerHTML.includes('<b>ok</b>'), true);
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – retries policy creation when API appears after first bind', async () => {
+  await withDom(async (doc) => {
+    const rootA = el(doc, '<div d-html="content"></div>');
+    const rootB = el(doc, '<div d-html="content"></div>');
+    const content = signal('<b>ok</b>');
+    const policyName = `dalila-late-polyfill-${Math.random().toString(36).slice(2)}`;
+
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    try {
+      delete (globalThis as any).trustedTypes;
+      bind(rootA, { content }, { security: { trustedTypes: true, trustedTypesPolicyName: policyName } });
+      await tick(10);
+
+      (globalThis as any).trustedTypes = {
+        createPolicy: (name: string, rules: { createHTML: (input: string) => string }) => {
+          calls.push(name);
+          return { createHTML: rules.createHTML };
+        },
+      };
+
+      bind(rootB, { content }, { security: { trustedTypes: true, trustedTypesPolicyName: policyName } });
+      await tick(10);
+
+      assert.ok(calls.includes(policyName));
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – reuses provided policy when lookup APIs are unavailable', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const content = signal('<b>ok</b>');
+    const policy = {
+      createHTML: (input: string) => input,
+    };
+
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string) => {
+        calls.push(name);
+        throw new Error(`duplicate policy: ${name}`);
+      },
+    };
+
+    try {
+      bind(root, { content }, {
+        security: {
+          trustedTypes: true,
+          trustedTypesPolicyName: 'existing-policy',
+          trustedTypesPolicy: policy,
+        },
+      });
+      await tick(10);
+
+      assert.equal(calls.length, 0);
+      assert.equal(root.innerHTML.includes('<b>ok</b>'), true);
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – duplicate policy names fail closed when lookup APIs are unavailable', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+    const policyName = `duplicate-policy-${Math.random().toString(36).slice(2)}`;
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string) => {
+        calls.push(name);
+        throw new Error(`duplicate policy: ${name}`);
+      },
+    };
+
+    try {
+      assert.throws(() => {
+        bind(root, { content: '<b>blocked</b>' }, {
+          security: {
+            trustedTypes: true,
+            trustedTypesPolicyName: policyName,
+          },
+        });
+      }, new RegExp(`Trusted Types policy "${policyName}" could not be created or reused|duplicate policy: ${policyName}`));
+
+      assert.ok(calls.includes(policyName));
+      assert.equal(root.innerHTML, '');
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('fromHtml – uses configured Trusted Types policy name for template parsing', async () => {
+  await withDom(async () => {
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string, rules: { createHTML: (input: string) => string }) => {
+        calls.push(name);
+        if (name !== 'dalila-fromhtml') {
+          throw new Error(`unexpected policy ${name}`);
+        }
+        return { createHTML: rules.createHTML };
+      },
+    };
+
+    try {
+      configure({
+        security: {
+          trustedTypes: true,
+          trustedTypesPolicyName: 'dalila-fromhtml',
+        },
+      });
+
+      const root = fromHtml('<section><span d-text="name"></span></section>', {
+        data: { name: 'Dalila' },
+      });
+      await tick(10);
+
+      assert.ok(calls.includes('dalila-fromhtml'));
+      assert.equal(root.textContent, 'Dalila');
+    } finally {
+      configure({});
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('fromHtml – surfaces clear Trusted Types configuration errors when policy creation fails', async () => {
+  await withDom(async () => {
+    const original = (globalThis as any).trustedTypes;
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string) => {
+        throw new Error(`duplicate policy: ${name}`);
+      },
+    };
+
+    try {
+      assert.throws(() => {
+        fromHtml('<section><span>Blocked</span></section>', {
+          security: {
+            trustedTypes: true,
+            trustedTypesPolicyName: 'existing-template-policy',
+          },
+        });
+      }, /Trusted Types policy "existing-template-policy" could not be created or reused|duplicate policy: existing-template-policy/i);
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('fromHtml – propagates local sanitizeHtml for strict d-html bindings', async () => {
+  await withDom(async () => {
+    const root = fromHtml('<section><div d-html="content"></div></section>', {
+      data: { content: '<img src=x onerror=alert(1)><b>ok</b>' },
+      sanitizeHtml: (html) => html.replace(/<img[^>]*>/gi, ''),
+      security: { strict: true },
+    });
+    await tick(10);
+
+    const htmlTarget = root.querySelector('[d-html]');
+    assert.ok(htmlTarget);
+    assert.equal(htmlTarget.innerHTML, '<b>ok</b>');
+  });
+});
+
+test('trustedTypes – policy rejections do not fall back to raw HTML writes', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const policy = {
+      createHTML: (_input: string) => {
+        throw new Error('policy rejected markup');
+      },
+    };
+
+    assert.throws(() => {
+      bind(root, { content: '<b>blocked</b>' }, {
+        security: {
+          trustedTypes: true,
+          trustedTypesPolicyName: 'rejecting-policy',
+          trustedTypesPolicy: policy,
+        },
+      });
+    }, /policy rejected markup/i);
+    assert.equal(root.innerHTML, '');
+  });
+});
+
+test('trustedTypes – built-in d-html sanitizer runs before rejecting policy sees markup', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const warns = await captureWarns(async () => {
+      bind(root, { content: '<img src=x onerror=alert(1)><b>ok</b>' }, {
+        security: {
+          trustedTypes: true,
+          trustedTypesPolicyName: 'sanitize-before-policy',
+          trustedTypesPolicy: {
+            createHTML: (input: string) => {
+              if (/onerror\s*=|<script[\s>]/i.test(input)) {
+                throw new Error('unsafe markup rejected');
+              }
+              return input;
+            },
+          },
+        },
+      });
+      await tick(10);
+    });
+
+    assert.equal(root.innerHTML.includes('onerror'), false);
+    assert.equal(root.innerHTML.includes('<img'), true);
+    assert.equal(root.innerHTML.includes('<b>ok</b>'), true);
+    assert.equal(warns.some(w => w.includes('sanitizeHtml() failed')), false);
+  });
+});
+
+test('trustedTypes – built-in d-html sanitizer works under enforced Trusted Types', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string, rules: { createHTML: (input: string) => string }) => {
+        calls.push(name);
+        return {
+          createHTML: (input: string) => ({ __trusted_html: rules.createHTML(input) }),
+        };
+      },
+    };
+
+    try {
+      await withTrustedTypesInnerHtmlEnforcement(doc, async () => {
+        bind(root, { content: '<b>safe</b>' }, {
+          security: {
+            trustedTypes: true,
+            trustedTypesPolicyName: 'enforced-tt',
+          },
+        });
+        await tick(10);
+      });
+
+      assert.equal(root.innerHTML, '<b>safe</b>');
+      assert.ok(calls.includes('enforced-tt'));
+      assert.ok(calls.includes('enforced-tt--dalila-parse'));
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – enforced mode reuses provided policy without creating parse policy', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string) => {
+        calls.push(name);
+        throw new Error(`unexpected policy creation: ${name}`);
+      },
+    };
+
+    const policy = {
+      createHTML: (input: string) => ({ __trusted_html: input }),
+    };
+
+    try {
+      await withTrustedTypesInnerHtmlEnforcement(doc, async () => {
+        bind(root, { content: '<b>safe</b>' }, {
+          security: {
+            trustedTypes: true,
+            trustedTypesPolicyName: 'existing-policy',
+            trustedTypesPolicy: policy,
+          },
+        });
+        await tick(10);
+      });
+
+      assert.equal(root.innerHTML, '<b>safe</b>');
+      assert.equal(calls.length, 0);
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – enforced mode sanitizes before provided policy sees markup', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+    const original = (globalThis as any).trustedTypes;
+    const calls: string[] = [];
+
+    (globalThis as any).trustedTypes = {
+      createPolicy: (name: string) => {
+        calls.push(name);
+        throw new Error(`unexpected policy creation: ${name}`);
+      },
+    };
+
+    const policy = {
+      createHTML: (input: string) => {
+        if (/onerror\s*=|<script[\s>]/i.test(input)) {
+          throw new Error('unsafe markup rejected');
+        }
+        return { __trusted_html: input };
+      },
+    };
+
+    try {
+      const warns = await captureWarns(async () => {
+        await withTrustedTypesInnerHtmlEnforcement(doc, async () => {
+          bind(root, { content: '<img src=x onerror=alert(1)><b>ok</b>' }, {
+            security: {
+              trustedTypes: true,
+              trustedTypesPolicyName: 'existing-policy',
+              trustedTypesPolicy: policy,
+            },
+          });
+          await tick(10);
+        });
+      });
+
+      assert.equal(root.innerHTML.includes('onerror'), false);
+      assert.equal(root.innerHTML.includes('<img'), true);
+      assert.equal(root.innerHTML.includes('<b>ok</b>'), true);
+      assert.equal(calls.length, 0);
+      assert.equal(warns.some(w => w.includes('sanitizeHtml() failed')), false);
+    } finally {
+      (globalThis as any).trustedTypes = original;
+    }
+  });
+});
+
+test('trustedTypes – reactive policy rejections clear sink and fail with warnAsError', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<b>ok</b>');
+    const root = el(doc, '<div d-html="content"></div>');
+    const dispose = bind(root, { content }, {
+      security: {
+        trustedTypes: true,
+        trustedTypesPolicyName: 'reactive-reject',
+        trustedTypesPolicy: {
+          createHTML: (input: string) => {
+            if (input.includes('blocked')) {
+              throw new Error('policy rejected markup');
+            }
+            return input;
+          },
+        },
+        warnAsError: true,
+      },
+    });
+    await tick(10);
+
+    try {
+      assert.equal(root.innerHTML, '<b>ok</b>');
+
+      const scheduledFatalThrows = await captureZeroDelayTimeouts(async () => {
+        content.set('<b>blocked</b>');
+        await tick(20);
+      });
+
+      assert.equal(root.innerHTML, '');
+      assert.equal(scheduledFatalThrows.length > 0, true);
+      assert.throws(() => {
+        scheduledFatalThrows[0]();
+      }, /failed to apply Trusted Types HTML.*policy rejected markup|policy rejected markup/i);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 // ─── 13  d-html XSS warning (dev mode) ─────────────────────────────────────
 
-test('d-html – warns on <script> in dev mode, still renders', async () => {
+test('d-html – warns on <script> in dev mode, built-in sanitizer removes it', async () => {
   await withDom(async (doc) => {
     const content = signal('<script>alert(1)</script>');
     const root = el(doc, '<div d-html="content"></div>');
@@ -1455,10 +2358,9 @@ test('d-html – warns on <script> in dev mode, still renders', async () => {
       await tick(10);
     });
 
-    assert.ok(warns.some(w => w.includes('potentially unsafe')),
+    assert.ok(warns.some(w => w.includes('suspicious HTML detected')),
       'must emit XSS warning');
-    assert.ok(root.innerHTML.includes('script'),
-      'd-html is intentionally raw – content still renders');
+    assert.equal(root.innerHTML, '');
   });
 });
 
@@ -1472,7 +2374,347 @@ test('d-html – warns on onerror= pattern in dev mode', async () => {
       await tick(10);
     });
 
-    assert.ok(warns.some(w => w.includes('potentially unsafe')));
+    assert.ok(warns.some(w => w.includes('suspicious HTML detected')));
+  });
+});
+
+test('d-html – does not warn on javascript: or onload= text content', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<pre>javascript:alert(1)</pre><code>onload=demo()</code>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { content });
+      await tick(10);
+    });
+
+    assert.equal(warns.some(w => w.includes('suspicious HTML detected')), false);
+    assert.equal(root.innerHTML, '<pre>javascript:alert(1)</pre><code>onload=demo()</code>');
+  });
+});
+
+test('d-attr-srcdoc – warns on encoded data:text/html payloads in raw HTML mode', async () => {
+  await withDom(async (doc) => {
+    const markup = signal('<iframe src="data:text/html,%3Cscript%3Ealert(1)%3C/script%3E"></iframe>');
+    const root = el(doc, '<iframe d-attr-srcdoc="markup"></iframe>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { markup }, {
+        security: {
+          strict: false,
+          blockRawHtmlAttrs: false,
+        },
+      });
+      await tick(10);
+    });
+
+    assert.ok(warns.some(w => w.includes('suspicious HTML detected')));
+    assert.equal(root.getAttribute('srcdoc')?.includes('data:text/html'), true);
+  });
+});
+
+test('d-html – built-in sanitizer removes blocked tags like iframe', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<p>ok</p><iframe src="https://evil.example"></iframe>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content });
+    await tick(10);
+
+    assert.equal(root.innerHTML.includes('<iframe'), false);
+    assert.equal(root.innerHTML.includes('<p>ok</p>'), true);
+  });
+});
+
+test('d-html – built-in sanitizer removes style tags', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<style>body{display:none}</style><p>ok</p>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content });
+    await tick(10);
+
+    assert.equal(root.innerHTML.includes('<style'), false);
+    assert.equal(root.innerHTML.includes('display:none'), false);
+    assert.equal(root.innerHTML.includes('<p>ok</p>'), true);
+  });
+});
+
+test('d-html – built-in sanitizer strips inline style attributes', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<div style="position:fixed;inset:0;color:red">ok</div>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content });
+    await tick(10);
+
+    assert.equal(root.innerHTML.includes('style='), false);
+    assert.equal(root.innerHTML.includes('position:fixed'), false);
+    assert.equal(root.textContent, 'ok');
+  });
+});
+
+test('d-html – built-in sanitizer strips javascript: URL attributes', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<a href="javascript:alert(1)">click</a>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content });
+    await tick(10);
+
+    assert.equal(root.innerHTML.includes('javascript:'), false);
+    assert.equal(root.innerHTML.includes('href='), false);
+    assert.equal(root.innerHTML.includes('click'), true);
+  });
+});
+
+test('d-html – built-in sanitizer strips data: and file: URL attributes', async () => {
+  await withDom(async (doc) => {
+    const content = signal([
+      '<a href="data:text/html,%3Cscript%3Ealert(1)%3C/script%3E">click</a>',
+      '<img src="file:///etc/passwd" alt="blocked">',
+    ].join(''));
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content });
+    await tick(10);
+
+    assert.equal(root.innerHTML.includes('data:text/html'), false);
+    assert.equal(root.innerHTML.includes('file:///etc/passwd'), false);
+    assert.equal(root.innerHTML.includes('href='), false);
+    assert.equal(root.innerHTML.includes('src='), false);
+    assert.equal(root.innerHTML.includes('click'), true);
+  });
+});
+
+test('d-html – built-in sanitizer also sanitizes nested template contents', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<template><img src=x onerror=alert(1)><script>alert(1)</script><b>ok</b></template>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content });
+    await tick(10);
+
+    const nestedTemplate = root.querySelector('template') as HTMLTemplateElement | null;
+    assert.ok(nestedTemplate);
+    assert.equal(nestedTemplate.innerHTML.includes('onerror'), false);
+    assert.equal(nestedTemplate.innerHTML.includes('<script'), false);
+    assert.equal(nestedTemplate.innerHTML.includes('<b>ok</b>'), true);
+  });
+});
+
+test('d-html – uses sanitizeHtml override when provided', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<img src=x onerror=alert(1)><b>ok</b>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content }, {
+      sanitizeHtml: (html) => html.replace(/<img[^>]*>/gi, ''),
+    });
+    await tick(10);
+
+    assert.equal(root.innerHTML.includes('<img'), false);
+    assert.equal(root.innerHTML.includes('<b>ok</b>'), true);
+  });
+});
+
+test('d-html – custom sanitizeHtml runs before warnAsError heuristic checks', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<script>alert(1)</script><b>ok</b>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    const scheduledFatalThrows = await captureZeroDelayTimeouts(async () => {
+      bind(root, { content }, {
+        sanitizeHtml: (html) => html.replace(/<script[\s\S]*?<\/script>/gi, ''),
+        security: { warnAsError: true },
+      });
+      await tick(20);
+    });
+
+    assert.equal(scheduledFatalThrows.length, 0);
+    assert.equal(root.innerHTML, '<b>ok</b>');
+  });
+});
+
+test('d-html – requireHtmlSanitizerForDHtml disables built-in fallback and renders empty', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<b>ok</b>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { content }, {
+        useDefaultSanitizeHtml: false,
+        security: { requireHtmlSanitizerForDHtml: true },
+      });
+      await tick(10);
+    });
+
+    assert.ok(warns.some(w => w.includes('requires a custom sanitizeHtml()')));
+    assert.equal(root.innerHTML, '');
+  });
+});
+
+test('d-html – requireHtmlSanitizerForDHtml fails fast with warnAsError', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+
+    assert.throws(() => {
+      bind(root, { content: '<b>ok</b>' }, {
+        useDefaultSanitizeHtml: false,
+        security: {
+          requireHtmlSanitizerForDHtml: true,
+          warnAsError: true,
+        },
+      });
+    }, /requires a custom sanitizeHtml\(\)/i);
+  });
+});
+
+test('d-html – useDefaultSanitizeHtml false preserves raw HTML when strict mode is disabled', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, '<div d-html="content"></div>');
+
+    bind(root, { content: '<style>body{display:none}</style><p>ok</p>' }, {
+      useDefaultSanitizeHtml: false,
+      security: { strict: false },
+    });
+    await tick(10);
+
+    assert.equal(root.innerHTML.includes('<style>body{display:none}</style>'), true);
+    assert.equal(root.innerHTML.includes('<p>ok</p>'), true);
+  });
+});
+
+test('d-html – sanitizeHtml is propagated to d-each clone bindings', async () => {
+  await withDom(async (doc) => {
+    const items = signal(['<img src=x><b>ok</b>']);
+    const root = el(doc, '<div d-each="items" d-html="item"></div>');
+
+    bind(root, { items }, {
+      sanitizeHtml: (html) => html.replace(/<img[^>]*>/gi, ''),
+    });
+    await tick(10);
+
+    const div = doc.querySelector('div');
+    assert.ok(div);
+    assert.equal(div.innerHTML, '<b>ok</b>');
+  });
+});
+
+test('d-html – useDefaultSanitizeHtml false is propagated to d-each clone bindings', async () => {
+  await withDom(async (doc) => {
+    const items = signal(['<b>ok</b>']);
+    const root = el(doc, '<div d-each="items" d-html="item"></div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { items }, {
+        useDefaultSanitizeHtml: false,
+        security: { requireHtmlSanitizerForDHtml: true },
+      });
+      await tick(10);
+    });
+
+    const div = doc.querySelector('div');
+    assert.ok(div);
+    assert.equal(div.innerHTML, '');
+    assert.ok(warns.some(w => w.includes('requires a custom sanitizeHtml()')));
+  });
+});
+
+test('d-html – security.strict requires custom sanitizeHtml and renders empty without it', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<img src=x onerror=alert(1)><b>safe</b>');
+    const root = el(doc, '<div d-html="content"></div>');
+
+    const warns = await captureWarns(async () => {
+      bind(root, { content }, {
+        useDefaultSanitizeHtml: false,
+        security: { strict: true },
+      });
+      await tick(10);
+    });
+
+    assert.ok(warns.some(w => w.includes('requires a custom sanitizeHtml()')));
+    assert.equal(root.innerHTML, '');
+  });
+});
+
+test('runtime defaults – configure({}) restores the secure default profile', async () => {
+  await withDom(async (doc) => {
+    const markup = signal('<p>trusted</p>');
+
+    configure({
+      security: {
+        strict: false,
+        blockRawHtmlAttrs: false,
+        requireHtmlSanitizerForDHtml: false,
+      },
+    });
+
+    const relaxedRoot = el(doc, '<iframe d-attr-srcdoc="markup"></iframe>');
+    bind(relaxedRoot, { markup });
+    await tick(10);
+    assert.equal(relaxedRoot.getAttribute('srcdoc'), '<p>trusted</p>');
+
+    configure({});
+
+    const hardenedRoot = el(doc, '<iframe d-attr-srcdoc="markup"></iframe>');
+    await captureWarns(async () => {
+      bind(hardenedRoot, { markup });
+      await tick(10);
+    });
+    assert.equal(hardenedRoot.getAttribute('srcdoc'), null);
+  });
+});
+
+test('runtime defaults – use DOMPurify automatically when available', async () => {
+  await withDom(async (doc) => {
+    configure({});
+
+    const originalDomPurify = (globalThis as any).DOMPurify;
+    const calls: Array<Record<string, unknown>> = [];
+    (globalThis as any).DOMPurify = {
+      sanitize: (html: string, options: Record<string, unknown>) => {
+        calls.push(options);
+        return html.replace(/<img[^>]*>/gi, '');
+      },
+    };
+
+    try {
+      const content = signal('<img src=x onerror=alert(1)><b>safe</b>');
+      const root = el(doc, '<div d-html="content"></div>');
+
+      bind(root, { content });
+      await tick(10);
+
+      assert.equal(calls.length, 1);
+      assert.equal(root.innerHTML, '<b>safe</b>');
+    } finally {
+      (globalThis as any).DOMPurify = originalDomPurify;
+      configure({});
+    }
+  });
+});
+
+test('configure() – global sanitizeHtml applies to d-html and local override wins', async () => {
+  await withDom(async (doc) => {
+    const content = signal('<i>a</i><b>b</b>');
+    const root1 = el(doc, '<div d-html="content"></div>');
+    const root2 = el(doc, '<div d-html="content"></div>');
+
+    configure({
+      sanitizeHtml: (html) => html.replace(/<i>|<\/i>/g, ''),
+    });
+
+    bind(root1, { content });
+    bind(root2, { content }, {
+      sanitizeHtml: (html) => html.replace(/<b>|<\/b>/g, ''),
+    });
+    await tick(10);
+
+    assert.equal(root1.innerHTML, 'a<b>b</b>');
+    assert.equal(root2.innerHTML, '<i>a</i>b');
+    configure({});
   });
 });
 

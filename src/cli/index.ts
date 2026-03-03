@@ -24,7 +24,7 @@ Usage:
   dalila routes init                  Initialize app and generate routes outputs
   dalila routes watch [options]       Watch routes and regenerate outputs on changes
   dalila routes --help                Show routes command help
-  dalila check [path] [--strict]     Static analysis of HTML templates against loaders
+  dalila check [path] [--strict]     Static analysis plus project security smoke
   dalila help                         Show this help message
 
 Options:
@@ -65,10 +65,11 @@ function showCheckHelp() {
 🐰✂️  Dalila CLI - Check
 
 Usage:
-  dalila check [path] [options]     Static analysis of HTML templates
+  dalila check [path] [options]     Static analysis of HTML templates + project security smoke
 
 Validates that identifiers used in HTML templates ({expr}, d-* directives)
 match the return type of the corresponding loader() in TypeScript.
+Also runs project-wide security smoke checks for obvious raw HTML / XSS patterns.
 
 Arguments:
   [path]          App directory to check (default: src/app)
@@ -188,6 +189,21 @@ function resolveDefaultAppDir(cwd: string): string {
   }
 
   return path.join(appRoot, relToRoot);
+}
+
+function resolveDefaultSecuritySmokePath(cwd: string): string {
+  const resolvedCwd = path.resolve(cwd);
+  const projectRoot = findProjectRoot(resolvedCwd);
+  if (!projectRoot) {
+    return resolveDefaultAppDir(cwd);
+  }
+
+  const srcRoot = path.join(projectRoot, 'src');
+  if (fs.existsSync(srcRoot) && fs.statSync(srcRoot).isDirectory()) {
+    return srcRoot;
+  }
+
+  return resolveDefaultAppDir(cwd);
 }
 
 function resolveGenerateConfig(cliArgs: string[], cwd = process.cwd()): GenerateConfig {
@@ -407,10 +423,19 @@ async function main() {
       const appDir = positional[0]
         ? path.resolve(positional[0])
         : resolveDefaultAppDir(process.cwd());
+      const smokePath = positional[0]
+        ? appDir
+        : resolveDefaultSecuritySmokePath(process.cwd());
 
-      const { runCheck } = await import('./check.js');
-      const exitCode = await runCheck(appDir, { strict });
-      process.exit(exitCode);
+      const [{ runCheck }, { runSecuritySmokeChecks }] = await Promise.all([
+        import('./check.js'),
+        import('./security-smoke.js'),
+      ]);
+      const [checkExitCode, smokeExitCode] = await Promise.all([
+        runCheck(appDir, { strict }),
+        runSecuritySmokeChecks(smokePath),
+      ]);
+      process.exit(checkExitCode !== 0 || smokeExitCode !== 0 ? 1 : 0);
     }
   } else if (command === '--help' || command === '-h') {
     showHelp();

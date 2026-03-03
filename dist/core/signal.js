@@ -1,14 +1,21 @@
 import { getCurrentScope, withScope } from './scope.js';
 import { scheduleMicrotask, isBatching, queueInBatch } from './scheduler.js';
 import { aliasEffectToNode, linkSubscriberSetToSignal, registerEffect, registerSignal, trackDependency, trackEffectDispose, trackComputedRunEnd, trackComputedRunStart, trackEffectRunEnd, trackEffectRunStart, trackSignalRead, trackSignalWrite, untrackDependencyBySet, } from './devtools.js';
-/**
- * Optional global error handler for reactive execution.
- *
- * The runtime keeps running even if an effect/computed throws:
- * - if a handler is registered, we forward errors to it
- * - otherwise we log to the console
- */
 let effectErrorHandler = null;
+let defaultEffectErrorHandler = null;
+/**
+ * Error type for failures that must escape reactive scheduling.
+ *
+ * Normal effect errors are reported and swallowed so the graph keeps running.
+ * FatalEffectError is reserved for opt-in fail-fast modes such as security
+ * gates that should still surface as uncaught failures when raised from effects.
+ */
+export class FatalEffectError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'FatalEffectError';
+    }
+}
 /**
  * Register a global error handler for effects/computed invalidations.
  *
@@ -18,14 +25,37 @@ export function setEffectErrorHandler(handler) {
     effectErrorHandler = handler;
 }
 /**
+ * Register the framework-level fallback error handler.
+ *
+ * User-provided handlers registered via `setEffectErrorHandler()` always win.
+ */
+export function setDefaultEffectErrorHandler(handler) {
+    defaultEffectErrorHandler = handler;
+}
+function reportEffectErrorWithHandlers(error, source) {
+    if (effectErrorHandler) {
+        effectErrorHandler(error, source);
+        return;
+    }
+    if (defaultEffectErrorHandler) {
+        defaultEffectErrorHandler(error, source);
+        return;
+    }
+    console.error(`[Dalila] Error in ${source}:`, error);
+}
+/**
  * Normalize unknown throws into Error and route to the global handler (or console).
  */
 function reportEffectError(error, source) {
     const err = error instanceof Error ? error : new Error(String(error));
-    if (effectErrorHandler)
-        effectErrorHandler(err, source);
-    else
-        console.error(`[Dalila] Error in ${source}:`, err);
+    if (err instanceof FatalEffectError) {
+        reportEffectErrorWithHandlers(err, source);
+        setTimeout(() => {
+            throw err;
+        }, 0);
+        return;
+    }
+    reportEffectErrorWithHandlers(err, source);
 }
 /**
  * Currently executing effect for dependency collection.

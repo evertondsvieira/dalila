@@ -7,7 +7,7 @@
  * @module dalila/runtime
  */
 
-import { effect, createScope, withScope, isInDevMode, signal, Signal, computeVirtualRange } from '../core/index.js';
+import { effect, createScope, withScope, isInDevMode, signal, Signal, computeVirtualRange, getCurrentScope, FatalEffectError } from '../core/index.js';
 import { schedule, withSchedulerPriority, type SchedulerPriority } from '../core/scheduler.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
@@ -44,6 +44,15 @@ import {
   setVirtualScrollRestoreValue,
   VirtualHeightsIndex,
 } from './internal/virtual/virtual-list-helpers.js';
+import {
+  hasExecutableHtmlSinkPattern,
+  resolveHtmlSinkSecurityOptions,
+  setElementInnerHTML,
+  setTemplateInnerHTML,
+  setTemplateInnerHTMLForParsing,
+  type HtmlSinkSecurityOptions,
+  type TrustedTypesHtmlPolicy,
+} from './html-sinks.js';
 
 // ============================================================================
 // Types
@@ -95,10 +104,89 @@ export interface BindOptions {
    * @internal
    */
   _skipLifecycle?: boolean;
+
+  /**
+   * Optional sanitizer for raw HTML sinks (currently applied to `d-html`).
+   * Receives the HTML string and metadata about the sink.
+   * When omitted, Dalila applies a built-in baseline sanitizer.
+   */
+  sanitizeHtml?: SanitizeHtmlFn;
+
+  /**
+   * Keep Dalila's framework default HTML sanitizer enabled.
+   * Defaults to `true`.
+   *
+   * Set `false` when you want `sanitizeHtml` to be fully opt-in again for
+   * a specific bind/config scope.
+   */
+  useDefaultSanitizeHtml?: boolean;
+
+  /**
+   * Optional security hardening settings (opt-in).
+   */
+  security?: RuntimeSecurityOptions;
 }
 
 export interface BindContext {
   [key: string]: unknown;
+}
+
+export interface SanitizeHtmlContext {
+  sink: 'd-html';
+  bindingName: string;
+  element: Element;
+}
+
+export type SanitizeHtmlFn = (html: string, context: SanitizeHtmlContext) => string;
+
+export interface RuntimeSecurityOptions {
+  /**
+   * Enables stricter defaults. Dalila enables this in the framework-level
+   * production profile unless you override it via `configure()` / `bind()`.
+   * Current effects:
+   * - blocks `srcdoc` via `d-attr-*`
+   * - requires a custom sanitizer for `d-html`
+   */
+  strict?: boolean;
+
+  /**
+   * Explicitly block HTML-bearing attributes like `srcdoc` in `d-attr-*`.
+   * Defaults to `true` when `strict` is enabled.
+   */
+  blockRawHtmlAttrs?: boolean;
+
+  /**
+   * Require a configured sanitizer for `d-html`.
+   * When enabled, the built-in baseline sanitizer is NOT used as fallback:
+   * callers must provide `sanitizeHtml`, otherwise `d-html` renders empty
+   * and emits a security warning (or throws when `warnAsError` is enabled).
+   * Defaults to `true` when `strict` is enabled.
+   */
+  requireHtmlSanitizerForDHtml?: boolean;
+
+  /**
+   * Throw instead of warning in dev mode.
+   * Useful for CI/test gates that should fail on unsafe patterns.
+   */
+  warnAsError?: boolean;
+
+  /**
+   * Enable Trusted Types for HTML sinks when browser support is available.
+   * Opt-in. Explicitly set `trustedTypes: true`, or provide a policy name/policy.
+   */
+  trustedTypes?: boolean;
+
+  /**
+   * Trusted Types policy name used by runtime sinks.
+   * Defaults to `"dalila"`.
+   */
+  trustedTypesPolicyName?: string;
+
+  /**
+   * Existing Trusted Types policy to reuse for HTML sinks.
+   * Useful on browsers that enforce Trusted Types but do not expose a policy lookup API.
+   */
+  trustedTypesPolicy?: TrustedTypesHtmlPolicy | null;
 }
 
 /**
@@ -209,6 +297,27 @@ type BindScanPlan = {
 };
 
 let activeBindScanPlan: BindScanPlan | null = null;
+let warnAsErrorDepth = 0;
+const warnAsErrorScopes = new WeakSet<object>();
+
+function withWarnAsError<T>(enabled: boolean, run: () => T): T {
+  if (!enabled) return run();
+  warnAsErrorDepth += 1;
+  try {
+    return run();
+  } finally {
+    warnAsErrorDepth = Math.max(0, warnAsErrorDepth - 1);
+  }
+}
+
+function isWarnAsErrorEnabledForActiveScope(): boolean {
+  let scope = getCurrentScope();
+  while (scope) {
+    if (warnAsErrorScopes.has(scope)) return true;
+    scope = scope.parent;
+  }
+  return false;
+}
 
 function createBindScanPlan(root: Element): BindScanPlan {
   const boundary = root.closest('[data-dalila-internal-bound]');
@@ -364,9 +473,527 @@ function qsaIncludingRoot(root: Element, selector: string): Element[] {
 /**
  * Dev mode warning helper
  */
-function warn(message: string): void {
-  if (isInDevMode()) {
-    console.warn(`[Dalila] ${message}`);
+export function warnRuntime(message: string): void {
+  if (!isInDevMode()) return;
+  const formatted = `[Dalila] ${message}`;
+  console.warn(formatted);
+}
+
+export function warnSecurityRuntime(
+  message: string,
+  beforeThrow?: () => void
+): void {
+  if (!isInDevMode()) return;
+  const formatted = `[Dalila] ${message}`;
+  if (warnAsErrorDepth > 0 || isWarnAsErrorEnabledForActiveScope()) {
+    beforeThrow?.();
+    throw new FatalEffectError(formatted);
+  }
+  console.warn(formatted);
+}
+
+const warn = warnRuntime;
+const warnSecurity = warnSecurityRuntime;
+
+function clearHtmlSink(el: Element): void {
+  if (typeof (el as ParentNode).replaceChildren === 'function') {
+    (el as ParentNode).replaceChildren();
+    return;
+  }
+
+  while (el.firstChild) {
+    el.removeChild(el.firstChild);
+  }
+}
+
+function warnRawHtmlSinkHeuristic(
+  sink: string,
+  source: string,
+  html: string,
+  beforeThrow?: () => void
+): void {
+  if (!isInDevMode() || !hasExecutableHtmlSinkPattern(html)) return;
+  warnSecurityRuntime(
+    `${sink}: suspicious HTML detected in "${source}". Dev warning is heuristic only (not sanitization). Use trusted templates or sanitize before use.`,
+    beforeThrow
+  );
+}
+
+function mergeSecurityOptions(
+  base?: RuntimeSecurityOptions,
+  overrides?: RuntimeSecurityOptions
+): RuntimeSecurityOptions | undefined {
+  if (!base && !overrides) return undefined;
+  return {
+    ...(base ?? {}),
+    ...(overrides ?? {}),
+  };
+}
+
+function resolveSecurityOptions(options: BindOptions): Required<RuntimeSecurityOptions> {
+  const base = resolveHtmlSinkSecurityOptions(options.security as HtmlSinkSecurityOptions | undefined);
+  return {
+    strict: base.strict,
+    blockRawHtmlAttrs: options.security?.blockRawHtmlAttrs ?? base.strict,
+    requireHtmlSanitizerForDHtml: options.security?.requireHtmlSanitizerForDHtml ?? base.strict,
+    warnAsError: options.security?.warnAsError ?? false,
+    trustedTypes: base.trustedTypes,
+    trustedTypesPolicyName: base.trustedTypesPolicyName,
+    trustedTypesPolicy: base.trustedTypesPolicy,
+  };
+}
+
+const DEFAULT_SANITIZE_BLOCKED_TAGS = new Set([
+  'script',
+  'style',
+  'iframe',
+  'object',
+  'embed',
+  'link',
+  'meta',
+  'base',
+  'form',
+]);
+
+const VOID_HTML_TAGS = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+]);
+
+interface ParsedHtmlAttribute {
+  name: string;
+  value: string | null;
+}
+
+interface ParsedHtmlTag {
+  tagName: string;
+  attrs: ParsedHtmlAttribute[];
+  closing: boolean;
+  selfClosing: boolean;
+  endIndex: number;
+}
+
+function parseHtmlTag(source: string, startIndex: number): ParsedHtmlTag | null {
+  if (source[startIndex] !== '<') return null;
+
+  let i = startIndex + 1;
+  let closing = false;
+  if (source[i] === '/') {
+    closing = true;
+    i += 1;
+  }
+
+  if (!/[a-zA-Z]/.test(source[i] ?? '')) return null;
+
+  const tagNameStart = i;
+  while (i < source.length && /[\w:-]/.test(source[i])) {
+    i += 1;
+  }
+
+  const tagName = source.slice(tagNameStart, i);
+  if (!tagName) return null;
+
+  if (closing) {
+    while (i < source.length && source[i] !== '>') {
+      i += 1;
+    }
+    if (source[i] === '>') i += 1;
+    return {
+      tagName,
+      attrs: [],
+      closing: true,
+      selfClosing: false,
+      endIndex: i,
+    };
+  }
+
+  const attrs: ParsedHtmlAttribute[] = [];
+  let selfClosing = false;
+
+  while (i < source.length) {
+    while (i < source.length && /\s/.test(source[i])) {
+      i += 1;
+    }
+
+    if (i >= source.length) break;
+    if (source[i] === '>') {
+      i += 1;
+      return {
+        tagName,
+        attrs,
+        closing: false,
+        selfClosing,
+        endIndex: i,
+      };
+    }
+    if (source[i] === '/' && source[i + 1] === '>') {
+      i += 2;
+      selfClosing = true;
+      return {
+        tagName,
+        attrs,
+        closing: false,
+        selfClosing,
+        endIndex: i,
+      };
+    }
+    if (source[i] === '/') {
+      i += 1;
+      continue;
+    }
+
+    const attrStart = i;
+    while (i < source.length && !/[\s=/>]/.test(source[i])) {
+      i += 1;
+    }
+
+    if (i === attrStart) {
+      i += 1;
+      continue;
+    }
+
+    const name = source.slice(attrStart, i);
+    while (i < source.length && /\s/.test(source[i])) {
+      i += 1;
+    }
+
+    let value: string | null = null;
+    if (source[i] === '=') {
+      i += 1;
+      while (i < source.length && /\s/.test(source[i])) {
+        i += 1;
+      }
+
+      if (i >= source.length) break;
+
+      const quote = source[i];
+      if (quote === '"' || quote === '\'') {
+        i += 1;
+        const valueStart = i;
+        while (i < source.length && source[i] !== quote) {
+          i += 1;
+        }
+        value = source.slice(valueStart, i);
+        if (source[i] === quote) i += 1;
+      } else {
+        const valueStart = i;
+        while (i < source.length && !/[\s>]/.test(source[i])) {
+          i += 1;
+        }
+        value = source.slice(valueStart, i);
+      }
+    }
+
+    attrs.push({ name, value });
+  }
+
+  return null;
+}
+
+function findBlockedTagEnd(source: string, tagName: string, startIndex: number): number {
+  if (VOID_HTML_TAGS.has(tagName)) {
+    return startIndex;
+  }
+
+  let depth = 1;
+  let i = startIndex;
+
+  while (i < source.length) {
+    if (source.startsWith('<!--', i)) {
+      const commentEnd = source.indexOf('-->', i + 4);
+      i = commentEnd === -1 ? source.length : commentEnd + 3;
+      continue;
+    }
+
+    if (source[i] !== '<') {
+      i += 1;
+      continue;
+    }
+
+    const parsed = parseHtmlTag(source, i);
+    if (!parsed) {
+      i += 1;
+      continue;
+    }
+
+    const normalizedTagName = parsed.tagName.toLowerCase();
+    if (normalizedTagName === tagName) {
+      if (parsed.closing) {
+        depth -= 1;
+        if (depth === 0) return parsed.endIndex;
+      } else if (!parsed.selfClosing && !VOID_HTML_TAGS.has(normalizedTagName)) {
+        depth += 1;
+      }
+    }
+
+    i = Math.max(parsed.endIndex, i + 1);
+  }
+
+  return source.length;
+}
+
+function escapeHtmlAttributeValue(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function isDangerousUrlAttributeValueForTag(
+  tagName: string,
+  attrName: string,
+  value: string
+): boolean {
+  const normalizedAttrName = normalizeAttrName(attrName);
+  if (!URL_ATTRS.has(normalizedAttrName)) return false;
+  if (normalizedAttrName === 'data' && tagName !== 'object') {
+    return false;
+  }
+  const normalized = normalizeProtocolCheckValue(value);
+  if (
+    !normalized ||
+    normalized.startsWith('/') ||
+    normalized.startsWith('./') ||
+    normalized.startsWith('../') ||
+    normalized.startsWith('?') ||
+    normalized.startsWith('#')
+  ) {
+    return false;
+  }
+
+  const protocol = extractUrlProtocol(normalized);
+  if (!protocol) return false;
+
+  return !SAFE_URL_PROTOCOLS.has(protocol);
+}
+
+function sanitizeHtmlByStringScan(html: string): string {
+  let out = '';
+  let i = 0;
+
+  while (i < html.length) {
+    if (html.startsWith('<!--', i)) {
+      const commentEnd = html.indexOf('-->', i + 4);
+      const end = commentEnd === -1 ? html.length : commentEnd + 3;
+      out += html.slice(i, end);
+      i = end;
+      continue;
+    }
+
+    if (html[i] !== '<') {
+      out += html[i];
+      i += 1;
+      continue;
+    }
+
+    const parsed = parseHtmlTag(html, i);
+    if (!parsed) {
+      out += html[i];
+      i += 1;
+      continue;
+    }
+
+    const normalizedTagName = parsed.tagName.toLowerCase();
+    if (DEFAULT_SANITIZE_BLOCKED_TAGS.has(normalizedTagName)) {
+      i = parsed.selfClosing || parsed.closing
+        ? parsed.endIndex
+        : findBlockedTagEnd(html, normalizedTagName, parsed.endIndex);
+      continue;
+    }
+
+    if (parsed.closing) {
+      out += `</${parsed.tagName}>`;
+      i = parsed.endIndex;
+      continue;
+    }
+
+    let tagOut = `<${parsed.tagName}`;
+    for (const attr of parsed.attrs) {
+      const normalizedAttrName = normalizeAttrName(attr.name);
+      if (normalizedAttrName.startsWith('on')) continue;
+      if (normalizedAttrName === 'style') continue;
+      if (normalizedAttrName === 'srcdoc') continue;
+      if (
+        attr.value != null
+        && isDangerousUrlAttributeValueForTag(normalizedTagName, normalizedAttrName, attr.value)
+      ) {
+        continue;
+      }
+
+      tagOut += ` ${attr.name}`;
+      if (attr.value != null) {
+        tagOut += `="${escapeHtmlAttributeValue(attr.value)}"`;
+      }
+    }
+
+    tagOut += parsed.selfClosing ? ' />' : '>';
+    out += tagOut;
+    i = parsed.endIndex;
+  }
+
+  return out;
+}
+
+function sanitizeHtmlSubtree(root: ParentNode): void {
+  const all = Array.from(root.querySelectorAll('*'));
+  for (const el of all) {
+    const tag = el.tagName.toLowerCase();
+    if (DEFAULT_SANITIZE_BLOCKED_TAGS.has(tag)) {
+      el.remove();
+      continue;
+    }
+
+    for (const attr of Array.from(el.attributes)) {
+      const normalizedAttrName = normalizeAttrName(attr.name);
+      if (normalizedAttrName.startsWith('on')) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if (normalizedAttrName === 'style') {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if (normalizedAttrName === 'srcdoc') {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if (isDangerousUrlAttributeValue(el, normalizedAttrName, attr.value)) {
+        el.removeAttribute(attr.name);
+      }
+    }
+
+    if (tag === 'template') {
+      sanitizeHtmlSubtree((el as HTMLTemplateElement).content);
+    }
+  }
+}
+
+function builtInSanitizeHtml(html: string, security: RuntimeSecurityOptions): string {
+  if (typeof document === 'undefined') return '';
+
+  const template = document.createElement('template');
+  const rawParsingSecurity = security.trustedTypes
+    ? { ...security, trustedTypes: false, trustedTypesPolicy: null }
+    : security;
+
+  try {
+    // Prefer the raw parse path when the environment does not actually enforce
+    // Trusted Types. This preserves the pre-sanitization ordering and avoids
+    // creating an extra parsing policy unnecessarily.
+    setTemplateInnerHTML(template, html, rawParsingSecurity);
+  } catch (err) {
+    if (!security.trustedTypes) throw err;
+
+    if (security.trustedTypesPolicy) {
+      return sanitizeHtmlByStringScan(html);
+    }
+
+    // Under enforced TT, fall back to a dedicated identity parsing policy so
+    // sanitization still happens before the final sink policy is applied.
+    setTemplateInnerHTMLForParsing(template, html, security);
+  }
+  sanitizeHtmlSubtree(template.content);
+
+  return template.innerHTML;
+}
+
+function applyHtmlSinkValue(
+  htmlEl: HTMLElement,
+  sanitized: string,
+  bindingName: string,
+  options: BindOptions
+): void {
+  const security = resolveSecurityOptions(options);
+
+  try {
+    setElementInnerHTML(htmlEl, sanitized, security);
+  } catch (err) {
+    clearHtmlSink(htmlEl);
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (security.warnAsError && isInDevMode()) {
+      throw new FatalEffectError(
+        `[Dalila] d-html: failed to apply Trusted Types HTML for "${bindingName}" (${error.message}); rendering empty string`
+      );
+    }
+    if (isInDevMode()) {
+      throw error;
+    }
+  }
+}
+
+function inheritNestedBindOptions(parent: BindOptions, overrides: BindOptions): BindOptions {
+  const next: BindOptions = { ...overrides };
+
+  if (parent.sanitizeHtml !== undefined && overrides.sanitizeHtml === undefined) {
+    next.sanitizeHtml = parent.sanitizeHtml;
+  }
+  if (
+    parent.useDefaultSanitizeHtml !== undefined
+    && overrides.useDefaultSanitizeHtml === undefined
+  ) {
+    next.useDefaultSanitizeHtml = parent.useDefaultSanitizeHtml;
+  }
+
+  const mergedSecurity = mergeSecurityOptions(parent.security, overrides.security);
+  if (mergedSecurity) {
+    next.security = mergedSecurity;
+  }
+
+  return next;
+}
+
+function runSanitizeHtml(
+  html: string,
+  bindingName: string,
+  el: Element,
+  options: BindOptions
+): string {
+  const security = resolveSecurityOptions(options);
+  const sanitizer = options.sanitizeHtml;
+  const allowFrameworkDefaultSanitizer = options.useDefaultSanitizeHtml !== false;
+  const effectiveSanitizer = !allowFrameworkDefaultSanitizer && isFrameworkDefaultSanitizeHtml(sanitizer)
+    ? undefined
+    : sanitizer;
+  const useFrameworkDefaultSanitizer = allowFrameworkDefaultSanitizer
+    && (effectiveSanitizer === undefined || isFrameworkDefaultSanitizeHtml(effectiveSanitizer));
+
+  if (security.requireHtmlSanitizerForDHtml && effectiveSanitizer === undefined && !allowFrameworkDefaultSanitizer) {
+    warnSecurity(
+      `d-html: "${bindingName}" requires a custom sanitizeHtml() when security.requireHtmlSanitizerForDHtml is enabled; rendering empty string`,
+      () => clearHtmlSink(el)
+    );
+    return '';
+  }
+  const sanitize = useFrameworkDefaultSanitizer
+    ? (value: string, context: SanitizeHtmlContext) => runDefaultSanitizeHtml(value, context, security)
+    : effectiveSanitizer ?? ((value: string) => value);
+
+  try {
+    const sanitized = sanitize(html, {
+      sink: 'd-html',
+      bindingName,
+      element: el,
+    });
+    return typeof sanitized === 'string' ? sanitized : '';
+  } catch (err) {
+    warnSecurity(
+      `d-html: sanitizeHtml() failed for "${bindingName}" (${err instanceof Error ? err.message : String(err)}); rendering empty string`,
+      () => clearHtmlSink(el)
+    );
+    return '';
   }
 }
 
@@ -376,7 +1003,108 @@ type EvalResult =
 
 type TransitionRegistry = Map<string, TransitionConfig>;
 
+interface DomPurifyLike {
+  sanitize: (html: string, config?: Record<string, unknown>) => string | { toString(): string };
+}
+
+const DEFAULT_RUNTIME_SANITIZE_HTML_MARKER = Symbol.for('dalila.runtime.defaultSanitizeHtml');
+const DEFAULT_RUNTIME_DOMPURIFY_OPTIONS = Object.freeze({
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'style', 'link', 'meta', 'base', 'form'],
+  FORBID_ATTR: ['srcdoc', 'style'],
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+  RETURN_TRUSTED_TYPE: false,
+});
+
+export const DEFAULT_RUNTIME_SECURITY: Readonly<RuntimeSecurityOptions> = Object.freeze({
+  strict: true,
+  blockRawHtmlAttrs: true,
+  requireHtmlSanitizerForDHtml: true,
+  warnAsError: false,
+  trustedTypes: false,
+  trustedTypesPolicyName: 'dalila',
+  trustedTypesPolicy: null,
+});
+
 const portalSyncByElement = new WeakMap<HTMLElement, () => void>();
+
+function createProductionRuntimeSecurityConfig(): RuntimeSecurityOptions {
+  return {
+    strict: DEFAULT_RUNTIME_SECURITY.strict,
+    warnAsError: DEFAULT_RUNTIME_SECURITY.warnAsError,
+    trustedTypes: DEFAULT_RUNTIME_SECURITY.trustedTypes,
+    trustedTypesPolicyName: DEFAULT_RUNTIME_SECURITY.trustedTypesPolicyName,
+    trustedTypesPolicy: DEFAULT_RUNTIME_SECURITY.trustedTypesPolicy,
+  };
+}
+
+function isDomPurifyLike(value: unknown): value is DomPurifyLike {
+  return !!value && typeof (value as DomPurifyLike).sanitize === 'function';
+}
+
+function resolveGlobalDomPurify(): DomPurifyLike | null {
+  const maybeGlobal = (globalThis as { DOMPurify?: unknown }).DOMPurify;
+  if (isDomPurifyLike(maybeGlobal)) {
+    return maybeGlobal;
+  }
+
+  const maybeFactory = (globalThis as { createDOMPurify?: unknown }).createDOMPurify;
+  if (
+    typeof maybeFactory === 'function'
+    && typeof window !== 'undefined'
+    && typeof window.document !== 'undefined'
+  ) {
+    try {
+      const created = (maybeFactory as (host: Window) => unknown)(window);
+      if (isDomPurifyLike(created)) {
+        return created;
+      }
+    } catch {
+      // Fall back to the built-in sanitizer below.
+    }
+  }
+
+  return null;
+}
+
+function runDefaultSanitizeHtml(
+  html: string,
+  context: SanitizeHtmlContext,
+  security: RuntimeSecurityOptions
+): string {
+  const domPurify = resolveGlobalDomPurify();
+  if (domPurify) {
+    try {
+      const sanitized = domPurify.sanitize(html, DEFAULT_RUNTIME_DOMPURIFY_OPTIONS);
+      return typeof sanitized === 'string' ? sanitized : String(sanitized ?? '');
+    } catch (err) {
+      warnSecurityRuntime(
+        `d-html: default DOMPurify sanitizer failed for "${context.bindingName}" (${err instanceof Error ? err.message : String(err)}); falling back to built-in sanitizer`
+      );
+    }
+  }
+
+  return builtInSanitizeHtml(html, security);
+}
+
+export const defaultSanitizeHtml = Object.assign(
+  (html: string, context: SanitizeHtmlContext) => runDefaultSanitizeHtml(html, context, DEFAULT_RUNTIME_SECURITY),
+  { [DEFAULT_RUNTIME_SANITIZE_HTML_MARKER]: true as const }
+) as SanitizeHtmlFn & { [DEFAULT_RUNTIME_SANITIZE_HTML_MARKER]: true };
+
+function isFrameworkDefaultSanitizeHtml(
+  sanitizer: SanitizeHtmlFn | undefined
+): sanitizer is typeof defaultSanitizeHtml {
+  return !!sanitizer && (sanitizer as typeof defaultSanitizeHtml)[DEFAULT_RUNTIME_SANITIZE_HTML_MARKER] === true;
+}
+
+function createDefaultRuntimeConfig(): BindOptions {
+  return {
+    sanitizeHtml: defaultSanitizeHtml,
+    useDefaultSanitizeHtml: true,
+    security: createProductionRuntimeSecurityConfig(),
+  };
+}
 
 function describeBindRoot(root: Element): string {
   const explicit =
@@ -1802,7 +2530,8 @@ function bindLazy(
   ctx: BindContext,
   cleanups: DisposeFunction[],
   refs: Map<string, Element>,
-  events: string[]
+  events: string[],
+  options: BindOptions
 ): void {
   const elements = qsaIncludingRoot(root, '[d-lazy]');
 
@@ -1888,6 +2617,7 @@ function bindLazy(
         components: { [compDef.tag]: comp },
         events,
         _skipLifecycle: true,
+        ...inheritNestedBindOptions(options, {}),
       });
 
       // bind() may replace the component host node; keep currentNode/ref pointing to the connected node.
@@ -1909,7 +2639,8 @@ function bindLazy(
           unmountComponent();
         }
         const loadingEl = document.createElement('div');
-        loadingEl.innerHTML = loadingTemplate;
+        warnRawHtmlSinkHeuristic('d-lazy-loading', lazyComponentName, loadingTemplate);
+        setElementInnerHTML(loadingEl, loadingTemplate, resolveSecurityOptions(options));
         replaceCurrentNode(loadingEl);
       }
     };
@@ -1922,7 +2653,8 @@ function bindLazy(
 
       if (errorTemplate) {
         const errorEl = document.createElement('div');
-        errorEl.innerHTML = errorTemplate;
+        warnRawHtmlSinkHeuristic('d-lazy-error', lazyComponentName, errorTemplate);
+        setElementInnerHTML(errorEl, errorTemplate, resolveSecurityOptions(options));
         replaceCurrentNode(errorEl);
       } else {
         warn(`d-lazy: failed to load "${lazyComponentName}": ${err.message}`);
@@ -2131,7 +2863,8 @@ export function scrollToVirtualIndex(
 function bindVirtualEach(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  options: BindOptions
 ): void {
   const elements = qsaIncludingRoot(root, '[d-virtual-each]')
     .filter(el => !el.parentElement?.closest('[d-virtual-each], [d-each]'));
@@ -2272,7 +3005,7 @@ function bindVirtualEach(
       decorateClone: (clone, index) => {
         clone.setAttribute('data-dalila-virtual-index', String(index));
       },
-      bindClone: (clone, itemCtx) => bind(clone, itemCtx as BindContext, { _skipLifecycle: true }),
+      bindClone: (clone, itemCtx) => bind(clone, itemCtx as BindContext, inheritNestedBindOptions(options, { _skipLifecycle: true })),
       register: registry.register,
     });
 
@@ -2606,7 +3339,8 @@ function bindVirtualEach(
 function bindEach(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  options: BindOptions
 ): void {
   // Only bind top-level d-each elements. Nested d-each inside d-each or
   // d-virtual-each templates must be left untouched here — they are bound when
@@ -2653,7 +3387,7 @@ function bindEach(
       template,
       parentCtx: ctx,
       alias,
-      bindClone: (clone, itemCtx) => bind(clone, itemCtx as BindContext, { _skipLifecycle: true }),
+      bindClone: (clone, itemCtx) => bind(clone, itemCtx as BindContext, inheritNestedBindOptions(options, { _skipLifecycle: true })),
       register: registry.register,
     });
 
@@ -2875,7 +3609,8 @@ function bindIf(
 function bindHtml(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  options: BindOptions
 ): void {
   const elements = qsaIncludingRoot(root, '[d-html]');
 
@@ -2895,18 +3630,38 @@ function bindHtml(
       bindEffect(htmlEl, () => {
         const v = binding();
         const html = v == null ? '' : String(v);
-        if (isInDevMode() && /<script[\s>]|javascript:|onerror\s*=/i.test(html)) {
-          warn(`d-html: potentially unsafe HTML in "${bindingName}". Never use with unsanitized user input.`);
-        }
-        htmlEl.innerHTML = html;
+        const sanitized = runSanitizeHtml(html, bindingName, htmlEl, options);
+        const security = resolveSecurityOptions(options);
+        const customSanitizeHtml = options.sanitizeHtml;
+        const heuristicSourceHtml = security.warnAsError
+          || (customSanitizeHtml && !isFrameworkDefaultSanitizeHtml(customSanitizeHtml))
+          ? sanitized
+          : html;
+        warnRawHtmlSinkHeuristic(
+          'd-html',
+          bindingName,
+          heuristicSourceHtml,
+          () => clearHtmlSink(htmlEl)
+        );
+        applyHtmlSinkValue(htmlEl, sanitized, bindingName, options);
       });
     } else {
       const v = resolve(binding);
       const html = v == null ? '' : String(v);
-      if (isInDevMode() && /<script[\s>]|javascript:|onerror\s*=/i.test(html)) {
-        warn(`d-html: potentially unsafe HTML in "${bindingName}". Never use with unsanitized user input.`);
-      }
-      htmlEl.innerHTML = html;
+      const sanitized = runSanitizeHtml(html, bindingName, htmlEl, options);
+      const security = resolveSecurityOptions(options);
+      const customSanitizeHtml = options.sanitizeHtml;
+      const heuristicSourceHtml = security.warnAsError
+        || (customSanitizeHtml && !isFrameworkDefaultSanitizeHtml(customSanitizeHtml))
+        ? sanitized
+        : html;
+      warnRawHtmlSinkHeuristic(
+        'd-html',
+        bindingName,
+        heuristicSourceHtml,
+        () => clearHtmlSink(htmlEl)
+      );
+      applyHtmlSinkValue(htmlEl, sanitized, bindingName, options);
     }
   }
 }
@@ -2968,8 +3723,163 @@ function bindText(
 // state of an input after the user has interacted with it.
 const BOOLEAN_PROPS = new Set(['checked', 'selected', 'disabled', 'indeterminate']);
 const STRING_PROPS = new Set(['value']);
+const URL_ATTRS = new Set(['href', 'src', 'xlink:href', 'formaction', 'action', 'poster', 'data']);
+const RAW_HTML_ATTRS = new Set(['srcdoc']);
+const SAFE_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'sms:', 'blob:']);
+const KNOWN_INLINE_EVENT_HANDLER_ATTRS = new Set([
+  'onabort',
+  'onafterprint',
+  'onanimationcancel',
+  'onanimationend',
+  'onanimationiteration',
+  'onanimationstart',
+  'onauxclick',
+  'onbeforeinput',
+  'onbeforematch',
+  'onbeforeprint',
+  'onbeforetoggle',
+  'onbeforeunload',
+  'onbegin',
+  'onblur',
+  'oncancel',
+  'oncanplay',
+  'oncanplaythrough',
+  'onchange',
+  'onclick',
+  'onclose',
+  'oncontextlost',
+  'oncontextmenu',
+  'oncontextrestored',
+  'oncopy',
+  'oncuechange',
+  'oncut',
+  'ondblclick',
+  'ondrag',
+  'ondragend',
+  'ondragenter',
+  'ondragleave',
+  'ondragover',
+  'ondragstart',
+  'ondrop',
+  'ondurationchange',
+  'onemptied',
+  'onend',
+  'onended',
+  'onerror',
+  'onfocus',
+  'onformdata',
+  'onfullscreenchange',
+  'onfullscreenerror',
+  'ongotpointercapture',
+  'onhashchange',
+  'oninput',
+  'oninvalid',
+  'onkeydown',
+  'onkeypress',
+  'onkeyup',
+  'onlanguagechange',
+  'onload',
+  'onloadeddata',
+  'onloadedmetadata',
+  'onloadstart',
+  'onlostpointercapture',
+  'onmessage',
+  'onmessageerror',
+  'onmousedown',
+  'onmouseenter',
+  'onmouseleave',
+  'onmousemove',
+  'onmouseout',
+  'onmouseover',
+  'onmouseup',
+  'onoffline',
+  'ononline',
+  'onpagehide',
+  'onpageshow',
+  'onpaste',
+  'onpause',
+  'onplay',
+  'onplaying',
+  'onpointercancel',
+  'onpointerdown',
+  'onpointerenter',
+  'onpointerleave',
+  'onpointermove',
+  'onpointerout',
+  'onpointerover',
+  'onpointerrawupdate',
+  'onpointerup',
+  'onpopstate',
+  'onprogress',
+  'onratechange',
+  'onrepeat',
+  'onreset',
+  'onresize',
+  'onscroll',
+  'onscrollend',
+  'onsecuritypolicyviolation',
+  'onseeked',
+  'onseeking',
+  'onselect',
+  'onselectionchange',
+  'onselectstart',
+  'onslotchange',
+  'onstalled',
+  'onstorage',
+  'onsubmit',
+  'onsuspend',
+  'ontimeupdate',
+  'ontoggle',
+  'ontransitioncancel',
+  'ontransitionend',
+  'ontransitionrun',
+  'ontransitionstart',
+  'onunhandledrejection',
+  'onunload',
+  'onvolumechange',
+  'onwaiting',
+  'onwebkitanimationend',
+  'onwebkitanimationiteration',
+  'onwebkitanimationstart',
+  'onwebkittransitionend',
+  'onwheel',
+]);
 
-function applyAttr(el: Element, attrName: string, value: unknown): void {
+function normalizeAttrName(attrName: string): string {
+  return attrName.toLowerCase();
+}
+
+function normalizeProtocolCheckValue(value: string): string {
+  return value.replace(/[\u0000-\u0020\u007f]+/g, '').toLowerCase();
+}
+
+function extractUrlProtocol(value: string): string | null {
+  const match = value.match(/^([a-z][a-z0-9+\-.]*):/i);
+  return match ? `${match[1].toLowerCase()}:` : null;
+}
+
+function isDangerousUrlAttributeValue(el: Element, attrName: string, value: string): boolean {
+  return isDangerousUrlAttributeValueForTag(el.tagName.toLowerCase(), attrName, value);
+}
+
+function isInlineEventHandlerAttribute(el: Element, normalizedAttrName: string): boolean {
+  return KNOWN_INLINE_EVENT_HANDLER_ATTRS.has(normalizedAttrName)
+    || (normalizedAttrName.startsWith('on') && normalizedAttrName in el);
+}
+
+function applyAttr(el: Element, attrName: string, value: unknown, options?: BindOptions): void {
+  const normalizedAttrName = normalizeAttrName(attrName);
+  const security = resolveSecurityOptions(options ?? {});
+
+  if (isInlineEventHandlerAttribute(el, normalizedAttrName)) {
+    warnSecurity(
+      `d-attr-${attrName}: inline event handler attributes are blocked for security. Use d-on-* instead.`,
+      () => el.removeAttribute(attrName)
+    );
+    el.removeAttribute(attrName);
+    return;
+  }
+
   // Fast-path: known IDL properties set as properties on the element
   if (BOOLEAN_PROPS.has(attrName) && attrName in el) {
     (el as any)[attrName] = !!value;
@@ -2986,14 +3896,43 @@ function applyAttr(el: Element, attrName: string, value: unknown): void {
   } else if (value === true) {
     el.setAttribute(attrName, '');
   } else {
-    el.setAttribute(attrName, String(value));
+    const next = String(value);
+
+    if (isDangerousUrlAttributeValue(el, normalizedAttrName, next)) {
+      warnSecurity(
+        `d-attr-${attrName}: blocked dangerous URL protocol in attribute value`,
+        () => el.removeAttribute(attrName)
+      );
+      el.removeAttribute(attrName);
+      return;
+    }
+
+    if (RAW_HTML_ATTRS.has(normalizedAttrName)) {
+      if (security.blockRawHtmlAttrs) {
+        warnSecurity(
+          `d-attr-${attrName}: blocked raw HTML attribute in security.strict mode`,
+          () => el.removeAttribute(attrName)
+        );
+        el.removeAttribute(attrName);
+        return;
+      }
+      warnRawHtmlSinkHeuristic(
+        `d-attr-${attrName}`,
+        attrName,
+        next,
+        () => el.removeAttribute(attrName)
+      );
+    }
+
+    el.setAttribute(attrName, next);
   }
 }
 
 function bindAttrs(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  options: BindOptions
 ): void {
   const PREFIX = 'd-attr-';
   const allElements = qsaIncludingRoot(root, '*');
@@ -3017,10 +3956,10 @@ function bindAttrs(
 
       if (isSignal(binding)) {
         bindEffect(el, () => {
-          applyAttr(el, attrName, binding());
+          applyAttr(el, attrName, binding(), options);
         });
       } else {
-        applyAttr(el, attrName, resolve(binding));
+        applyAttr(el, attrName, resolve(binding), options);
       }
     }
   }
@@ -3460,7 +4399,8 @@ function bindFormError(
 function bindArray(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  options: BindOptions
 ): void {
   const elements = qsaIncludingRoot(root, '[d-array]')
     // Skip d-array inside d-each templates
@@ -3627,7 +4567,7 @@ function bindArray(
         'button[d-on-click*="$remove"], button[d-on-click*="$moveUp"], button[d-on-click*="$moveDown"], button[d-on-click*="$swap"]'
       );
 
-      const dispose = bind(clone, itemCtx, { _skipLifecycle: true });
+      const dispose = bind(clone, itemCtx, inheritNestedBindOptions(options, { _skipLifecycle: true }));
       disposesByKey.set(key, dispose);
       clonesByKey.set(key, clone);
 
@@ -3851,7 +4791,8 @@ function bindComponents(
   ctx: BindContext,
   events: string[],
   cleanups: DisposeFunction[],
-  onMountError: 'log' | 'throw'
+  onMountError: 'log' | 'throw',
+  options: BindOptions
 ): void {
   const registry = getComponentRegistry(ctx);
   if (!registry || registry.size === 0) return;
@@ -3877,7 +4818,7 @@ function bindComponents(
 
     // 2. Create component DOM
     const templateEl = document.createElement('template');
-    templateEl.innerHTML = def.template.trim();
+    setTemplateInnerHTML(templateEl, def.template.trim(), resolveSecurityOptions(options));
     const content = templateEl.content;
 
     // Dev-mode template validation
@@ -3993,7 +4934,11 @@ function bindComponents(
       componentRoot.setAttribute('data-dalila-internal-bound', '');
 
       // 4h. Bind component template
-      componentHandle = bind(componentRoot, componentCtx, { events, _skipLifecycle: true, _internal: true });
+      componentHandle = bind(
+        componentRoot,
+        componentCtx,
+        inheritNestedBindOptions(options, { events, _skipLifecycle: true, _internal: true })
+      );
       cleanups.push(componentHandle);
     });
 
@@ -4026,7 +4971,17 @@ function bindComponents(
 // Global Configuration
 // ============================================================================
 
-let globalConfig: BindOptions = {};
+let globalConfig: BindOptions = createDefaultRuntimeConfig();
+
+export function installProductionRuntimeDefaults(): void {
+  globalConfig = createDefaultRuntimeConfig();
+}
+
+export function resolveConfiguredRuntimeSecurityOptions(
+  security?: RuntimeSecurityOptions
+): RuntimeSecurityOptions | undefined {
+  return mergeSecurityOptions(globalConfig.security, security);
+}
 
 export function createPortalTarget(id: string): Signal<Element | null> {
   const targetSignal = signal<Element | null>(null);
@@ -4050,7 +5005,7 @@ export function createPortalTarget(id: string): Signal<Element | null> {
  * Set global defaults for all `bind()` / `mount()` calls.
  *
  * Options set here are merged with per-call options (per-call wins).
- * Call with an empty object to reset.
+ * Call with an empty object to reset back to Dalila's production defaults.
  *
  * @example
  * ```ts
@@ -4064,10 +5019,18 @@ export function createPortalTarget(id: string): Signal<Element | null> {
  */
 export function configure(config: BindOptions): void {
   if (Object.keys(config).length === 0) {
-    globalConfig = {};
+    installProductionRuntimeDefaults();
     return;
   }
-  globalConfig = { ...globalConfig, ...config };
+  const nextConfig: BindOptions = {
+    ...globalConfig,
+    ...config,
+  };
+  const mergedSecurity = mergeSecurityOptions(globalConfig.security, config.security);
+  if (mergedSecurity) {
+    nextConfig.security = mergedSecurity;
+  }
+  globalConfig = nextConfig;
 }
 
 // ============================================================================
@@ -4104,9 +5067,13 @@ export function bind<T extends Record<string, unknown> = BindContext>(
 ): BindHandle {
   // ── Merge global config with per-call options ──
   if (Object.keys(globalConfig).length > 0) {
-    const { components: globalComponents, transitions: globalTransitions, ...globalRest } = globalConfig;
-    const { components: localComponents, transitions: localTransitions, ...localRest } = options;
+    const { components: globalComponents, transitions: globalTransitions, security: globalSecurity, ...globalRest } = globalConfig;
+    const { components: localComponents, transitions: localTransitions, security: localSecurity, ...localRest } = options;
     const mergedOpts: BindOptions = { ...globalRest, ...localRest };
+    const mergedSecurity = mergeSecurityOptions(globalSecurity, localSecurity);
+    if (mergedSecurity) {
+      mergedOpts.security = mergedSecurity;
+    }
 
     // Combine component registries: local takes precedence over global
     if (globalComponents || localComponents) {
@@ -4120,7 +5087,7 @@ export function bind<T extends Record<string, unknown> = BindContext>(
           }
         } else {
           for (const [key, comp] of Object.entries(src)) {
-            if (isComponent(comp)) combined[comp.definition.tag] = comp;
+            if (isComponent(comp)) combined[key] = comp;
           }
         }
       };
@@ -4202,95 +5169,22 @@ export function bind<T extends Record<string, unknown> = BindContext>(
   const templateScope = createScope();
   const cleanups: DisposeFunction[] = [];
   const refs = new Map<string, Element>();
+  const resolvedSecurity = resolveSecurityOptions(options);
+  if (resolvedSecurity.warnAsError) {
+    warnAsErrorScopes.add(templateScope);
+  }
   linkScopeToDom(templateScope, root, describeBindRoot(root));
   const bindScanPlan = createBindScanPlan(root);
+  let bindCompleted = false;
+  let disposed = false;
 
-  // Run all bindings within the template scope
-  const previousScanPlan = activeBindScanPlan;
-  try {
-    activeBindScanPlan = bindScanPlan;
-    withScope(templateScope, () => {
-      // 1. Form setup — must run very early to register form instances
-      bindForm(root, ctx, cleanups);
+  const disposeBindingResources = (): void => {
+    if (disposed) return;
+    disposed = true;
+    if (resolvedSecurity.warnAsError) {
+      warnAsErrorScopes.delete(templateScope);
+    }
 
-      // 2. d-array — must run before d-each to setup field arrays
-      bindArray(root, ctx, cleanups);
-
-      // 3. d-virtual-each — must run early for virtual template extraction
-      bindVirtualEach(root, ctx, cleanups);
-
-      // 4. d-each — must run early: removes templates before TreeWalker visits them
-      bindEach(root, ctx, cleanups);
-
-      // 5. d-boundary — must run before child directive/component passes
-      // to avoid binding boundary children twice (original + cloned subtree).
-      bindBoundary(root, ctx, cleanups);
-
-      // 6. Components — must run after d-each but before d-ref / text interpolation
-      bindComponents(root, ctx, events, cleanups, onMountError);
-
-      // 7. d-ref — collect element references (after d-each removes templates)
-      bindRef(root, refs);
-
-      // 7.5. d-text — safe textContent binding (before text interpolation)
-      bindText(root, ctx, cleanups);
-
-      // 7. Text interpolation (template plan cache + lazy parser fallback)
-      bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig);
-
-      // 8. d-attr bindings
-      bindAttrs(root, ctx, cleanups);
-
-      // 9. d-bind-* two-way bindings
-      bindTwoWay(root, ctx, cleanups);
-
-      // 10. d-html bindings
-      bindHtml(root, ctx, cleanups);
-
-      // 11. Form fields — register fields with form instances
-      bindField(root, ctx, cleanups);
-
-      // 12. Event bindings
-      bindEvents(root, ctx, events, cleanups);
-
-      // 13. d-emit-* bindings (component template → parent)
-      bindEmit(root, ctx, cleanups);
-
-      // 14. d-when directive
-      bindWhen(root, ctx, cleanups, transitionRegistry);
-
-      // 15. d-match directive
-      bindMatch(root, ctx, cleanups);
-
-      // 16. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
-      bindError(root, ctx, cleanups);
-      bindFormError(root, ctx, cleanups);
-
-      // 17. d-portal — move already-bound elements to external targets
-      // d-lazy directive - loads component when it enters viewport
-      bindLazy(root, ctx, cleanups, refs, events);
-
-      bindPortal(root, ctx, cleanups);
-
-      // 18. d-if — must run last: elements are fully bound before conditional removal
-      bindIf(root, ctx, cleanups, transitionRegistry);
-    });
-  } finally {
-    activeBindScanPlan = previousScanPlan;
-  }
-
-  // Bindings complete: remove loading state and mark as ready.
-  // Only the top-level bind owns this lifecycle — d-each clones skip it.
-  if (!options._skipLifecycle) {
-    queueMicrotask(() => {
-      htmlRoot.removeAttribute('d-loading');
-      htmlRoot.setAttribute('d-ready', '');
-    });
-  }
-
-  // Return BindHandle (callable dispose + ref accessors)
-  const dispose = (): void => {
-    // Run manual cleanups (event listeners)
     for (const cleanup of cleanups) {
       if (typeof cleanup === 'function') {
         try {
@@ -4305,7 +5199,6 @@ export function bind<T extends Record<string, unknown> = BindContext>(
     cleanups.length = 0;
     refs.clear();
 
-    // Dispose template scope (stops all effects)
     try {
       templateScope.dispose();
     } catch (e) {
@@ -4313,6 +5206,100 @@ export function bind<T extends Record<string, unknown> = BindContext>(
         console.warn('[Dalila] Scope dispose error:', e);
       }
     }
+  };
+
+  // Run all bindings within the template scope
+  const previousScanPlan = activeBindScanPlan;
+  try {
+    activeBindScanPlan = bindScanPlan;
+    withWarnAsError(resolvedSecurity.warnAsError, () => {
+      withScope(templateScope, () => {
+        // 1. Form setup — must run very early to register form instances
+        bindForm(root, ctx, cleanups);
+
+        // 2. d-array — must run before d-each to setup field arrays
+        bindArray(root, ctx, cleanups, options);
+
+        // 3. d-virtual-each — must run early for virtual template extraction
+        bindVirtualEach(root, ctx, cleanups, options);
+
+        // 4. d-each — must run early: removes templates before TreeWalker visits them
+        bindEach(root, ctx, cleanups, options);
+
+        // 5. d-boundary — must run before child directive/component passes
+        // to avoid binding boundary children twice (original + cloned subtree).
+        bindBoundary(root, ctx, cleanups, options);
+
+        // 6. Components — must run after d-each but before d-ref / text interpolation
+        bindComponents(root, ctx, events, cleanups, onMountError, options);
+
+        // 7. d-ref — collect element references (after d-each removes templates)
+        bindRef(root, refs);
+
+        // 7.5. d-text — safe textContent binding (before text interpolation)
+        bindText(root, ctx, cleanups);
+
+        // 7. Text interpolation (template plan cache + lazy parser fallback)
+        bindTextInterpolation(root, ctx, rawTextSelectors, templatePlanCacheConfig);
+
+        // 8. d-attr bindings
+        bindAttrs(root, ctx, cleanups, options);
+
+        // 9. d-bind-* two-way bindings
+        bindTwoWay(root, ctx, cleanups);
+
+        // 10. d-html bindings
+        bindHtml(root, ctx, cleanups, options);
+
+        // 11. Form fields — register fields with form instances
+        bindField(root, ctx, cleanups);
+
+        // 12. Event bindings
+        bindEvents(root, ctx, events, cleanups);
+
+        // 13. d-emit-* bindings (component template → parent)
+        bindEmit(root, ctx, cleanups);
+
+        // 14. d-when directive
+        bindWhen(root, ctx, cleanups, transitionRegistry);
+
+        // 15. d-match directive
+        bindMatch(root, ctx, cleanups);
+
+        // 16. Form error displays — BEFORE d-if to bind errors in conditionally rendered sections
+        bindError(root, ctx, cleanups);
+        bindFormError(root, ctx, cleanups);
+
+        // 17. d-portal — move already-bound elements to external targets
+        // d-lazy directive - loads component when it enters viewport
+        bindLazy(root, ctx, cleanups, refs, events, options);
+
+        bindPortal(root, ctx, cleanups);
+
+        // 18. d-if — must run last: elements are fully bound before conditional removal
+        bindIf(root, ctx, cleanups, transitionRegistry);
+      });
+    });
+    bindCompleted = true;
+  } finally {
+    activeBindScanPlan = previousScanPlan;
+    if (!bindCompleted) {
+      disposeBindingResources();
+    }
+  }
+
+  // Bindings complete: remove loading state and mark as ready.
+  // Only the top-level bind owns this lifecycle — d-each clones skip it.
+  if (!options._skipLifecycle) {
+    queueMicrotask(() => {
+      htmlRoot.removeAttribute('d-loading');
+      htmlRoot.setAttribute('d-ready', '');
+    });
+  }
+
+  // Return BindHandle (callable dispose + ref accessors)
+  const dispose = (): void => {
+    disposeBindingResources();
   };
 
   const handle: BindHandle = Object.assign(dispose, {

@@ -123,10 +123,17 @@ function replaceAttributeTokens(element: Element, values: HTMLValue[]): void {
 }
 
 /**
- * Tagged template for safe HTML construction.
+ * Tagged template for safer HTML construction.
  *
- * Interpolated values are injected as DOM nodes (not raw HTML),
- * preventing XSS. Returns a DocumentFragment ready for insertion.
+ * Interpolated values are injected as DOM nodes (not raw HTML) for text/structure
+ * contexts, which prevents markup breakout in those positions.
+ *
+ * Security note:
+ * - This does NOT sanitize attribute values or URL protocols.
+ * - Interpolating untrusted values into attributes like `href`, `src`, `srcdoc`,
+ *   `on*`, etc. can still be unsafe.
+ *
+ * Returns a DocumentFragment ready for insertion.
  *
  * ```ts
  * const fragment = html`<p>Hello, ${name}!</p>`;

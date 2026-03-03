@@ -23,15 +23,55 @@ import {
  * - if a handler is registered, we forward errors to it
  * - otherwise we log to the console
  */
-let effectErrorHandler: ((error: Error, source: string) => void) | null = null;
+export type EffectErrorHandler = (error: Error, source: string) => void;
+
+let effectErrorHandler: EffectErrorHandler | null = null;
+let defaultEffectErrorHandler: EffectErrorHandler | null = null;
+
+/**
+ * Error type for failures that must escape reactive scheduling.
+ *
+ * Normal effect errors are reported and swallowed so the graph keeps running.
+ * FatalEffectError is reserved for opt-in fail-fast modes such as security
+ * gates that should still surface as uncaught failures when raised from effects.
+ */
+export class FatalEffectError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FatalEffectError';
+  }
+}
 
 /**
  * Register a global error handler for effects/computed invalidations.
  *
  * Use this to report errors without crashing the reactive graph.
  */
-export function setEffectErrorHandler(handler: (error: Error, source: string) => void): void {
+export function setEffectErrorHandler(handler: EffectErrorHandler | null): void {
   effectErrorHandler = handler;
+}
+
+/**
+ * Register the framework-level fallback error handler.
+ *
+ * User-provided handlers registered via `setEffectErrorHandler()` always win.
+ */
+export function setDefaultEffectErrorHandler(handler: EffectErrorHandler | null): void {
+  defaultEffectErrorHandler = handler;
+}
+
+function reportEffectErrorWithHandlers(error: Error, source: string): void {
+  if (effectErrorHandler) {
+    effectErrorHandler(error, source);
+    return;
+  }
+
+  if (defaultEffectErrorHandler) {
+    defaultEffectErrorHandler(error, source);
+    return;
+  }
+
+  console.error(`[Dalila] Error in ${source}:`, error);
 }
 
 /**
@@ -39,8 +79,14 @@ export function setEffectErrorHandler(handler: (error: Error, source: string) =>
  */
 function reportEffectError(error: unknown, source: string): void {
   const err = error instanceof Error ? error : new Error(String(error));
-  if (effectErrorHandler) effectErrorHandler(err, source);
-  else console.error(`[Dalila] Error in ${source}:`, err);
+  if (err instanceof FatalEffectError) {
+    reportEffectErrorWithHandlers(err, source);
+    setTimeout(() => {
+      throw err;
+    }, 0);
+    return;
+  }
+  reportEffectErrorWithHandlers(err, source);
 }
 
 /**

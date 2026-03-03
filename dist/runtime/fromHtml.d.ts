@@ -8,6 +8,7 @@
  *
  * @module dalila/runtime
  */
+import { type RuntimeSecurityOptions, type SanitizeHtmlFn } from './bind.js';
 import type { Scope } from '../core/scope.js';
 export interface FromHtmlOptions<T extends Record<string, unknown> = Record<string, unknown>> {
     /** Bind context — keys map to {placeholder} tokens in the HTML */
@@ -16,9 +17,18 @@ export interface FromHtmlOptions<T extends Record<string, unknown> = Record<stri
     children?: Node | DocumentFragment | Node[];
     /** Route scope — registers bind cleanup automatically */
     scope?: Scope;
+    /** Optional sanitizer for local `d-html` binds inside this template. */
+    sanitizeHtml?: SanitizeHtmlFn;
+    /** Optional runtime security settings for parsing/binding this template. */
+    security?: RuntimeSecurityOptions;
 }
 /**
  * Parse an HTML string into a bound DOM element.
+ *
+ * Security:
+ * - `html` is parsed with `template.innerHTML`, so it must be trusted template markup.
+ * - Do not concatenate unsanitized user input into `html`.
+ * - For untrusted content, bind it as data (`{token}` / `d-text`) or sanitize first.
  *
  * @example
  * ```ts

@@ -6,8 +6,8 @@
  *
  * @module dalila/runtime
  */
-export { bind, autoBind, mount, configure, createPortalTarget, getVirtualListController, scrollToVirtualIndex } from './bind.js';
-export type { BindOptions, BindContext, BindData, DisposeFunction, BindHandle, TransitionConfig, VirtualListAlign, VirtualScrollToIndexOptions, VirtualListController } from './bind.js';
+export { bind, autoBind, mount, configure, installProductionRuntimeDefaults, createPortalTarget, getVirtualListController, scrollToVirtualIndex, defaultSanitizeHtml, DEFAULT_RUNTIME_SECURITY, } from './bind.js';
+export type { BindOptions, BindContext, BindData, DisposeFunction, BindHandle, SanitizeHtmlFn, SanitizeHtmlContext, RuntimeSecurityOptions, TransitionConfig, VirtualListAlign, VirtualScrollToIndexOptions, VirtualListController } from './bind.js';
 export { fromHtml } from './fromHtml.js';
 export type { FromHtmlOptions } from './fromHtml.js';
 export { defineComponent, defineSimpleComponent, component } from './component.js';

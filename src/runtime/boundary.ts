@@ -8,10 +8,12 @@
  */
 
 import { effect, signal, Signal } from '../core/index.js';
-import { bind } from './bind.js';
+import { isInDevMode } from '../core/dev.js';
+import { bind, warnSecurityRuntime } from './bind.js';
 import { defineComponent } from './component.js';
 import type { Component } from './component.js';
-import type { BindContext, DisposeFunction } from './bind.js';
+import type { BindContext, BindOptions, DisposeFunction } from './bind.js';
+import { hasExecutableHtmlSinkPattern, setElementInnerHTML } from './html-sinks.js';
 
 // ============================================================================
 // Types
@@ -134,7 +136,8 @@ export function createErrorBoundary(options: ErrorBoundaryOptions): Component {
 export function bindBoundary(
   root: Element,
   ctx: BindContext,
-  cleanups: DisposeFunction[]
+  cleanups: DisposeFunction[],
+  options: BindOptions = {}
 ): void {
   const elements = qsaIncludingRoot(root, '[d-boundary]');
   const boundary = root.closest('[data-dalila-internal-bound]');
@@ -203,6 +206,9 @@ export function bindBoundary(
       host.appendChild(container);
 
       mountedDispose = bind(container, childCtx, {
+        sanitizeHtml: options.sanitizeHtml,
+        useDefaultSanitizeHtml: options.useDefaultSanitizeHtml,
+        security: options.security,
         _skipLifecycle: true,
       });
       mountedNode = container;
@@ -218,7 +224,8 @@ export function bindBoundary(
       const errorDisplay = document.createElement('div');
       errorDisplay.setAttribute('data-boundary-error', '');
       errorDisplay.setAttribute('data-dalila-internal-bound', '');
-      errorDisplay.innerHTML = fallbackTemplate;
+      warnBoundaryFallbackTemplate(fallbackTemplate);
+      setElementInnerHTML(errorDisplay, fallbackTemplate, options.security);
 
       const errorMsg = errorDisplay.querySelector('[data-error-message]');
       if (errorMsg) {
@@ -228,6 +235,9 @@ export function bindBoundary(
       host.appendChild(errorDisplay);
 
       mountedDispose = bind(errorDisplay, errorCtx, {
+        sanitizeHtml: options.sanitizeHtml,
+        useDefaultSanitizeHtml: options.useDefaultSanitizeHtml,
+        security: options.security,
         _skipLifecycle: true,
       });
       mountedNode = errorDisplay;
@@ -289,6 +299,12 @@ function escapeAttribute(value: string): string {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function warnBoundaryFallbackTemplate(template: string): void {
+  if (!isInDevMode()) return;
+  if (!hasExecutableHtmlSinkPattern(template)) return;
+  warnSecurityRuntime('d-boundary: suspicious HTML detected in fallback template. Dev warning is heuristic only (not sanitization). Use trusted templates or sanitize before use.');
 }
 
 // ============================================================================
