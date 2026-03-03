@@ -1,9 +1,18 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('UI Components E2E', () => {
+  test.describe.configure({ mode: 'default' });
+
   test.beforeEach(async ({ page }) => {
-    await page.goto('/examples/tests/ui-components.html');
-    await page.waitForLoadState('networkidle');
+    await page.goto('/examples/tests/ui-components.html', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => {
+      const win = window as any;
+      return !!win.__ui_components_ready || !!win.__ui_components_error;
+    });
+    const bootError = await page.evaluate(() => (window as any).__ui_components_error);
+    if (bootError) {
+      throw new Error(`UI components fixture failed to boot: ${bootError}`);
+    }
   });
 
   // ── Dialog ──────────────────────────────────────────────────

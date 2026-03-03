@@ -3,25 +3,26 @@ import { test, expect } from '@playwright/test';
 test('resource fetch is aborted on branch unmount', async ({ page }) => {
   await page.goto('/examples/tests/resource-abort.html');
 
-  const toggleBtn = page.locator('#toggle');
+  const app = page.locator('#app');
   const statusDiv = page.locator('#status');
 
-  // Initial state: Branch A is mounted, resource starts fetching
+  await expect
+    .poll(() => page.evaluate(() => window.__startedCount), { timeout: 1500 })
+    .toBeGreaterThan(0);
   await expect(statusDiv).toContainText('Fetching');
 
-  // Toggle to Branch B BEFORE fetch completes (200ms delay)
-  await page.waitForTimeout(50);
-  await toggleBtn.click();
+  // Use a DOM click to avoid cross-browser actionability overhead skewing timing.
+  await page.evaluate(() => {
+    (document.getElementById('toggle') as HTMLButtonElement | null)?.click();
+  });
+  await expect(app).toContainText('Branch B (No Resource)');
 
-  // Wait for abort to process
-  await page.waitForTimeout(100);
-
-  // Check that the fetch was aborted (not completed)
-  const abortedCount = await page.evaluate(() => window.__abortedCount);
-  const completedCount = await page.evaluate(() => window.__completedCount);
-
-  expect(abortedCount).toBeGreaterThan(0);
-  expect(completedCount).toBe(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__abortedCount), { timeout: 2000 })
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__completedCount), { timeout: 2000 })
+    .toBe(0);
 
   // Status should show "Aborted" (the resource was cancelled)
   await expect(statusDiv).toContainText('Aborted');
@@ -32,15 +33,14 @@ test('resource fetch completes if branch stays mounted', async ({ page }) => {
 
   const statusDiv = page.locator('#status');
 
-  // Initial state: Branch A is mounted, resource starts fetching
+  await expect
+    .poll(() => page.evaluate(() => window.__startedCount), { timeout: 1500 })
+    .toBeGreaterThan(0);
   await expect(statusDiv).toContainText('Fetching');
 
-  // Wait for fetch to complete (200ms + buffer)
-  await page.waitForTimeout(250);
-
-  // Check that the fetch completed successfully
-  const completedCount = await page.evaluate(() => window.__completedCount);
-  expect(completedCount).toBeGreaterThan(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__completedCount), { timeout: 2500 })
+    .toBeGreaterThan(0);
 
   await expect(statusDiv).toContainText('Completed');
 });

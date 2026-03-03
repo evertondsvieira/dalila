@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dalila UI — E2E Test Fixture</title>
-  <link rel="stylesheet" href="../../src/ui/dalila.css" />
+  <link rel="stylesheet" href="../../src/components/ui/dalila/dalila.css" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; }
     body { font-family: var(--d-font-sans); background: var(--d-surface-page); color: var(--d-text-primary); padding: 2rem; }
@@ -105,92 +105,105 @@
     </div>
   </section>
 
-  <script type="module">
-    import { signal } from '../../dist/core/index.js';
-    import {
-      createDialog,
-      createDrawer,
-      createDropdown,
-      createCombobox,
-      createTabs,
-      createPopover,
-      createAccordion,
-      createCalendar,
-      createToast,
-      createDropzone,
-      mountUI,
-    } from '../../dist/ui/index.js';
-    import { createScope, withScope } from '../../dist/core/scope.js';
-    import { bind } from '../../dist/runtime/bind.js';
+  <script>
+    window.__ui_components_ready = false;
+    window.__ui_components_error = null;
 
-    const scope = createScope();
+    (async () => {
+      const [
+        { createDialog },
+        { createDrawer },
+        { createDropdown },
+        { createCombobox },
+        { createTabs },
+        { createPopover },
+        { createAccordion },
+        { createScope, withScope },
+      ] = await Promise.all([
+        import('../../dist/components/ui/dialog/index.js'),
+        import('../../dist/components/ui/drawer/index.js'),
+        import('../../dist/components/ui/dropdown/index.js'),
+        import('../../dist/components/ui/combobox/index.js'),
+        import('../../dist/components/ui/tabs/index.js'),
+        import('../../dist/components/ui/popover/index.js'),
+        import('../../dist/components/ui/accordion/index.js'),
+        import('../../dist/core/scope.js'),
+      ]);
 
-    withScope(scope, () => {
-      // Dialog
-      const dialog = createDialog();
-      const dialogEl = document.getElementById('test-dialog');
-      dialogEl.showModal = function() { this.open = true; this.setAttribute('open', ''); };
-      dialogEl.close = function() { this.open = false; this.removeAttribute('open'); };
-      dialog._attachTo(dialogEl);
-      document.getElementById('dialog-open').addEventListener('click', () => dialog.show());
-      document.getElementById('dialog-close').addEventListener('click', () => dialog.close());
-      document.getElementById('dialog-cancel').addEventListener('click', () => dialog.close());
-      document.getElementById('dialog-confirm').addEventListener('click', () => dialog.close());
-      window.__dialog = dialog;
+      const scope = createScope();
 
-      // Drawer
-      const drawer = createDrawer({ side: 'left' });
-      const drawerEl = document.getElementById('test-drawer');
-      drawerEl.showModal = function() { this.open = true; this.setAttribute('open', ''); };
-      drawerEl.close = function() { this.open = false; this.removeAttribute('open'); };
-      drawer._attachTo(drawerEl);
-      document.getElementById('drawer-open').addEventListener('click', () => drawer.show());
-      document.getElementById('drawer-close').addEventListener('click', () => drawer.close());
-      window.__drawer = drawer;
+      withScope(scope, () => {
+        // Dialog
+        const dialog = createDialog();
+        const dialogEl = document.getElementById('test-dialog');
+        dialogEl.showModal = function() { this.open = true; this.setAttribute('open', ''); };
+        dialogEl.close = function() { this.open = false; this.removeAttribute('open'); };
+        dialog._attachTo(dialogEl);
+        document.getElementById('dialog-open').addEventListener('click', () => dialog.show());
+        document.getElementById('dialog-close').addEventListener('click', () => dialog.close());
+        document.getElementById('dialog-cancel').addEventListener('click', () => dialog.close());
+        document.getElementById('dialog-confirm').addEventListener('click', () => dialog.close());
+        window.__dialog = dialog;
 
-      // Dropdown
-      const dropdown = createDropdown();
-      dropdown._attachTo(document.getElementById('test-dropdown'));
-      document.getElementById('dropdown-trigger').addEventListener('click', (e) => dropdown.toggle(e));
-      window.__dropdown = dropdown;
+        // Drawer
+        const drawer = createDrawer({ side: 'left' });
+        const drawerEl = document.getElementById('test-drawer');
+        drawerEl.showModal = function() { this.open = true; this.setAttribute('open', ''); };
+        drawerEl.close = function() { this.open = false; this.removeAttribute('open'); };
+        drawer._attachTo(drawerEl);
+        document.getElementById('drawer-open').addEventListener('click', () => drawer.show());
+        document.getElementById('drawer-close').addEventListener('click', () => drawer.close());
+        window.__drawer = drawer;
 
-      // Tabs
-      const tabs = createTabs({ initial: 'alpha' });
-      tabs._attachTo(document.getElementById('test-tabs'));
-      const tabList = document.querySelector('#test-tabs .d-tab-list');
-      tabList.addEventListener('click', tabs.handleClick);
-      window.__tabs = tabs;
+        // Dropdown
+        const dropdown = createDropdown();
+        dropdown._attachTo(document.getElementById('test-dropdown'));
+        document.getElementById('dropdown-trigger').addEventListener('click', (e) => dropdown.toggle(e));
+        window.__dropdown = dropdown;
 
-      // Combobox
-      const combo = createCombobox({
-        options: [
-          { value: 'apple', label: 'Apple' },
-          { value: 'banana', label: 'Banana' },
-          { value: 'cherry', label: 'Cherry' },
-        ],
+        // Tabs
+        const tabs = createTabs({ initial: 'alpha' });
+        tabs._attachTo(document.getElementById('test-tabs'));
+        const tabList = document.querySelector('#test-tabs .d-tab-list');
+        tabList.addEventListener('click', tabs.handleClick);
+        window.__tabs = tabs;
+
+        // Combobox
+        const combo = createCombobox({
+          options: [
+            { value: 'apple', label: 'Apple' },
+            { value: 'banana', label: 'Banana' },
+            { value: 'cherry', label: 'Cherry' },
+          ],
+        });
+        combo._attachTo(document.getElementById('test-combobox'));
+        const comboInput = document.querySelector('#test-combobox input');
+        comboInput.addEventListener('input', combo.handleInput);
+        comboInput.addEventListener('keydown', combo.handleKeydown);
+        document.querySelectorAll('#test-combobox .d-combobox-option').forEach(opt => {
+          opt.addEventListener('click', combo.handleSelect);
+        });
+        window.__combo = combo;
+
+        // Accordion
+        const accordion = createAccordion({ single: true });
+        accordion._attachTo(document.getElementById('test-accordion'));
+        window.__accordion = accordion;
+
+        // Popover
+        const popover = createPopover({ placement: 'bottom' });
+        popover._attachTo(
+          document.getElementById('popover-trigger'),
+          document.getElementById('test-popover')
+        );
+        document.getElementById('popover-trigger').addEventListener('click', () => popover.toggle());
+        window.__popover = popover;
       });
-      combo._attachTo(document.getElementById('test-combobox'));
-      const comboInput = document.querySelector('#test-combobox input');
-      comboInput.addEventListener('input', combo.handleInput);
-      comboInput.addEventListener('keydown', combo.handleKeydown);
-      document.querySelectorAll('#test-combobox .d-combobox-option').forEach(opt => {
-        opt.addEventListener('click', combo.handleSelect);
-      });
-      window.__combo = combo;
 
-      // Accordion
-      const accordion = createAccordion({ single: true });
-      accordion._attachTo(document.getElementById('test-accordion'));
-      window.__accordion = accordion;
-
-      // Popover
-      const popover = createPopover({ placement: 'bottom' });
-      popover._attachTo(
-        document.getElementById('popover-trigger'),
-        document.getElementById('test-popover')
-      );
-      document.getElementById('popover-trigger').addEventListener('click', () => popover.toggle());
-      window.__popover = popover;
+      window.__ui_components_ready = true;
+    })().catch((error) => {
+      window.__ui_components_error = String(error && (error.stack || error.message || error));
+      console.error(error);
     });
   </script>
 </body>

@@ -6,6 +6,7 @@ declare global {
   interface Window {
     __clickCount: number;
     __effectRuns: number;
+    __startedCount: number;
     __abortedCount: number;
     __completedCount: number;
     __mounts: number;
