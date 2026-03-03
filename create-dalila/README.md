@@ -23,6 +23,8 @@ Open http://localhost:4242 to see your app.
 - Dev server + route generation watcher
 - TypeScript support out of the box
 - Minimal CSS styling
+- `dompurify` installed and wired into the runtime bootstrap
+- Trusted Types enabled in the starter runtime config
 
 ## Project Structure
 
@@ -35,7 +37,7 @@ my-app/
 │   │   ├── layout.html
 │   │   ├── page.html
 │   │   └── page.ts
-│   ├── main.ts     # Router bootstrap
+│   ├── main.ts     # Router bootstrap + runtime security defaults
 │   └── style.css   # Styles
 ├── package.json
 └── tsconfig.json

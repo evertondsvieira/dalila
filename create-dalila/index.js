@@ -131,6 +131,16 @@ function updatePackageJson(projectPath, projectName) {
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 }
 
+function updateTemplatePlaceholders(projectPath, projectName) {
+  const trustedTypesPolicyName = `${projectName}-html`;
+  const mainPath = path.join(projectPath, 'src', 'main.ts');
+  const source = fs.readFileSync(mainPath, 'utf8');
+  fs.writeFileSync(
+    mainPath,
+    source.replaceAll('__DALILA_TRUSTED_TYPES_POLICY__', trustedTypesPolicyName)
+  );
+}
+
 function main() {
   ensureSupportedNode();
 
@@ -184,6 +194,7 @@ function main() {
 
   // Update package.json with project name
   updatePackageJson(projectPath, projectName);
+  updateTemplatePlaceholders(projectPath, projectName);
 
   // Success message
   console.log(`${green('Done!')} Created ${bold(projectName)}\n`);
