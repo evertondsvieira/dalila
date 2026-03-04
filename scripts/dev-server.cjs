@@ -8,17 +8,29 @@ const path = require('path');
 // ============================================================================
 // Configuration
 // ============================================================================
-const rootDir = fs.realpathSync(process.cwd());
+function resolveServerConfig(argv = process.argv.slice(2), cwd = process.cwd()) {
+  const projectDir = fs.realpathSync(cwd);
+  const distMode = argv.includes('--dist');
+  const rootDir = distMode ? path.join(projectDir, 'dist') : projectDir;
+  const isDalilaRepo = !distMode && fs.existsSync(path.join(rootDir, 'src', 'core', 'signal.ts'));
+  const defaultEntry = isDalilaRepo ? '/examples/playground/index.html' : '/index.html';
+
+  return {
+    projectDir,
+    rootDir,
+    distMode,
+    isDalilaRepo,
+    defaultEntry,
+  };
+}
+
+const serverConfig = resolveServerConfig();
+const projectDir = serverConfig.projectDir;
+const rootDir = serverConfig.rootDir;
+const distMode = serverConfig.distMode;
+const isDalilaRepo = serverConfig.isDalilaRepo;
+const defaultEntry = serverConfig.defaultEntry;
 const port = Number(process.env.PORT) || 4242;
-
-// Detect if running in dalila repo or user project
-const isDalilaRepo = fs.existsSync(path.join(rootDir, 'src', 'core', 'signal.ts'));
-const defaultEntry = isDalilaRepo ? '/examples/playground/index.html' : '/index.html';
-
-// Resolve dalila dist path
-const dalilaDistPath = isDalilaRepo
-  ? path.join(rootDir, 'dist')
-  : path.join(rootDir, 'node_modules', 'dalila', 'dist');
 
 // Load TypeScript (optional for user projects)
 let ts = null;
@@ -168,6 +180,8 @@ function resolveSpaFallbackPath(requestPath) {
 }
 
 function shouldInjectBindings(requestPath, htmlContent = '') {
+  if (distMode) return false;
+
   // Inject bindings for playground and module-based pages.
   const normalizedPath = normalizeHtmlRequestPath(requestPath);
   if (!normalizedPath.endsWith('.html')) return false;
@@ -186,6 +200,118 @@ function shouldInjectBindings(requestPath, htmlContent = '') {
 
   // User project mode keeps root-only behavior.
   return normalizedPath === '/index.html';
+}
+
+function resolveProjectSourceDir(projectRoot) {
+  const defaultSourceDir = fs.existsSync(path.join(projectRoot, 'src'))
+    ? path.join(projectRoot, 'src')
+    : projectRoot;
+  if (!ts) return defaultSourceDir;
+
+  try {
+    const configPath = ts.findConfigFile(projectRoot, ts.sys.fileExists, 'tsconfig.json');
+    if (!configPath) return defaultSourceDir;
+
+    let unrecoverableDiagnostic = null;
+    const parsed = ts.getParsedCommandLineOfConfigFile(
+      configPath,
+      {},
+      {
+        ...ts.sys,
+        onUnRecoverableConfigFileDiagnostic(diagnostic) {
+          unrecoverableDiagnostic = diagnostic;
+        },
+      }
+    );
+
+    if (unrecoverableDiagnostic || !parsed) {
+      return defaultSourceDir;
+    }
+
+    if (typeof parsed.options?.rootDir === 'string' && parsed.options.rootDir.length > 0) {
+      return path.resolve(path.dirname(configPath), parsed.options.rootDir);
+    }
+
+    if (defaultSourceDir !== projectRoot) {
+      return defaultSourceDir;
+    }
+
+    const sourceDirs = parsed.fileNames
+      .filter((filePath) => !filePath.endsWith('.d.ts'))
+      .map((filePath) => path.dirname(path.resolve(filePath)));
+    if (sourceDirs.length === 0) {
+      return defaultSourceDir;
+    }
+
+    let commonDir = sourceDirs[0];
+    for (const nextDir of sourceDirs.slice(1)) {
+      while (commonDir !== path.dirname(commonDir)) {
+        const relativePath = path.relative(commonDir, nextDir);
+        if (relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))) {
+          break;
+        }
+        commonDir = path.dirname(commonDir);
+      }
+
+      const relativePath = path.relative(commonDir, nextDir);
+      if (relativePath !== '' && (relativePath.startsWith('..') || path.isAbsolute(relativePath))) {
+        return defaultSourceDir;
+      }
+    }
+
+    return commonDir;
+  } catch {
+    return defaultSourceDir;
+  }
+}
+
+function toProjectRequestPath(projectRoot, targetAbsPath) {
+  const relativePath = path.relative(projectRoot, targetAbsPath);
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return '/';
+  }
+
+  return `/${relativePath.replace(/\\/g, '/')}`;
+}
+
+function ensureTrailingSlash(urlPath) {
+  return urlPath.endsWith('/') ? urlPath : `${urlPath}/`;
+}
+
+function createImportMapEntries(dalilaPath, sourceDirPath = '/src/') {
+  return {
+    'dalila': `${dalilaPath}/index.js`,
+    'dalila/core': `${dalilaPath}/core/index.js`,
+    'dalila/context': `${dalilaPath}/context/index.js`,
+    'dalila/context/raw': `${dalilaPath}/context/raw.js`,
+    'dalila/runtime': `${dalilaPath}/runtime/index.js`,
+    'dalila/router': `${dalilaPath}/router/index.js`,
+    'dalila/form': `${dalilaPath}/form/index.js`,
+    'dalila/http': `${dalilaPath}/http/index.js`,
+    'dalila/components/ui': `${dalilaPath}/components/ui/index.js`,
+    'dalila/components/ui/dialog': `${dalilaPath}/components/ui/dialog/index.js`,
+    'dalila/components/ui/drawer': `${dalilaPath}/components/ui/drawer/index.js`,
+    'dalila/components/ui/dropdown': `${dalilaPath}/components/ui/dropdown/index.js`,
+    'dalila/components/ui/popover': `${dalilaPath}/components/ui/popover/index.js`,
+    'dalila/components/ui/combobox': `${dalilaPath}/components/ui/combobox/index.js`,
+    'dalila/components/ui/accordion': `${dalilaPath}/components/ui/accordion/index.js`,
+    'dalila/components/ui/tabs': `${dalilaPath}/components/ui/tabs/index.js`,
+    'dalila/components/ui/calendar': `${dalilaPath}/components/ui/calendar/index.js`,
+    'dalila/components/ui/toast': `${dalilaPath}/components/ui/toast/index.js`,
+    'dalila/components/ui/dropzone': `${dalilaPath}/components/ui/dropzone/index.js`,
+    'dalila/components/ui/runtime': `${dalilaPath}/components/ui/runtime.js`,
+    'dalila/components/ui/env': `${dalilaPath}/components/ui/env.js`,
+    '@/': ensureTrailingSlash(sourceDirPath),
+  };
+}
+
+function createImportMapScript(dalilaPath, sourceDirPath = '/src/') {
+  const payload = JSON.stringify({ imports: createImportMapEntries(dalilaPath, sourceDirPath) }, null, 2)
+    .split('\n')
+    .map(line => `    ${line}`)
+    .join('\n');
+
+  return `  <script type="importmap">\n${payload}\n  </script>`;
 }
 
 // ============================================================================
@@ -285,6 +411,63 @@ function generatePreloadScript(name, defaultValue, storageType = 'localStorage')
     .replace(/\u2029/g, '\\u2029');
 }
 
+function renderPreloadScriptTags(baseDir) {
+  const preloads = detectPreloadScripts(baseDir);
+  if (preloads.length === 0) return '';
+
+  return preloads
+    .map((preload) => `  <script>${generatePreloadScript(preload.name, preload.defaultValue, preload.storageType)}</script>`)
+    .join('\n');
+}
+
+function injectHeadFragments(html, fragments, options = {}) {
+  const content = fragments.filter(Boolean).join('\n');
+  if (!content) return html;
+
+  const headOpenMatch = html.match(/<head\b[^>]*>/i);
+  const headCloseMatch = html.match(/<\/head>/i);
+  if (!headOpenMatch || headOpenMatch.index == null || !headCloseMatch || headCloseMatch.index == null) {
+    return `${content}\n${html}`;
+  }
+
+  const headStart = headOpenMatch.index + headOpenMatch[0].length;
+  const headEnd = headCloseMatch.index;
+  const headContent = html.slice(headStart, headEnd);
+  const moduleScriptMatch = options.beforeModule
+    ? headContent.match(/<script\b[^>]*\btype=["']module["'][^>]*>/i)
+    : null;
+  const stylesheetMatch = options.beforeStyles
+    ? headContent.match(/<link\b[^>]*rel=["']stylesheet["'][^>]*>/i)
+    : null;
+  const insertionOffset = moduleScriptMatch?.index
+    ?? stylesheetMatch?.index
+    ?? headContent.length;
+  const insertionIndex = headStart + insertionOffset;
+
+  return `${html.slice(0, insertionIndex)}\n${content}\n${html.slice(insertionIndex)}`;
+}
+
+function buildProjectSourceDirPath(projectRoot) {
+  return toProjectRequestPath(projectRoot, resolveProjectSourceDir(projectRoot));
+}
+
+function buildProjectHeadAdditions(projectRoot, dalilaPath) {
+  const sourceDir = resolveProjectSourceDir(projectRoot);
+  return [
+    `  <style>[d-loading]{visibility:hidden}</style>`,
+    renderPreloadScriptTags(sourceDir),
+    createImportMapScript(dalilaPath, buildProjectSourceDirPath(projectRoot)),
+  ].filter(Boolean);
+}
+
+function buildUserProjectHeadAdditions(projectRoot, dalilaPath) {
+  return buildProjectHeadAdditions(projectRoot, dalilaPath);
+}
+
+function buildRepoProjectHeadAdditions(projectRoot, dalilaPath) {
+  return buildProjectHeadAdditions(projectRoot, dalilaPath);
+}
+
 // ============================================================================
 // Auto-detect and add d-loading attribute
 // ============================================================================
@@ -332,41 +515,11 @@ function injectBindings(html, requestPath) {
   const normalizedPath = normalizeHtmlRequestPath(requestPath);
   // Different paths for dalila repo vs user projects
   const dalilaPath = isDalilaRepo ? '/dist' : '/node_modules/dalila/dist';
-
-  const importMap = `
-  <script type="importmap">
-    {
-      "imports": {
-        "dalila": "${dalilaPath}/index.js",
-        "dalila/core": "${dalilaPath}/core/index.js",
-        "dalila/context": "${dalilaPath}/context/index.js",
-        "dalila/context/raw": "${dalilaPath}/context/raw.js",
-        "dalila/runtime": "${dalilaPath}/runtime/index.js",
-        "dalila/router": "${dalilaPath}/router/index.js",
-        "dalila/form": "${dalilaPath}/form/index.js",
-        "dalila/http": "${dalilaPath}/http/index.js",
-        "dalila/components/ui": "${dalilaPath}/components/ui/index.js",
-        "dalila/components/ui/dialog": "${dalilaPath}/components/ui/dialog/index.js",
-        "dalila/components/ui/drawer": "${dalilaPath}/components/ui/drawer/index.js",
-        "dalila/components/ui/dropdown": "${dalilaPath}/components/ui/dropdown/index.js",
-        "dalila/components/ui/popover": "${dalilaPath}/components/ui/popover/index.js",
-        "dalila/components/ui/combobox": "${dalilaPath}/components/ui/combobox/index.js",
-        "dalila/components/ui/accordion": "${dalilaPath}/components/ui/accordion/index.js",
-        "dalila/components/ui/tabs": "${dalilaPath}/components/ui/tabs/index.js",
-        "dalila/components/ui/calendar": "${dalilaPath}/components/ui/calendar/index.js",
-        "dalila/components/ui/toast": "${dalilaPath}/components/ui/toast/index.js",
-        "dalila/components/ui/dropzone": "${dalilaPath}/components/ui/dropzone/index.js",
-        "@/": "/src/"
-      }
-    }
-  </script>`;
+  const importMap = createImportMapScript(dalilaPath, buildProjectSourceDirPath(projectDir));
 
   // For user projects, inject import map + HMR script
   if (!isDalilaRepo) {
     let output = addLoadingAttributes(html);
-
-    // FOUC prevention CSS
-    const foucPreventionCSS = `  <style>[d-loading]{visibility:hidden}</style>`;
 
     // Smart HMR script for user projects
     const hmrScript = `
@@ -518,22 +671,24 @@ function injectBindings(html, requestPath) {
     };
   </script>`;
 
-    // Inject HMR + import map in HEAD (HMR must load before user scripts)
-    if (output.includes('</head>')) {
-      output = output.replace('</head>', `${foucPreventionCSS}\n${importMap}\n${hmrScript}\n</head>`);
-    } else {
-      output = `${foucPreventionCSS}\n${importMap}\n${hmrScript}\n${output}`;
-    }
+    output = injectHeadFragments(output, buildUserProjectHeadAdditions(projectDir, dalilaPath), {
+      beforeModule: true,
+      beforeStyles: true,
+    });
+    output = injectHeadFragments(output, [hmrScript], {
+      beforeModule: true,
+      beforeStyles: true,
+    });
 
     return output;
   }
 
   // Dalila repo: only inject import map for non-playground pages
   if (normalizedPath !== '/examples/playground/index.html') {
-    if (html.includes('</head>')) {
-      return html.replace('</head>', `${importMap}\n</head>`);
-    }
-    return `${importMap}\n${html}`;
+    return injectHeadFragments(html, [importMap], {
+      beforeModule: true,
+      beforeStyles: true,
+    });
   }
 
   // Dalila repo: full playground injection
@@ -683,28 +838,14 @@ function injectBindings(html, requestPath) {
   let output = addLoadingAttributes(html);
 
   // Detect and inject preload scripts
-  const preloads = detectPreloadScripts(path.join(rootDir, 'examples', 'playground'));
-  let preloadScripts = '';
-
-  if (preloads.length > 0) {
-    preloadScripts = preloads
-      .map((p) => `  <script>${generatePreloadScript(p.name, p.defaultValue, p.storageType)}</script>`)
-      .join('\n');
-  }
-
-  // FOUC prevention: hide elements with d-loading until bind() completes
-  const foucPreventionCSS = `  <style>[d-loading]{visibility:hidden}</style>`;
-
-  if (output.includes('</head>')) {
-    // Inject: FOUC CSS -> Preload scripts -> Import map
-    if (preloadScripts) {
-      output = output.replace('</head>', `${foucPreventionCSS}\n${preloadScripts}\n${importMap}\n</head>`);
-    } else {
-      output = output.replace('</head>', `${foucPreventionCSS}\n${importMap}\n</head>`);
-    }
-  } else {
-    output = `${foucPreventionCSS}\n${preloadScripts}\n${importMap}\n${output}`;
-  }
+  output = injectHeadFragments(output, [
+    `  <style>[d-loading]{visibility:hidden}</style>`,
+    renderPreloadScriptTags(path.join(projectDir, 'examples', 'playground')),
+    importMap,
+  ], {
+    beforeModule: true,
+    beforeStyles: true,
+  });
 
   if (output.includes('</body>')) {
     return output.replace('</body>', `${script}\n</body>`);
@@ -955,11 +1096,67 @@ const server = http.createServer((req, res) => {
 // ============================================================================
 // File Watcher (cross-platform)
 // ============================================================================
-const watchTargets = isDalilaRepo
-  ? [path.join(rootDir, 'examples', 'playground')]
-  : [path.join(rootDir, 'src'), rootDir];
+const RECURSIVE_WATCH_IGNORED_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'coverage',
+  'playwright-report',
+  'test-results',
+]);
+const ROOT_WATCH_IGNORED_NAMES = new Set([
+  'src',
+  ...RECURSIVE_WATCH_IGNORED_DIRS,
+]);
+
+function collectTopLevelRecursiveWatchDirs(baseDir) {
+  if (!fs.existsSync(baseDir)) return [];
+
+  try {
+    return fs.readdirSync(baseDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !ROOT_WATCH_IGNORED_NAMES.has(entry.name))
+      .map((entry) => path.join(baseDir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function createWatchTargets() {
+  if (distMode) return [];
+
+  if (isDalilaRepo) {
+    return [{ dir: path.join(rootDir, 'examples', 'playground'), recursive: true }];
+  }
+
+  return [
+    { dir: path.join(projectDir, 'src'), recursive: true },
+    { dir: projectDir, recursive: false, watchChildDirsRecursive: true },
+  ];
+}
+
+const watchTargets = createWatchTargets();
 
 const watchers = [];
+const watchedDirs = new Set();
+const watcherEntries = new Map();
+
+function unwatchDirectoryTree(dir, state = { watchedDirs, watcherEntries }) {
+  const resolvedDir = path.resolve(dir);
+  for (const watchedDir of Array.from(state.watchedDirs)) {
+    if (watchedDir !== resolvedDir && !watchedDir.startsWith(resolvedDir + path.sep)) {
+      continue;
+    }
+
+    const watcher = state.watcherEntries.get(watchedDir);
+    if (watcher) {
+      state.watcherEntries.delete(watchedDir);
+      try {
+        if (typeof watcher.close === 'function') watcher.close();
+      } catch { /* ignore */ }
+    }
+
+    state.watchedDirs.delete(watchedDir);
+  }
+}
 
 /**
  * Safe SSE broadcast with error handling
@@ -998,42 +1195,85 @@ function setupWatcher() {
   // fs.watch with recursive:true doesn't work reliably on Linux
   console.log('[Watcher] Using fs.watch');
 
-  function watchDirectory(dir) {
+  function shouldWatchRecursiveDir(name) {
+    return !name.startsWith('.') && !RECURSIVE_WATCH_IGNORED_DIRS.has(name);
+  }
+
+  function watchDirectory(dir, options = {}) {
     if (!fs.existsSync(dir)) return;
+    const resolvedDir = path.resolve(dir);
+    if (watchedDirs.has(resolvedDir)) return;
 
     try {
       // Watch the directory itself
       const watcher = fs.watch(dir, (eventType, filename) => {
+        if (!fs.existsSync(dir)) {
+          unwatchDirectoryTree(resolvedDir);
+          return;
+        }
+
         if (!filename) return;
-        if (filename.endsWith('.map')) return;
-        notifyHmr(filename);
+        const filenameValue = filename.toString();
+        if (filenameValue.endsWith('.map')) return;
+        if (!options.recursive && ROOT_WATCH_IGNORED_NAMES.has(filenameValue)) return;
+        notifyHmr(filenameValue);
 
         // Check if a new subdirectory was added
-        if (eventType === 'rename') {
-          const fullPath = path.join(dir, filename);
+        if (options.recursive && eventType === 'rename') {
+          if (!shouldWatchRecursiveDir(filenameValue)) return;
+          const fullPath = path.join(dir, filenameValue);
           try {
             const stat = fs.statSync(fullPath);
             if (stat.isDirectory()) {
-              watchDirectory(fullPath);
+              watchDirectory(fullPath, options);
             }
-          } catch { /* file might have been deleted */ }
+          } catch {
+            unwatchDirectoryTree(fullPath);
+          }
+        } else if (options.watchChildDirsRecursive && eventType === 'rename') {
+          if (ROOT_WATCH_IGNORED_NAMES.has(filenameValue) || filenameValue.startsWith('.')) return;
+          const fullPath = path.join(dir, filenameValue);
+          try {
+            const stat = fs.statSync(fullPath);
+            if (stat.isDirectory()) {
+              watchDirectory(fullPath, { recursive: true });
+            }
+          } catch {
+            unwatchDirectoryTree(fullPath);
+          }
         }
+      });
+      watcher.on('error', () => {
+        unwatchDirectoryTree(resolvedDir);
+      });
+      watcher.on('close', () => {
+        watcherEntries.delete(resolvedDir);
+        watchedDirs.delete(resolvedDir);
       });
       watchers.push(watcher);
+      watcherEntries.set(resolvedDir, watcher);
+      watchedDirs.add(resolvedDir);
 
       // Watch subdirectories recursively
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      entries.forEach((entry) => {
-        if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          watchDirectory(path.join(dir, entry.name));
-        }
-      });
+      if (options.recursive) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        entries.forEach((entry) => {
+          if (entry.isDirectory() && shouldWatchRecursiveDir(entry.name)) {
+            watchDirectory(path.join(dir, entry.name), options);
+          }
+        });
+      } else if (options.watchChildDirsRecursive) {
+        const childDirs = collectTopLevelRecursiveWatchDirs(dir);
+        childDirs.forEach((childDir) => {
+          watchDirectory(childDir, { recursive: true });
+        });
+      }
     } catch (err) {
       console.warn('[Watcher] Could not watch:', dir, err.message);
     }
   }
 
-  watchTargets.forEach((dir) => watchDirectory(dir));
+  watchTargets.forEach((target) => watchDirectory(target.dir, target));
 }
 
 // ============================================================================
@@ -1074,6 +1314,8 @@ const cleanup = () => {
       if (typeof w.close === 'function') w.close();
     } catch { /* ignore */ }
   });
+  watcherEntries.clear();
+  watchedDirs.clear();
 
   hmrClients.forEach((client) => {
     try { client.end(); } catch { /* ignore */ }
@@ -1084,9 +1326,18 @@ const cleanup = () => {
 };
 
 module.exports = {
+  resolveServerConfig,
   resolvePath,
   getRequestPath,
   safeDecodeUrlPath,
+  createImportMapEntries,
+  createImportMapScript,
+  detectPreloadScripts,
+  buildUserProjectHeadAdditions,
+  injectHeadFragments,
+  collectTopLevelRecursiveWatchDirs,
+  createWatchTargets,
+  unwatchDirectoryTree,
   generatePreloadScript,
   createSecurityHeaders,
 };
@@ -1105,12 +1356,19 @@ if (require.main === module) {
   // ============================================================================
   // Startup
   // ============================================================================
-  setupWatcher();
-  startKeepalive();
+  if (distMode && !fs.existsSync(rootDir)) {
+    console.error('[Dalila] dist directory not found. Run "npm run build" before "dalila-dev --dist".');
+    process.exit(1);
+  }
+
+  if (!distMode) {
+    setupWatcher();
+    startKeepalive();
+  }
 
   server.listen(port, () => {
     console.log('');
-    console.log('  🐰✂️  Dalila dev server');
+    console.log(`  🐰✂️  Dalila ${distMode ? 'preview server' : 'dev server'}`);
     console.log(`        http://localhost:${port}`);
     console.log('');
   });

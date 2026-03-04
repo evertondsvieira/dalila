@@ -1,14 +1,50 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const devServer = require('../scripts/dev-server.cjs') as {
+  resolveServerConfig: (argv?: string[], cwd?: string) => {
+    projectDir: string;
+    rootDir: string;
+    distMode: boolean;
+    isDalilaRepo: boolean;
+    defaultEntry: string;
+  };
   getRequestPath: (url: string) => string | null;
   safeDecodeUrlPath: (url: string) => string | null;
+  createImportMapEntries: (dalilaPath: string) => Record<string, string>;
+  buildUserProjectHeadAdditions: (projectRoot: string, dalilaPath: string) => string[];
+  injectHeadFragments: (html: string, fragments: string[], options?: { beforeModule?: boolean; beforeStyles?: boolean }) => string;
+  collectTopLevelRecursiveWatchDirs: (baseDir: string) => string[];
+  unwatchDirectoryTree: (
+    dir: string,
+    state?: {
+      watchedDirs: Set<string>;
+      watcherEntries: Map<string, { close?: () => void }>;
+    }
+  ) => void;
   generatePreloadScript: (name: string, defaultValue: string, storageType?: string) => string;
   createSecurityHeaders: (headers?: Record<string, string>) => Record<string, string>;
 };
+
+function withTempDir(run: (rootDir: string) => void) {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dalila-dev-server-'));
+  try {
+    run(rootDir);
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+}
+
+function write(rootDir: string, relativePath: string, content: string) {
+  const targetPath = path.join(rootDir, relativePath);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, content);
+}
 
 test('dev-server: malformed URL decoding returns null instead of throwing', () => {
   assert.equal(devServer.safeDecodeUrlPath('/foo%E0%A4%A'), null);
@@ -23,6 +59,187 @@ test('dev-server: preload script escapes </script> breakout sequences', () => {
 
   assert.equal(script.includes('</script>'), false);
   assert.ok(script.includes('\\x3C'));
+});
+
+test('dev-server: --dist resolves to the built dist root', () => {
+  const config = devServer.resolveServerConfig(['--dist'], process.cwd());
+
+  assert.equal(config.distMode, true);
+  assert.equal(config.rootDir, path.join(process.cwd(), 'dist'));
+  assert.equal(config.isDalilaRepo, false);
+  assert.equal(config.defaultEntry, '/index.html');
+});
+
+test('dev-server: user project head additions include preload scripts and UI helper entries', () => {
+  withTempDir((rootDir) => {
+    write(
+      rootDir,
+      'tsconfig.json',
+      JSON.stringify(
+        {
+          compilerOptions: {
+            rootDir: 'app',
+          },
+          include: ['app'],
+        },
+        null,
+        2
+      )
+    );
+    write(
+      rootDir,
+      'app/theme.ts',
+      `persist(signal('dark'), { name: 'app-theme', preload: true });`
+    );
+
+    const fragments = devServer.buildUserProjectHeadAdditions(rootDir, '/node_modules/dalila/dist');
+    const rendered = fragments.join('\n');
+    const entries = devServer.createImportMapEntries('/node_modules/dalila/dist');
+
+    assert.equal(entries['dalila/components/ui/runtime'], '/node_modules/dalila/dist/components/ui/runtime.js');
+    assert.equal(entries['dalila/components/ui/env'], '/node_modules/dalila/dist/components/ui/env.js');
+    assert.match(rendered, /app-theme/);
+    assert.match(rendered, /"@\/"\s*:\s*"\/app\/"/);
+    assert.match(rendered, /"dalila\/components\/ui\/runtime"/);
+    assert.match(rendered, /"dalila\/components\/ui\/env"/);
+  });
+});
+
+test('dev-server: user project head additions resolve rootDir inherited through tsconfig extends', () => {
+  withTempDir((rootDir) => {
+    write(
+      rootDir,
+      'tsconfig.base.json',
+      JSON.stringify(
+        {
+          compilerOptions: {
+            rootDir: 'app',
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(
+      rootDir,
+      'tsconfig.json',
+      JSON.stringify(
+        {
+          extends: './tsconfig.base.json',
+          include: ['app'],
+        },
+        null,
+        2
+      )
+    );
+    write(
+      rootDir,
+      'app/theme.ts',
+      `persist(signal('dark'), { name: 'extended-theme', preload: true });`
+    );
+
+    const fragments = devServer.buildUserProjectHeadAdditions(rootDir, '/node_modules/dalila/dist');
+    const rendered = fragments.join('\n');
+
+    assert.match(rendered, /extended-theme/);
+    assert.match(rendered, /"@\/"\s*:\s*"\/app\/"/);
+  });
+});
+
+test('dev-server: user project head additions infer non-src source root when rootDir is omitted', () => {
+  withTempDir((rootDir) => {
+    write(
+      rootDir,
+      'tsconfig.json',
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: 'ES2020',
+            module: 'ESNext',
+          },
+          include: ['app'],
+        },
+        null,
+        2
+      )
+    );
+    write(
+      rootDir,
+      'app/theme.ts',
+      `persist(signal('dark'), { name: 'inferred-theme', preload: true });`
+    );
+
+    const fragments = devServer.buildUserProjectHeadAdditions(rootDir, '/node_modules/dalila/dist');
+    const rendered = fragments.join('\n');
+
+    assert.match(rendered, /inferred-theme/);
+    assert.match(rendered, /"@\/"\s*:\s*"\/app\/"/);
+  });
+});
+
+test('dev-server: head fragments can be injected before module scripts', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '  <script type="module" src="/src/main.ts"></script>',
+    '  <link rel="stylesheet" href="/src/style.css">',
+    '</head>',
+    '<body></body>',
+    '</html>',
+  ].join('\n');
+
+  const injected = devServer.injectHeadFragments(
+    html,
+    ['  <script type="importmap">{"imports":{"dalila":"/dist/index.js"}}</script>'],
+    { beforeModule: true, beforeStyles: true }
+  );
+
+  assert.ok(injected.indexOf('type="importmap"') < injected.indexOf('type="module"'));
+});
+
+test('dev-server: top-level asset directories outside src remain recursively watched', () => {
+  withTempDir((rootDir) => {
+    write(rootDir, 'src/app/page.ts', 'export const x = 1;\n');
+    write(rootDir, 'public/images/logo.svg', '<svg />\n');
+    write(rootDir, 'assets/icons/menu.svg', '<svg />\n');
+    write(rootDir, 'node_modules/pkg/index.js', 'export {};\n');
+    write(rootDir, 'dist/app.js', 'console.log("built");\n');
+
+    const watchedDirs = devServer.collectTopLevelRecursiveWatchDirs(rootDir)
+      .map((dir) => path.relative(rootDir, dir).replace(/\\/g, '/'))
+      .sort();
+
+    assert.deepEqual(watchedDirs, ['assets', 'public']);
+  });
+});
+
+test('dev-server: removing a watched directory clears it for later re-watch', () => {
+  withTempDir((rootDir) => {
+    const componentsDir = path.join(rootDir, 'src', 'components');
+    const nestedDir = path.join(componentsDir, 'nested');
+    const assetsDir = path.join(rootDir, 'assets');
+    const closed: string[] = [];
+    const state = {
+      watchedDirs: new Set([componentsDir, nestedDir, assetsDir]),
+      watcherEntries: new Map([
+        [componentsDir, { close: () => { closed.push('components'); } }],
+        [nestedDir, { close: () => { closed.push('nested'); } }],
+        [assetsDir, { close: () => { closed.push('assets'); } }],
+      ]),
+    };
+
+    devServer.unwatchDirectoryTree(componentsDir, state);
+
+    assert.deepEqual(Array.from(state.watchedDirs).map((dir) => path.relative(rootDir, dir)).sort(), ['assets']);
+    assert.equal(state.watcherEntries.has(componentsDir), false);
+    assert.equal(state.watcherEntries.has(nestedDir), false);
+    assert.equal(state.watcherEntries.has(assetsDir), true);
+    assert.deepEqual(closed.sort(), ['components', 'nested']);
+
+    state.watchedDirs.add(componentsDir);
+    assert.equal(state.watchedDirs.has(componentsDir), true);
+  });
 });
 
 test('dev-server: security headers include CSP and nosniff defaults', () => {

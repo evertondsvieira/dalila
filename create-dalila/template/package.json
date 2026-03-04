@@ -7,7 +7,7 @@
     "dev": "node dev.mjs",
     "routes": "dalila routes generate",
     "routes:watch": "dalila routes watch",
-    "build": "tsc",
+    "build": "dalila routes generate && tsc && node build.mjs",
     "preview": "dalila-dev --dist",
     "postinstall": "dalila routes generate"
   },
