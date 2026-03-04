@@ -4,7 +4,7 @@ test.describe('UI Components E2E', () => {
   test.describe.configure({ mode: 'default' });
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('/examples/tests/ui-components.html', { waitUntil: 'domcontentloaded' });
+    await page.goto('/examples/tests/ui-components.html', { waitUntil: 'commit' });
     await page.waitForFunction(() => {
       const win = window as any;
       return !!win.__ui_components_ready || !!win.__ui_components_error;
