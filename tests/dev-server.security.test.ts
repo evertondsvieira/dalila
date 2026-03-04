@@ -18,6 +18,11 @@ const devServer = require('../scripts/dev-server.cjs') as {
   safeDecodeUrlPath: (url: string) => string | null;
   createImportMapEntries: (dalilaPath: string) => Record<string, string>;
   buildUserProjectHeadAdditions: (projectRoot: string, dalilaPath: string) => string[];
+  mergeImportMapIntoHtml: (
+    html: string,
+    dalilaPath: string,
+    sourceDirPath?: string
+  ) => { html: string; merged: boolean; script: string };
   injectHeadFragments: (html: string, fragments: string[], options?: { beforeModule?: boolean; beforeStyles?: boolean }) => string;
   collectTopLevelRecursiveWatchDirs: (baseDir: string) => string[];
   unwatchDirectoryTree: (
@@ -202,6 +207,34 @@ test('dev-server: head fragments can be injected before module scripts', () => {
   );
 
   assert.ok(injected.indexOf('type="importmap"') < injected.indexOf('type="module"'));
+});
+
+test('dev-server: merges dalila entries into an existing import map without dropping dompurify', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '  <link rel="stylesheet" href="/src/style.css">',
+    '  <script type="importmap">',
+    '    {',
+    '      "imports": {',
+    '        "dompurify": "/node_modules/dompurify/dist/purify.es.mjs"',
+    '      }',
+    '    }',
+    '  </script>',
+    '  <script type="module" src="/src/main.ts"></script>',
+    '</head>',
+    '<body></body>',
+    '</html>',
+  ].join('\n');
+
+  const result = devServer.mergeImportMapIntoHtml(html, '/node_modules/dalila/dist');
+
+  assert.equal(result.merged, true);
+  assert.equal((result.html.match(/type="importmap"/g) || []).length, 0);
+  assert.match(result.script, /"dompurify"\s*:\s*"\/node_modules\/dompurify\/dist\/purify\.es\.mjs"/);
+  assert.match(result.script, /"dalila"\s*:\s*"\/node_modules\/dalila\/dist\/index\.js"/);
+  assert.match(result.script, /"dalila\/runtime\/bind"\s*:\s*"\/node_modules\/dalila\/dist\/runtime\/bind\.js"/);
 });
 
 test('dev-server: top-level asset directories outside src remain recursively watched', () => {

@@ -335,6 +335,52 @@ function createImportMapScript(dalilaPath, sourceDirPath = '/src/') {
   return `  <script type="importmap">\n${payload}\n  </script>`;
 }
 
+function mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath = '/src/') {
+  const importMapPattern = /<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i;
+  const match = html.match(importMapPattern);
+  if (!match) {
+    return {
+      html,
+      merged: false,
+      script: '',
+    };
+  }
+
+  const existingPayload = match[1]?.trim() || '{}';
+  let importMap;
+  try {
+    importMap = JSON.parse(existingPayload);
+  } catch {
+    return {
+      html,
+      merged: false,
+      script: '',
+    };
+  }
+
+  const existingImports = importMap && typeof importMap.imports === 'object' && importMap.imports !== null
+    ? importMap.imports
+    : {};
+  const mergedImportMap = {
+    ...importMap,
+    imports: {
+      ...createImportMapEntries(dalilaPath, sourceDirPath),
+      ...existingImports,
+    },
+  };
+  const payload = JSON.stringify(mergedImportMap, null, 2)
+    .split('\n')
+    .map(line => `    ${line}`)
+    .join('\n');
+  const script = `  <script type="importmap">\n${payload}\n  </script>`;
+
+  return {
+    html: html.replace(importMapPattern, ''),
+    merged: true,
+    script,
+  };
+}
+
 // ============================================================================
 // Preload Script Detection (auto-inject for persist() with preload: true)
 // ============================================================================
@@ -536,11 +582,15 @@ function injectBindings(html, requestPath) {
   const normalizedPath = normalizeHtmlRequestPath(requestPath);
   // Different paths for dalila repo vs user projects
   const dalilaPath = isDalilaRepo ? '/dist' : '/node_modules/dalila/dist';
-  const importMap = createImportMapScript(dalilaPath, buildProjectSourceDirPath(projectDir));
+  const sourceDirPath = buildProjectSourceDirPath(projectDir);
+  const mergedImportMap = mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath);
+  const importMap = mergedImportMap.merged
+    ? mergedImportMap.script
+    : createImportMapScript(dalilaPath, sourceDirPath);
 
   // For user projects, inject import map + HMR script
   if (!isDalilaRepo) {
-    let output = addLoadingAttributes(html);
+    let output = addLoadingAttributes(mergedImportMap.html);
 
     // Smart HMR script for user projects
     const hmrScript = `
@@ -692,7 +742,12 @@ function injectBindings(html, requestPath) {
     };
   </script>`;
 
-    output = injectHeadFragments(output, buildUserProjectHeadAdditions(projectDir, dalilaPath), {
+    const headAdditions = buildUserProjectHeadAdditions(projectDir, dalilaPath)
+      .filter((fragment) => !mergedImportMap.merged || !/type=["']importmap["']/i.test(fragment));
+    if (importMap) {
+      headAdditions.push(importMap);
+    }
+    output = injectHeadFragments(output, headAdditions, {
       beforeModule: true,
       beforeStyles: true,
     });
@@ -1353,6 +1408,7 @@ module.exports = {
   safeDecodeUrlPath,
   createImportMapEntries,
   createImportMapScript,
+  mergeImportMapIntoHtml,
   detectPreloadScripts,
   buildUserProjectHeadAdditions,
   injectHeadFragments,
