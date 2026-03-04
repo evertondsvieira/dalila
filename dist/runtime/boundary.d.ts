@@ -6,7 +6,7 @@
  *
  * @module dalila/runtime/boundary
  */
-import { signal, Signal } from '../core/index.js';
+import { signal, type Signal } from '../core/signal.js';
 import type { Component } from './component.js';
 import type { BindContext, BindOptions, DisposeFunction } from './bind.js';
 export interface ErrorBoundaryOptions {

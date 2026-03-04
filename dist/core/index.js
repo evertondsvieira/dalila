@@ -1,4 +1,3 @@
-import { installDefaultSecurityObservability } from "./observability.js";
 export * from "./scope.js";
 export * from "./signal.js";
 export * from "./observability.js";
@@ -14,4 +13,3 @@ export * from "./query.js";
 export * from "./mutation.js";
 export { batch, measure, mutate, timeSlice, configureScheduler, getSchedulerConfig } from "./scheduler.js";
 export { persist, createJSONStorage, clearPersisted, createPreloadScript, createThemeScript } from "./persist.js";
-installDefaultSecurityObservability();

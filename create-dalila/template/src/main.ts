@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import { configure } from 'dalila/runtime';
+import { configure } from 'dalila/runtime/bind';
 import { createRouter } from 'dalila/router';
 import { routes } from '../routes.generated.js';
 import { routeManifest } from '../routes.generated.manifest.js';

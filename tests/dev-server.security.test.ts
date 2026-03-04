@@ -96,10 +96,16 @@ test('dev-server: user project head additions include preload scripts and UI hel
     const rendered = fragments.join('\n');
     const entries = devServer.createImportMapEntries('/node_modules/dalila/dist');
 
+    assert.equal(entries['dalila/core/signal'], '/node_modules/dalila/dist/core/signal.js');
+    assert.equal(entries['dalila/runtime/bind'], '/node_modules/dalila/dist/runtime/bind.js');
+    assert.equal(entries['dalila/runtime/from-html'], '/node_modules/dalila/dist/runtime/fromHtml.js');
     assert.equal(entries['dalila/components/ui/runtime'], '/node_modules/dalila/dist/components/ui/runtime.js');
     assert.equal(entries['dalila/components/ui/env'], '/node_modules/dalila/dist/components/ui/env.js');
     assert.match(rendered, /app-theme/);
     assert.match(rendered, /"@\/"\s*:\s*"\/app\/"/);
+    assert.match(rendered, /"dalila\/core\/signal"/);
+    assert.match(rendered, /"dalila\/runtime\/bind"/);
+    assert.match(rendered, /"dalila\/runtime\/from-html"/);
     assert.match(rendered, /"dalila\/components\/ui\/runtime"/);
     assert.match(rendered, /"dalila\/components\/ui\/env"/);
   });

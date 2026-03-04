@@ -8,6 +8,8 @@ const require = createRequire(import.meta.url);
 const FOUC_PREVENTION_STYLE = `  <style>[d-loading]{visibility:hidden}</style>`;
 const SCRIPT_SOURCE_EXTENSIONS = new Set(['.ts', '.mts', '.cts']);
 const SCRIPT_REQUEST_SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+const JAVASCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+const TYPE_ARTIFACT_EXTENSIONS = ['.d.ts', '.d.ts.map', '.js.map', '.mjs.map', '.cjs.map'];
 const STATIC_DIR_EXCLUDES = new Set([
   'src',
   'public',
@@ -233,6 +235,7 @@ function loadTypeScriptBuildConfig(projectDir) {
     : projectDir;
 
   if (!configPath) {
+    const ts = require(resolvePackageModule('typescript', projectDir));
     return {
       projectDir,
       configPath: null,
@@ -241,6 +244,7 @@ function loadTypeScriptBuildConfig(projectDir) {
       packageOutDirAbs,
       rootDirAbs: projectDir,
       sourceDirAbs: defaultSourceDirAbs,
+      ts,
     };
   }
 
@@ -263,6 +267,7 @@ function loadTypeScriptBuildConfig(projectDir) {
     packageOutDirAbs,
     rootDirAbs: explicitRootDirAbs ?? inferredRootDirAbs,
     sourceDirAbs,
+    ts,
   };
 }
 
@@ -659,8 +664,1024 @@ function renderImportMapScript(importMap) {
   return `  <script type="importmap">\n${payload}\n  </script>`;
 }
 
+function renderModulePreloadLinks(moduleUrls) {
+  return [...new Set(moduleUrls)]
+    .sort()
+    .map((moduleUrl) => `  <link rel="modulepreload" href="${moduleUrl}">`)
+    .join('\n');
+}
+
+function collectModuleSpecifierKinds(source, ts) {
+  const staticSpecifiers = new Set();
+  const dynamicSpecifiers = new Set();
+  const runtimeUrlSpecifiers = new Set();
+  const bindingExpressions = new Map();
+  const resolvedBindings = new Map();
+  const serviceWorkerAliases = new Set();
+  const navigatorAliases = new Set();
+  const serviceWorkerRegisterAliases = new Set();
+  const workerConstructorAliases = new Set();
+  let hasUnresolvedDalilaDynamicImport = false;
+  let hasUnresolvedDynamicImport = false;
+  let hasUnresolvedRuntimeUrl = false;
+  const sourceFile = ts.createSourceFile(
+    'module.js',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS
+  );
+
+  const isImportMetaUrl = (node) =>
+    ts.isPropertyAccessExpression(node)
+    && ts.isMetaProperty(node.expression)
+    && node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+    && node.expression.name.text === 'meta'
+    && node.name.text === 'url';
+
+  const isImportMetaUrlAlias = (node) =>
+    ts.isIdentifier(node)
+    && bindingExpressions.get(node.text)?.length === 1
+    && isImportMetaUrl(bindingExpressions.get(node.text)[0]);
+
+  const isNavigatorReference = (node) =>
+    ts.isIdentifier(node)
+    && (node.text === 'navigator' || navigatorAliases.has(node.text));
+
+  const isServiceWorkerReference = (node) =>
+    (
+      ts.isPropertyAccessExpression(node)
+      && ts.isIdentifier(node.name)
+      && node.name.text === 'serviceWorker'
+      && isNavigatorReference(node.expression)
+    )
+    || (ts.isIdentifier(node) && serviceWorkerAliases.has(node.text));
+
+  const isScopeBoundaryNode = (node) =>
+    node !== sourceFile
+    && (
+      ts.isBlock(node)
+      || ts.isFunctionLike(node)
+      || ts.isClassLike(node)
+      || ts.isModuleBlock(node)
+    );
+
+  const collectScopeDeclaredNames = (scopeNode) => {
+    const names = new Set();
+
+    const visitScopeNode = (node) => {
+      if (node !== scopeNode && isScopeBoundaryNode(node)) {
+        return;
+      }
+
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+        names.add(node.name.text);
+      }
+
+      if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name && ts.isIdentifier(node.name)) {
+        names.add(node.name.text);
+      }
+
+      if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
+        names.add(node.name.text);
+      }
+
+      ts.forEachChild(node, visitScopeNode);
+    };
+
+    visitScopeNode(scopeNode);
+    return names;
+  };
+
+  const resolveStringExpression = (node, options = {}) => {
+    const allowBindings = options.allowBindings !== false;
+    if (!node) {
+      return { value: null, referencesDalila: false };
+    }
+
+    if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      return {
+        value: node.text,
+        referencesDalila: node.text.includes('dalila'),
+      };
+    }
+
+    if (ts.isIdentifier(node)) {
+      const resolvedLiteral = allowBindings
+        ? (resolvedBindings.get(node.text) ?? resolveBinding(node.text))
+        : null;
+      if (typeof resolvedLiteral === 'string') {
+        return {
+          value: resolvedLiteral,
+          referencesDalila: resolvedLiteral.includes('dalila'),
+        };
+      }
+
+      return {
+        value: null,
+        referencesDalila: node.text.toLowerCase().includes('dalila'),
+      };
+    }
+
+    if (ts.isPropertyAccessExpression(node)) {
+      return allowBindings
+        ? resolveObjectProperty(node.expression, node.name.text, options)
+        : { value: null, referencesDalila: false };
+    }
+
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = resolveStringExpression(node.left, options);
+      const right = resolveStringExpression(node.right, options);
+      return {
+        value: typeof left.value === 'string' && typeof right.value === 'string'
+          ? `${left.value}${right.value}`
+          : null,
+        referencesDalila: left.referencesDalila || right.referencesDalila,
+      };
+    }
+
+    if (ts.isTemplateExpression(node)) {
+      let value = node.head.text;
+      let isFullyResolved = true;
+      let referencesDalila = node.head.text.includes('dalila');
+
+      for (const span of node.templateSpans) {
+        const expressionResult = resolveStringExpression(span.expression, options);
+        if (typeof expressionResult.value !== 'string') {
+          isFullyResolved = false;
+        } else {
+          value += expressionResult.value;
+        }
+        referencesDalila = referencesDalila || expressionResult.referencesDalila;
+        value += span.literal.text;
+        referencesDalila = referencesDalila || span.literal.text.includes('dalila');
+      }
+
+      return {
+        value: isFullyResolved ? value : null,
+        referencesDalila,
+      };
+    }
+
+    return {
+      value: null,
+      referencesDalila: node.getText(sourceFile).includes('dalila'),
+    };
+  };
+
+  const resolveObjectProperty = (node, propertyName, options = {}) => {
+    if (!node) {
+      return { value: null, referencesDalila: false };
+    }
+
+    if (ts.isParenthesizedExpression(node)) {
+      return resolveObjectProperty(node.expression, propertyName, options);
+    }
+
+    if (ts.isIdentifier(node)) {
+      const bindingCandidates = options.allowBindings === false ? null : bindingExpressions.get(node.text);
+      if (bindingCandidates?.length === 1) {
+        return resolveObjectProperty(bindingCandidates[0], propertyName, options);
+      }
+
+      return { value: null, referencesDalila: false };
+    }
+
+    if (!ts.isObjectLiteralExpression(node)) {
+      return { value: null, referencesDalila: false };
+    }
+
+    for (const property of node.properties) {
+      if (!ts.isPropertyAssignment(property) || property.name == null) {
+        continue;
+      }
+
+      let candidateName = null;
+      if (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) || ts.isNumericLiteral(property.name)) {
+        candidateName = property.name.text;
+      }
+
+      if (candidateName !== propertyName) {
+        continue;
+      }
+
+      return resolveStringExpression(property.initializer, options);
+    }
+
+    return { value: null, referencesDalila: false };
+  };
+
+  const resolveRuntimeUrlExpression = (node, options = {}) => {
+    if (!node) {
+      return { value: null, isRemote: false };
+    }
+
+    if (ts.isIdentifier(node)) {
+      const bindingCandidates = options.allowBindings === false ? null : bindingExpressions.get(node.text);
+      if (bindingCandidates?.length === 1) {
+        return resolveRuntimeUrlExpression(bindingCandidates[0], options);
+      }
+    }
+
+    if (ts.isPropertyAccessExpression(node)) {
+      const propertyValue = resolveObjectProperty(node.expression, node.name.text, options);
+      if (typeof propertyValue.value === 'string') {
+        return { value: propertyValue.value, isRemote: false };
+      }
+    }
+
+    const direct = resolveStringExpression(node, options);
+    if (typeof direct.value === 'string') {
+      return { value: direct.value, isRemote: false };
+    }
+
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'URL') {
+      const [firstArgument, secondArgument] = node.arguments ?? [];
+      const importMetaUrlAlias = ts.isIdentifier(secondArgument)
+        ? isImportMetaUrlAlias(secondArgument)
+        : false;
+      if (!secondArgument || isImportMetaUrl(secondArgument) || importMetaUrlAlias) {
+        const resolvedArgument = resolveStringExpression(firstArgument, options);
+        if (typeof resolvedArgument.value === 'string') {
+          return { value: resolvedArgument.value, isRemote: false };
+        }
+      } else {
+        return { value: null, isRemote: true };
+      }
+    }
+
+    return { value: null, isRemote: false };
+  };
+
+  const collectBindings = (node, scopeDepth = 0) => {
+    const isScopeBoundary = node !== sourceFile && (
+      ts.isBlock(node)
+      || ts.isFunctionLike(node)
+      || ts.isClassLike(node)
+      || ts.isModuleBlock(node)
+      || ts.isSourceFile(node)
+    );
+    const nextScopeDepth = isScopeBoundary ? scopeDepth + 1 : scopeDepth;
+
+    if (scopeDepth === 0) {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const expressions = bindingExpressions.get(node.name.text) ?? [];
+        expressions.push(node.initializer);
+        bindingExpressions.set(node.name.text, expressions);
+
+        if (ts.isIdentifier(node.initializer) && node.initializer.text === 'navigator') {
+          navigatorAliases.add(node.name.text);
+        }
+
+        if (isServiceWorkerReference(node.initializer)) {
+          serviceWorkerAliases.add(node.name.text);
+        }
+
+        if (
+          ts.isPropertyAccessExpression(node.initializer)
+          && ts.isIdentifier(node.initializer.name)
+          && node.initializer.name.text === 'register'
+          && isServiceWorkerReference(node.initializer.expression)
+        ) {
+          serviceWorkerRegisterAliases.add(node.name.text);
+        }
+
+        if (
+          ts.isPropertyAccessExpression(node.initializer)
+          && ts.isIdentifier(node.initializer.expression)
+          && ['window', 'globalThis', 'self'].includes(node.initializer.expression.text)
+          && ['Worker', 'SharedWorker'].includes(node.initializer.name.text)
+        ) {
+          workerConstructorAliases.add(node.name.text);
+        }
+      }
+
+      if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer && ts.isIdentifier(node.initializer) && node.initializer.text === 'navigator') {
+        for (const element of node.name.elements) {
+          if (!ts.isBindingElement(element)) continue;
+          const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
+            ? element.propertyName.text
+            : ts.isIdentifier(element.name)
+              ? element.name.text
+              : null;
+          const aliasName = ts.isIdentifier(element.name) ? element.name.text : null;
+          if (propertyName === 'serviceWorker' && aliasName) {
+            serviceWorkerAliases.add(aliasName);
+          }
+        }
+      }
+
+      if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer && isServiceWorkerReference(node.initializer)) {
+        for (const element of node.name.elements) {
+          if (!ts.isBindingElement(element)) continue;
+          const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
+            ? element.propertyName.text
+            : ts.isIdentifier(element.name)
+              ? element.name.text
+              : null;
+          const aliasName = ts.isIdentifier(element.name) ? element.name.text : null;
+          if (propertyName === 'register' && aliasName) {
+            serviceWorkerRegisterAliases.add(aliasName);
+          }
+        }
+      }
+
+      if (
+        ts.isVariableDeclaration(node)
+        && ts.isObjectBindingPattern(node.name)
+        && node.initializer
+        && ts.isIdentifier(node.initializer)
+        && navigatorAliases.has(node.initializer.text)
+      ) {
+        for (const element of node.name.elements) {
+          if (!ts.isBindingElement(element)) continue;
+          const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
+            ? element.propertyName.text
+            : ts.isIdentifier(element.name)
+              ? element.name.text
+              : null;
+          const aliasName = ts.isIdentifier(element.name) ? element.name.text : null;
+          if (propertyName === 'serviceWorker' && aliasName) {
+            serviceWorkerAliases.add(aliasName);
+          }
+        }
+      }
+
+      if (
+        ts.isVariableDeclaration(node)
+        && ts.isObjectBindingPattern(node.name)
+        && node.initializer
+        && ts.isIdentifier(node.initializer)
+        && ['window', 'globalThis', 'self'].includes(node.initializer.text)
+      ) {
+        for (const element of node.name.elements) {
+          if (!ts.isBindingElement(element)) continue;
+          const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
+            ? element.propertyName.text
+            : ts.isIdentifier(element.name)
+              ? element.name.text
+              : null;
+          const aliasName = ts.isIdentifier(element.name) ? element.name.text : null;
+          if (aliasName && ['Worker', 'SharedWorker'].includes(propertyName)) {
+            workerConstructorAliases.add(aliasName);
+          }
+        }
+      }
+
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
+        const expressions = bindingExpressions.get(node.left.text) ?? [];
+        expressions.push(node.right);
+        bindingExpressions.set(node.left.text, expressions);
+
+        if (ts.isIdentifier(node.right) && node.right.text === 'navigator') {
+          navigatorAliases.add(node.left.text);
+        }
+      }
+    }
+
+    ts.forEachChild(node, (child) => collectBindings(child, nextScopeDepth));
+  };
+
+  const resolutionStack = new Set();
+  const bindingReferencesDalila = (name) => {
+    const bindingCandidates = bindingExpressions.get(name);
+    if (!bindingCandidates || bindingCandidates.length === 0) {
+      return false;
+    }
+
+    return bindingCandidates.some((bindingExpression) => resolveStringExpression(bindingExpression).referencesDalila);
+  };
+
+  const resolveBinding = (name) => {
+    if (resolvedBindings.has(name)) {
+      return resolvedBindings.get(name) ?? null;
+    }
+
+    if (resolutionStack.has(name)) {
+      return null;
+    }
+
+    const bindingCandidates = bindingExpressions.get(name);
+    if (!bindingCandidates || bindingCandidates.length === 0) {
+      return null;
+    }
+
+    resolutionStack.add(name);
+    const resolvedValues = new Set();
+    let hasAmbiguity = false;
+
+    for (const bindingExpression of bindingCandidates) {
+      const resolved = resolveStringExpression(bindingExpression);
+      if (typeof resolved.value === 'string') {
+        resolvedValues.add(resolved.value);
+      } else {
+        hasAmbiguity = true;
+      }
+    }
+    resolutionStack.delete(name);
+
+    if (!hasAmbiguity && resolvedValues.size === 1) {
+      const [resolvedValue] = resolvedValues;
+      resolvedBindings.set(name, resolvedValue);
+      return resolvedValue;
+    }
+
+    return null;
+  };
+
+  const visit = (node, scopeDepth = 0, scopeDeclarations = []) => {
+    const nestedScope = isScopeBoundaryNode(node);
+    const nextScopeDepth = nestedScope ? scopeDepth + 1 : scopeDepth;
+    const nextScopeDeclarations = nestedScope
+      ? [...scopeDeclarations, collectScopeDeclaredNames(node)]
+      : scopeDeclarations;
+
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const resolvedLiteral = resolveBinding(node.name.text);
+      if (typeof resolvedLiteral === 'string') {
+        resolvedBindings.set(node.name.text, resolvedLiteral);
+      }
+    }
+
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      staticSpecifiers.add(node.moduleSpecifier.text);
+    }
+
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const [firstArgument] = node.arguments;
+      if (firstArgument) {
+        const localShadowed = ts.isIdentifier(firstArgument)
+          && nextScopeDeclarations.some((declaredNames) => declaredNames.has(firstArgument.text));
+        const importArg = resolveStringExpression(firstArgument, {
+          allowBindings: scopeDepth === 0 && !localShadowed,
+        });
+        if (typeof importArg.value === 'string') {
+          dynamicSpecifiers.add(importArg.value);
+        } else if (importArg.referencesDalila) {
+          hasUnresolvedDalilaDynamicImport = true;
+          hasUnresolvedDynamicImport = true;
+        } else {
+          if (!localShadowed && ts.isIdentifier(firstArgument)) {
+            const resolvedTopLevel = resolveBinding(firstArgument.text);
+            if (typeof resolvedTopLevel === 'string' && resolvedTopLevel.startsWith('dalila')) {
+              hasUnresolvedDalilaDynamicImport = true;
+            } else if (bindingReferencesDalila(firstArgument.text)) {
+              hasUnresolvedDalilaDynamicImport = true;
+            }
+          }
+          hasUnresolvedDynamicImport = true;
+        }
+      }
+    }
+
+    if (
+      ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === 'register'
+      && (
+        (
+          ts.isPropertyAccessExpression(node.expression.expression)
+          && ts.isIdentifier(node.expression.expression.name)
+          && node.expression.expression.name.text === 'serviceWorker'
+          && ts.isIdentifier(node.expression.expression.expression)
+          && (
+            node.expression.expression.expression.text === 'navigator'
+            || navigatorAliases.has(node.expression.expression.expression.text)
+          )
+        )
+        || (ts.isIdentifier(node.expression.expression) && serviceWorkerAliases.has(node.expression.expression.text))
+      )
+    ) {
+      const localShadowed = ts.isIdentifier(node.arguments[0])
+        && nextScopeDeclarations.some((declaredNames) => declaredNames.has(node.arguments[0].text));
+      const runtimeUrl = resolveRuntimeUrlExpression(node.arguments[0], {
+        allowBindings: scopeDepth === 0 && !localShadowed,
+      });
+      if (runtimeUrl.value) {
+        runtimeUrlSpecifiers.add(runtimeUrl.value);
+      } else if (node.arguments[0] && !runtimeUrl.isRemote) {
+        hasUnresolvedRuntimeUrl = true;
+      }
+    }
+
+    if (
+      ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression)
+      && serviceWorkerRegisterAliases.has(node.expression.text)
+    ) {
+      const localShadowed = ts.isIdentifier(node.arguments[0])
+        && nextScopeDeclarations.some((declaredNames) => declaredNames.has(node.arguments[0].text));
+      const runtimeUrl = resolveRuntimeUrlExpression(node.arguments[0], {
+        allowBindings: scopeDepth === 0 && !localShadowed,
+      });
+      if (runtimeUrl.value) {
+        runtimeUrlSpecifiers.add(runtimeUrl.value);
+      } else if (node.arguments[0] && !runtimeUrl.isRemote) {
+        hasUnresolvedRuntimeUrl = true;
+      }
+    }
+
+    if (
+      ts.isCallExpression(node)
+      && (
+        (ts.isIdentifier(node.expression) && node.expression.text === 'importScripts')
+        || (
+          ts.isPropertyAccessExpression(node.expression)
+          && ts.isIdentifier(node.expression.expression)
+          && node.expression.expression.text === 'self'
+          && node.expression.name.text === 'importScripts'
+        )
+      )
+    ) {
+      for (const argument of node.arguments) {
+        const localShadowed = ts.isIdentifier(argument)
+          && nextScopeDeclarations.some((declaredNames) => declaredNames.has(argument.text));
+        const runtimeUrl = resolveRuntimeUrlExpression(argument, {
+          allowBindings: scopeDepth === 0 && !localShadowed,
+        });
+        if (runtimeUrl.value) {
+          runtimeUrlSpecifiers.add(runtimeUrl.value);
+        } else if (!runtimeUrl.isRemote) {
+          hasUnresolvedRuntimeUrl = true;
+        }
+      }
+    }
+
+    const isWorkerConstructor = ts.isNewExpression(node) && (
+      (ts.isIdentifier(node.expression) && ['Worker', 'SharedWorker'].includes(node.expression.text))
+      || (ts.isIdentifier(node.expression) && workerConstructorAliases.has(node.expression.text))
+      || (
+        ts.isPropertyAccessExpression(node.expression)
+        && ts.isIdentifier(node.expression.expression)
+        && ['window', 'globalThis', 'self'].includes(node.expression.expression.text)
+        && ['Worker', 'SharedWorker'].includes(node.expression.name.text)
+      )
+    );
+
+    if (isWorkerConstructor) {
+      const localShadowed = ts.isIdentifier(node.arguments?.[0])
+        && nextScopeDeclarations.some((declaredNames) => declaredNames.has(node.arguments[0].text));
+      const runtimeUrl = resolveRuntimeUrlExpression(node.arguments?.[0], {
+        allowBindings: scopeDepth === 0 && !localShadowed,
+      });
+      if (runtimeUrl.value) {
+        runtimeUrlSpecifiers.add(runtimeUrl.value);
+      } else if (node.arguments?.[0] && !runtimeUrl.isRemote) {
+        hasUnresolvedRuntimeUrl = true;
+      }
+    }
+
+    ts.forEachChild(node, (child) => visit(child, nextScopeDepth, nextScopeDeclarations));
+  };
+
+  ts.forEachChild(sourceFile, (child) => collectBindings(child, 0));
+  ts.forEachChild(sourceFile, (child) => visit(child, 0, []));
+  return {
+    staticSpecifiers: [...staticSpecifiers],
+    dynamicSpecifiers: [...dynamicSpecifiers],
+    runtimeUrlSpecifiers: [...runtimeUrlSpecifiers],
+    allSpecifiers: [...new Set([...staticSpecifiers, ...dynamicSpecifiers])],
+    hasUnresolvedDalilaDynamicImport,
+    hasUnresolvedDynamicImport,
+    hasUnresolvedRuntimeUrl,
+  };
+}
+
+function resolveRelativeUrl(specifier, referrerUrl) {
+  const resolvedUrl = new URL(specifier, new URL(referrerUrl, 'https://dalila.local'));
+  return `${resolvedUrl.pathname}${resolvedUrl.search}${resolvedUrl.hash}`;
+}
+
+function resolveImportMapMatch(specifier, imports = {}) {
+  if (typeof imports[specifier] === 'string') {
+    return imports[specifier];
+  }
+
+  let bestPrefix = null;
+  for (const [prefix, target] of Object.entries(imports)) {
+    if (typeof target !== 'string' || !prefix.endsWith('/')) {
+      continue;
+    }
+
+    if (!specifier.startsWith(prefix)) {
+      continue;
+    }
+
+    if (!bestPrefix || prefix.length > bestPrefix.length) {
+      bestPrefix = prefix;
+    }
+  }
+
+  if (!bestPrefix) {
+    return null;
+  }
+
+  const target = imports[bestPrefix];
+  if (typeof target !== 'string') {
+    return null;
+  }
+
+  return `${target}${specifier.slice(bestPrefix.length)}`;
+}
+
+function resolveImportMapSpecifier(specifier, importMap, referrerUrl) {
+  const scopes = importMap?.scopes ?? {};
+  let bestScope = null;
+
+  for (const scopeName of Object.keys(scopes)) {
+    if (!referrerUrl.startsWith(scopeName)) {
+      continue;
+    }
+
+    if (!bestScope || scopeName.length > bestScope.length) {
+      bestScope = scopeName;
+    }
+  }
+
+  if (bestScope) {
+    const scopedMatch = resolveImportMapMatch(specifier, scopes[bestScope]);
+    if (scopedMatch) {
+      return scopedMatch;
+    }
+  }
+
+  return resolveImportMapMatch(specifier, importMap?.imports ?? {});
+}
+
+function resolveSpecifierToPackagedUrl(specifier, referrerUrl, importMap, importMapBaseUrl = referrerUrl) {
+  if (isUrlWithScheme(specifier) || specifier.startsWith('//')) {
+    return null;
+  }
+
+  if (specifier.startsWith('/') || specifier.startsWith('./') || specifier.startsWith('../')) {
+    return resolveRelativeUrl(specifier, referrerUrl);
+  }
+
+  const mappedTarget = resolveImportMapSpecifier(specifier, importMap, referrerUrl);
+  if (!mappedTarget) {
+    return null;
+  }
+
+  if (isUrlWithScheme(mappedTarget) || mappedTarget.startsWith('//')) {
+    return null;
+  }
+
+  if (mappedTarget.startsWith('/') || mappedTarget.startsWith('./') || mappedTarget.startsWith('../')) {
+    return resolveRelativeUrl(mappedTarget, importMapBaseUrl);
+  }
+
+  return mappedTarget;
+}
+
+function isJavaScriptModuleUrl(moduleUrl) {
+  return JAVASCRIPT_EXTENSIONS.has(path.extname(splitUrlTarget(moduleUrl).pathname));
+}
+
+function collectHtmlModuleEntries(html, htmlUrl, ts) {
+  const entryModuleUrls = new Set();
+  const classicScriptUrls = new Set();
+  const inlineModuleSpecifiers = new Set();
+  const inlineStaticModuleSpecifiers = new Set();
+  const inlineRuntimeUrlSpecifiers = new Set();
+  let requiresFullDalilaImportMap = false;
+  let hasUnresolvedDynamicImport = false;
+  let hasUnresolvedRuntimeUrl = false;
+
+  html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (fullMatch, attrs, content) => {
+    const typeMatch = attrs.match(/\btype=["']([^"']+)["']/i);
+    const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
+    if (!typeMatch || typeMatch[1] !== 'module') {
+      if (srcMatch) {
+        const classicScriptUrl = resolveSpecifierToPackagedUrl(srcMatch[1], htmlUrl, { imports: {}, scopes: {} });
+        if (classicScriptUrl && isJavaScriptModuleUrl(classicScriptUrl)) {
+          classicScriptUrls.add(classicScriptUrl);
+        }
+      } else if (content.trim()) {
+        const collectedClassicSpecifiers = collectModuleSpecifierKinds(content, ts);
+        for (const specifier of collectedClassicSpecifiers.allSpecifiers) {
+          inlineModuleSpecifiers.add(specifier);
+        }
+        for (const runtimeUrlSpecifier of collectedClassicSpecifiers.runtimeUrlSpecifiers ?? []) {
+          inlineRuntimeUrlSpecifiers.add(runtimeUrlSpecifier);
+        }
+        if (collectedClassicSpecifiers.hasUnresolvedDalilaDynamicImport) {
+          requiresFullDalilaImportMap = true;
+        }
+        if (collectedClassicSpecifiers.hasUnresolvedDynamicImport) {
+          hasUnresolvedDynamicImport = true;
+        }
+        if (collectedClassicSpecifiers.hasUnresolvedRuntimeUrl) {
+          hasUnresolvedRuntimeUrl = true;
+        }
+      }
+      return fullMatch;
+    }
+
+    if (srcMatch) {
+      const entryModuleUrl = resolveSpecifierToPackagedUrl(srcMatch[1], htmlUrl, { imports: {}, scopes: {} });
+      if (entryModuleUrl) {
+        entryModuleUrls.add(entryModuleUrl);
+      }
+      return fullMatch;
+    }
+
+    const collectedSpecifiers = collectModuleSpecifierKinds(content, ts);
+    for (const specifier of collectedSpecifiers.allSpecifiers) {
+      inlineModuleSpecifiers.add(specifier);
+    }
+    for (const specifier of collectedSpecifiers.staticSpecifiers) {
+      inlineStaticModuleSpecifiers.add(specifier);
+    }
+    for (const runtimeUrlSpecifier of collectedSpecifiers.runtimeUrlSpecifiers ?? []) {
+      inlineRuntimeUrlSpecifiers.add(runtimeUrlSpecifier);
+    }
+    if (collectedSpecifiers.hasUnresolvedDalilaDynamicImport) {
+      requiresFullDalilaImportMap = true;
+    }
+    if (collectedSpecifiers.hasUnresolvedDynamicImport) {
+      hasUnresolvedDynamicImport = true;
+    }
+    if (collectedSpecifiers.hasUnresolvedRuntimeUrl) {
+      hasUnresolvedRuntimeUrl = true;
+    }
+
+    return fullMatch;
+  });
+
+  return {
+    classicScriptUrls: [...classicScriptUrls],
+    entryModuleUrls: [...entryModuleUrls],
+    inlineModuleSpecifiers: [...inlineModuleSpecifiers],
+    inlineStaticModuleSpecifiers: [...inlineStaticModuleSpecifiers],
+    inlineRuntimeUrlSpecifiers: [...inlineRuntimeUrlSpecifiers],
+    requiresFullDalilaImportMap,
+    hasUnresolvedDynamicImport,
+    hasUnresolvedRuntimeUrl,
+  };
+}
+
+function collectImportMapModuleUrls(importMap, htmlUrl) {
+  const moduleUrls = new Set();
+
+  const addTarget = (target) => {
+    if (typeof target !== 'string') {
+      return;
+    }
+
+    const moduleUrl = resolveSpecifierToPackagedUrl(target, htmlUrl, { imports: {}, scopes: {} });
+    if (moduleUrl && isJavaScriptModuleUrl(moduleUrl)) {
+      moduleUrls.add(moduleUrl);
+    }
+  };
+
+  for (const target of Object.values(importMap?.imports ?? {})) {
+    addTarget(target);
+  }
+
+  for (const scopeImports of Object.values(importMap?.scopes ?? {})) {
+    if (!scopeImports || typeof scopeImports !== 'object' || Array.isArray(scopeImports)) {
+      continue;
+    }
+
+    for (const target of Object.values(scopeImports)) {
+      addTarget(target);
+    }
+  }
+
+  return [...moduleUrls];
+}
+
+function resolvePackagedModuleSourcePath(moduleUrl, buildConfig, dalilaRoot) {
+  const { pathname } = splitUrlTarget(moduleUrl);
+
+  if (pathname.startsWith('/vendor/dalila/')) {
+    return path.join(dalilaRoot, 'dist', pathname.slice('/vendor/dalila/'.length));
+  }
+
+  if (pathname.startsWith('/vendor/node_modules/')) {
+    return path.join(buildConfig.projectDir, 'node_modules', pathname.slice('/vendor/node_modules/'.length));
+  }
+
+  const packagedPath = path.join(buildConfig.packageOutDirAbs, pathname.slice(1));
+  if (fs.existsSync(packagedPath)) {
+    return packagedPath;
+  }
+
+  return path.join(buildConfig.projectDir, pathname.slice(1));
+}
+
+function traceReachableModules(page, importMap, buildConfig, dalilaRoot) {
+  const reachableModuleUrls = new Set();
+  const staticReachableModuleUrls = new Set();
+  const usedDalilaSpecifiers = new Set();
+  const classicScriptUrlSet = new Set(page.classicScriptUrls ?? []);
+  const pendingUrls = [];
+  const pendingKeys = new Set();
+  const processedKeys = new Set();
+  let requiresFullDalilaImportMap = page.requiresFullDalilaImportMap === true;
+  let hasUnresolvedDynamicImport = page.hasUnresolvedDynamicImport === true;
+  let hasUnresolvedRuntimeUrl = page.hasUnresolvedRuntimeUrl === true;
+
+  const enqueueResolvedUrl = (moduleUrl, isStatic = false) => {
+    if (!moduleUrl || !isJavaScriptModuleUrl(moduleUrl)) {
+      return;
+    }
+
+    const queueKey = `${moduleUrl}::${isStatic ? 'static' : 'dynamic'}`;
+    if (processedKeys.has(queueKey) || pendingKeys.has(queueKey)) {
+      return;
+    }
+
+    if (reachableModuleUrls.has(moduleUrl) && isStatic) {
+      staticReachableModuleUrls.add(moduleUrl);
+    }
+
+    pendingUrls.push({ moduleUrl, isStatic });
+    pendingKeys.add(queueKey);
+  };
+
+  for (const entryModuleUrl of page.entryModuleUrls) {
+    enqueueResolvedUrl(entryModuleUrl, true);
+  }
+
+  for (const classicScriptUrl of page.classicScriptUrls ?? []) {
+    enqueueResolvedUrl(classicScriptUrl, false);
+  }
+
+  for (const specifier of page.inlineModuleSpecifiers) {
+    if (specifier === 'dalila' || specifier.startsWith('dalila/')) {
+      usedDalilaSpecifiers.add(specifier);
+    }
+
+    const isStatic = page.inlineStaticModuleSpecifiers?.includes(specifier) ?? false;
+    enqueueResolvedUrl(resolveSpecifierToPackagedUrl(specifier, page.htmlUrl, importMap, page.htmlUrl), isStatic);
+  }
+
+  for (const runtimeUrlSpecifier of page.inlineRuntimeUrlSpecifiers ?? []) {
+    enqueueResolvedUrl(resolveSpecifierToPackagedUrl(runtimeUrlSpecifier, page.htmlUrl, importMap, page.htmlUrl), false);
+  }
+
+  while (pendingUrls.length > 0) {
+    const pending = pendingUrls.pop();
+    const moduleUrl = pending?.moduleUrl;
+    const isStaticRoot = pending?.isStatic === true;
+    const queueKey = moduleUrl ? `${moduleUrl}::${isStaticRoot ? 'static' : 'dynamic'}` : null;
+    if (queueKey) {
+      pendingKeys.delete(queueKey);
+    }
+    if (!moduleUrl) {
+      continue;
+    }
+    if (queueKey && processedKeys.has(queueKey)) {
+      continue;
+    }
+    if (queueKey) {
+      processedKeys.add(queueKey);
+    }
+
+    const sourcePath = resolvePackagedModuleSourcePath(moduleUrl, buildConfig, dalilaRoot);
+    ensureFileExists(sourcePath, `module dependency "${moduleUrl}"`);
+    reachableModuleUrls.add(moduleUrl);
+    if (isStaticRoot) {
+      staticReachableModuleUrls.add(moduleUrl);
+    }
+
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    const collectedSpecifiers = collectModuleSpecifierKinds(source, buildConfig.ts);
+    if (collectedSpecifiers.hasUnresolvedDalilaDynamicImport) {
+      requiresFullDalilaImportMap = true;
+    }
+    if (collectedSpecifiers.hasUnresolvedDynamicImport) {
+      hasUnresolvedDynamicImport = true;
+    }
+    if (collectedSpecifiers.hasUnresolvedRuntimeUrl) {
+      hasUnresolvedRuntimeUrl = true;
+    }
+    for (const specifier of collectedSpecifiers.allSpecifiers) {
+      if (specifier === 'dalila' || specifier.startsWith('dalila/')) {
+        usedDalilaSpecifiers.add(specifier);
+      }
+
+      const isStaticDependency = isStaticRoot && collectedSpecifiers.staticSpecifiers.includes(specifier);
+      enqueueResolvedUrl(resolveSpecifierToPackagedUrl(specifier, moduleUrl, importMap, page.htmlUrl), isStaticDependency);
+    }
+
+    const runtimeSpecifierBaseUrl = classicScriptUrlSet.has(moduleUrl) ? page.htmlUrl : moduleUrl;
+    for (const runtimeUrlSpecifier of collectedSpecifiers.runtimeUrlSpecifiers ?? []) {
+      enqueueResolvedUrl(resolveSpecifierToPackagedUrl(runtimeUrlSpecifier, runtimeSpecifierBaseUrl, importMap, page.htmlUrl), false);
+    }
+  }
+
+  return {
+    reachableModuleUrls,
+    staticReachableModuleUrls,
+    usedDalilaSpecifiers,
+    requiresFullDalilaImportMap,
+    hasUnresolvedDynamicImport,
+    hasUnresolvedRuntimeUrl,
+  };
+}
+
+function copyReachableDalilaModules(reachableModuleUrls, packageOutDirAbs, dalilaRoot) {
+  for (const moduleUrl of reachableModuleUrls) {
+    const { pathname } = splitUrlTarget(moduleUrl);
+    if (!pathname.startsWith('/vendor/dalila/')) {
+      continue;
+    }
+
+    const sourcePath = path.join(dalilaRoot, 'dist', pathname.slice('/vendor/dalila/'.length));
+    const destinationPath = path.join(packageOutDirAbs, pathname.slice(1));
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+  }
+}
+
+function copyDalilaModuleClosure(moduleUrls, packageOutDirAbs, dalilaRoot, ts) {
+  const pendingUrls = [...moduleUrls];
+  const copiedUrls = new Set();
+
+  while (pendingUrls.length > 0) {
+    const moduleUrl = pendingUrls.pop();
+    const { pathname } = splitUrlTarget(moduleUrl);
+    if (!pathname.startsWith('/vendor/dalila/') || copiedUrls.has(moduleUrl)) {
+      continue;
+    }
+
+    copiedUrls.add(moduleUrl);
+    const sourcePath = path.join(dalilaRoot, 'dist', pathname.slice('/vendor/dalila/'.length));
+    ensureFileExists(sourcePath, `dalila module "${moduleUrl}"`);
+    const destinationPath = path.join(packageOutDirAbs, pathname.slice(1));
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    const collectedSpecifiers = collectModuleSpecifierKinds(source, ts);
+    for (const specifier of collectedSpecifiers.allSpecifiers) {
+      const resolvedUrl = resolveSpecifierToPackagedUrl(specifier, moduleUrl, { imports: {}, scopes: {} });
+      if (resolvedUrl?.startsWith('/vendor/dalila/')) {
+        pendingUrls.push(resolvedUrl);
+      }
+    }
+  }
+}
+
+function prunePackagedCompiledArtifacts(
+  buildConfig,
+  _reachableModuleUrls,
+  copiedSourceAssetPaths = new Set(),
+  _preserveCompiledJavaScript = false
+) {
+  for (const filePath of walkFiles(buildConfig.packageOutDirAbs)) {
+    const relativePath = path.relative(buildConfig.packageOutDirAbs, filePath);
+    if (!isRelativePathInsideBase(relativePath)) {
+      continue;
+    }
+
+    if (relativePath.startsWith(`vendor${path.sep}`) || relativePath === 'vendor') {
+      continue;
+    }
+
+    if (copiedSourceAssetPaths.has(filePath)) {
+      continue;
+    }
+
+    if (TYPE_ARTIFACT_EXTENSIONS.some((extension) => filePath.endsWith(extension))) {
+      fs.rmSync(filePath, { force: true });
+      continue;
+    }
+  }
+}
+
+function pickDalilaImportEntries(dalilaImportEntries, usedDalilaSpecifiers, requiresFullDalilaImportMap = false) {
+  if (requiresFullDalilaImportMap) {
+    return { ...dalilaImportEntries };
+  }
+
+  if (usedDalilaSpecifiers.size === 0) {
+    return {};
+  }
+
+  const selectedEntries = {};
+  for (const specifier of usedDalilaSpecifiers) {
+    if (dalilaImportEntries[specifier]) {
+      selectedEntries[specifier] = dalilaImportEntries[specifier];
+    }
+  }
+
+  return selectedEntries;
+}
+
+function copyDalilaImportEntryTargets(importEntries, packageOutDirAbs, dalilaRoot, ts) {
+  const dalilaModuleUrls = Object.values(importEntries)
+    .filter((target) => typeof target === 'string' && target.startsWith('/vendor/dalila/'));
+  copyDalilaModuleClosure(dalilaModuleUrls, packageOutDirAbs, dalilaRoot, ts);
+}
+
 function shouldPackageHtmlEntry(source) {
   return /<script[^>]*type=["']module["'][^>]*>/i.test(source)
+    || /<script[^>]*\bsrc=["'][^"']+\.(?:js|mjs|cjs)(?:[?#][^"']*)?["'][^>]*>/i.test(source)
+    || /<script\b(?![^>]*type=["'](?:module|importmap)["'])[^>]*>[\s\S]*?\bimport\s*\(/i.test(source)
+    || /<script\b(?![^>]*type=["']importmap["'])[^>]*>[\s\S]*?(?:\bimportScripts\s*\(|\bnew\s+(?:SharedWorker|Worker)\s*\(|\.serviceWorker\s*\.\s*register\s*\()/i.test(source)
     || /<script[^>]*type=["']importmap["'][^>]*>/i.test(source);
 }
 
@@ -677,9 +1698,11 @@ function injectHeadContent(html, fragments) {
   const headStart = headOpenMatch.index + headOpenMatch[0].length;
   const headEnd = headCloseMatch.index;
   const headContent = html.slice(headStart, headEnd);
+  const anyScriptMatch = headContent.match(/<script\b[^>]*>/i);
   const moduleScriptMatch = headContent.match(/<script\b[^>]*\btype=["']module["'][^>]*>/i);
   const stylesheetMatch = headContent.match(/<link\b[^>]*\brel=["']stylesheet["'][^>]*>/i);
-  const insertionOffset = moduleScriptMatch?.index
+  const insertionOffset = anyScriptMatch?.index
+    ?? moduleScriptMatch?.index
     ?? stylesheetMatch?.index
     ?? headContent.length;
   const insertionIndex = headStart + insertionOffset;
@@ -764,14 +1787,11 @@ function rewriteHtmlModuleScripts(html, buildConfig, baseDirAbs = buildConfig.pr
   });
 }
 
-function buildHtmlDocument(sourceHtmlPath, importEntries, buildConfig) {
-  const source = fs.readFileSync(sourceHtmlPath, 'utf8');
-  const { html: htmlWithoutImportMap } = extractImportMap(source);
-  const html = rewriteHtmlModuleScripts(htmlWithoutImportMap, buildConfig, path.dirname(sourceHtmlPath));
-
+function buildHtmlDocument(html, importEntries, buildConfig, modulePreloadUrls = []) {
   return injectHeadContent(html, [
     FOUC_PREVENTION_STYLE,
     renderPreloadScriptTags(buildConfig.sourceDirAbs),
+    renderModulePreloadLinks(modulePreloadUrls),
     renderImportMapScript(importEntries),
   ]);
 }
@@ -859,13 +1879,18 @@ function collectTopLevelStaticDirs(projectDir, buildConfig) {
     .map((entry) => entry.name);
 }
 
-function copyTopLevelStaticDirs(projectDir, packageOutDirAbs, buildConfig) {
+function copyTopLevelStaticDirs(projectDir, packageOutDirAbs, buildConfig, copiedAssetPaths = new Set()) {
   for (const dirName of collectTopLevelStaticDirs(projectDir, buildConfig)) {
-    copyDirectoryContents(path.join(projectDir, dirName), path.join(packageOutDirAbs, dirName));
+    const sourceDir = path.join(projectDir, dirName);
+    const destinationDir = path.join(packageOutDirAbs, dirName);
+    copyDirectoryContents(sourceDir, destinationDir);
+    for (const copiedPath of walkFiles(destinationDir)) {
+      copiedAssetPaths.add(copiedPath);
+    }
   }
 }
 
-function copyTopLevelStaticFiles(projectDir, packageOutDirAbs) {
+function copyTopLevelStaticFiles(projectDir, packageOutDirAbs, copiedAssetPaths = new Set()) {
   for (const entry of fs.readdirSync(projectDir, { withFileTypes: true })) {
     if (!entry.isFile() || entry.name.startsWith('.') || STATIC_FILE_EXCLUDES.has(entry.name)) {
       continue;
@@ -875,6 +1900,7 @@ function copyTopLevelStaticFiles(projectDir, packageOutDirAbs) {
     const destinationPath = path.join(packageOutDirAbs, entry.name);
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
     fs.copyFileSync(sourcePath, destinationPath);
+    copiedAssetPaths.add(destinationPath);
   }
 }
 
@@ -894,6 +1920,7 @@ function resolveSourceAssetRoots(projectDir, buildConfig) {
 }
 
 function copyPackagedSourceAssets(projectDir, buildConfig) {
+  const copiedAssetPaths = new Set();
   for (const sourceDir of resolveSourceAssetRoots(projectDir, buildConfig)) {
     for (const filePath of walkFiles(sourceDir)) {
       if (isScriptSourceFile(filePath) || filePath.endsWith('.d.ts')) {
@@ -914,9 +1941,28 @@ function copyPackagedSourceAssets(projectDir, buildConfig) {
       for (const destinationPath of destinationPaths) {
         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
         fs.copyFileSync(filePath, destinationPath);
+        copiedAssetPaths.add(destinationPath);
       }
     }
   }
+
+  const publicDir = path.join(projectDir, 'public');
+  if (fs.existsSync(publicDir)) {
+    const publicOutDir = path.join(buildConfig.packageOutDirAbs, 'public');
+    copyDirectoryContents(publicDir, publicOutDir);
+    for (const copiedPath of walkFiles(publicOutDir)) {
+      const relativePath = path.relative(publicOutDir, copiedPath);
+      const sourcePath = path.join(publicDir, relativePath);
+      if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isFile()) {
+        copiedAssetPaths.add(copiedPath);
+      }
+    }
+  }
+
+  copyTopLevelStaticDirs(projectDir, buildConfig.packageOutDirAbs, buildConfig, copiedAssetPaths);
+  copyTopLevelStaticFiles(projectDir, buildConfig.packageOutDirAbs, copiedAssetPaths);
+
+  return copiedAssetPaths;
 }
 
 function walkProjectHtmlFiles(dir, files = []) {
@@ -945,7 +1991,9 @@ function walkProjectHtmlFiles(dir, files = []) {
   return files;
 }
 
-function packageHtmlEntryPoints(projectDir, vendorDir, buildConfig, copiedPackages) {
+function collectHtmlEntryPoints(projectDir, vendorDir, buildConfig, copiedPackages, dalilaImportEntries, dalilaRoot) {
+  const pages = [];
+
   for (const sourceHtmlPath of walkProjectHtmlFiles(projectDir)) {
     const source = fs.readFileSync(sourceHtmlPath, 'utf8');
     if (!shouldPackageHtmlEntry(source)) {
@@ -976,19 +2024,95 @@ function packageHtmlEntryPoints(projectDir, vendorDir, buildConfig, copiedPackag
       copiedPackages,
       baseDirAbs
     );
-    const importMap = {
+
+    const { html: htmlWithoutImportMap } = extractImportMap(source);
+    const rewrittenHtml = rewriteHtmlModuleScripts(htmlWithoutImportMap, buildConfig, baseDirAbs);
+    const packagedHtmlPath = path.join(buildConfig.packageOutDirAbs, path.relative(projectDir, sourceHtmlPath));
+    const htmlUrl = `/${toPosixPath(path.relative(projectDir, sourceHtmlPath))}`;
+    const htmlModuleEntries = collectHtmlModuleEntries(rewrittenHtml, htmlUrl, buildConfig.ts);
+    const publicImportMapModuleUrls = collectImportMapModuleUrls(
+      {
+        imports: rewrittenImports,
+        scopes: rewrittenScopes,
+      },
+      htmlUrl
+    );
+    const traceImportMap = {
       ...existingImportMap,
       imports: {
         ...rewrittenImports,
         ...buildUserProjectImportEntries(buildConfig),
-        ...buildDalilaImportEntries(projectDir),
+        ...dalilaImportEntries,
       },
       scopes: rewrittenScopes,
     };
-    const packagedHtml = buildHtmlDocument(sourceHtmlPath, importMap, buildConfig);
-    const packagedHtmlPath = path.join(buildConfig.packageOutDirAbs, path.relative(projectDir, sourceHtmlPath));
-    fs.mkdirSync(path.dirname(packagedHtmlPath), { recursive: true });
-    fs.writeFileSync(packagedHtmlPath, packagedHtml);
+    const {
+      reachableModuleUrls,
+      staticReachableModuleUrls,
+      usedDalilaSpecifiers,
+      requiresFullDalilaImportMap,
+      hasUnresolvedDynamicImport,
+      hasUnresolvedRuntimeUrl,
+    } = traceReachableModules(
+      {
+        htmlUrl,
+        ...htmlModuleEntries,
+      },
+      traceImportMap,
+      buildConfig,
+      dalilaRoot
+    );
+    const publicImportMapTrace = traceReachableModules(
+      {
+        htmlUrl,
+        entryModuleUrls: publicImportMapModuleUrls,
+        inlineModuleSpecifiers: [],
+      },
+      traceImportMap,
+      buildConfig,
+      dalilaRoot
+    );
+
+    pages.push({
+      htmlUrl,
+      packagedHtmlPath,
+      rewrittenHtml,
+      rewrittenImports,
+      rewrittenScopes,
+      existingImportMap,
+      entryModuleUrls: htmlModuleEntries.entryModuleUrls,
+      reachableModuleUrls,
+      staticReachableModuleUrls,
+      preservedModuleUrls: publicImportMapTrace.reachableModuleUrls,
+      usedDalilaSpecifiers: new Set([
+        ...usedDalilaSpecifiers,
+        ...publicImportMapTrace.usedDalilaSpecifiers,
+      ]),
+      requiresFullDalilaImportMap: requiresFullDalilaImportMap || publicImportMapTrace.requiresFullDalilaImportMap,
+      hasUnresolvedDynamicImport: hasUnresolvedDynamicImport || publicImportMapTrace.hasUnresolvedDynamicImport,
+      hasUnresolvedRuntimeUrl: hasUnresolvedRuntimeUrl || publicImportMapTrace.hasUnresolvedRuntimeUrl,
+    });
+  }
+
+  return pages;
+}
+
+function writePackagedHtmlEntryPoints(pages, buildConfig, dalilaImportEntries) {
+  for (const page of pages) {
+    const importMap = {
+      ...page.existingImportMap,
+      imports: {
+        ...page.rewrittenImports,
+        ...buildUserProjectImportEntries(buildConfig),
+        ...pickDalilaImportEntries(dalilaImportEntries, page.usedDalilaSpecifiers, page.requiresFullDalilaImportMap),
+      },
+      scopes: page.rewrittenScopes,
+    };
+    const modulePreloadUrls = [...page.staticReachableModuleUrls]
+      .filter((moduleUrl) => !page.entryModuleUrls.includes(moduleUrl));
+    const packagedHtml = buildHtmlDocument(page.rewrittenHtml, importMap, buildConfig, modulePreloadUrls);
+    fs.mkdirSync(path.dirname(page.packagedHtmlPath), { recursive: true });
+    fs.writeFileSync(page.packagedHtmlPath, packagedHtml);
   }
 }
 
@@ -1007,21 +2131,49 @@ export async function buildProject(projectDir = process.cwd()) {
   try {
     fs.rmSync(vendorDir, { recursive: true, force: true });
     rewritePackagedModuleSpecifiers(buildConfig);
-    copyDirectoryContents(path.join(dalilaRoot, 'dist'), path.join(vendorDir, 'dalila'));
-    copyPackagedSourceAssets(rootDir, buildConfig);
+    const copiedSourceAssetPaths = copyPackagedSourceAssets(rootDir, buildConfig);
+    const dalilaImportEntries = buildDalilaImportEntries(rootDir);
+    const copiedPackages = new Set();
+    const pages = collectHtmlEntryPoints(
+      rootDir,
+      vendorDir,
+      buildConfig,
+      copiedPackages,
+      dalilaImportEntries,
+      dalilaRoot
+    );
+    const reachableModuleUrls = new Set(
+      pages.flatMap((page) => [...page.reachableModuleUrls, ...page.preservedModuleUrls])
+    );
+    const preserveCompiledJavaScript = pages.some(
+      (page) => page.hasUnresolvedDynamicImport === true || page.hasUnresolvedRuntimeUrl === true
+    );
+    prunePackagedCompiledArtifacts(
+      buildConfig,
+      reachableModuleUrls,
+      copiedSourceAssetPaths,
+      preserveCompiledJavaScript
+    );
+    copyReachableDalilaModules(reachableModuleUrls, distDir, dalilaRoot);
+    for (const page of pages) {
+      const selectedDalilaEntries = pickDalilaImportEntries(
+        dalilaImportEntries,
+        page.usedDalilaSpecifiers,
+        page.requiresFullDalilaImportMap
+      );
+      copyDalilaImportEntryTargets(selectedDalilaEntries, distDir, dalilaRoot, buildConfig.ts);
+    }
     copyDirectoryContents(path.join(rootDir, 'public'), path.join(distDir, 'public'));
     copyTopLevelStaticDirs(rootDir, distDir, buildConfig);
     copyTopLevelStaticFiles(rootDir, distDir);
-
-    const copiedPackages = new Set();
-    packageHtmlEntryPoints(rootDir, vendorDir, buildConfig, copiedPackages);
+    writePackagedHtmlEntryPoints(pages, buildConfig, dalilaImportEntries);
 
     return {
       distDir,
       importEntries: {
         imports: {
           ...buildUserProjectImportEntries(buildConfig),
-          ...buildDalilaImportEntries(rootDir),
+          ...dalilaImportEntries,
         },
       },
     };

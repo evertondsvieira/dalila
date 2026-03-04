@@ -1,5 +1,6 @@
 import { getCurrentScope, withScope } from './scope.js';
 import { scheduleMicrotask, isBatching, queueInBatch } from './scheduler.js';
+import { reportObservedEffectError } from './observability.js';
 import { aliasEffectToNode, linkSubscriberSetToSignal, registerEffect, registerSignal, trackDependency, trackEffectDispose, trackComputedRunEnd, trackComputedRunStart, trackEffectRunEnd, trackEffectRunStart, trackSignalRead, trackSignalWrite, untrackDependencyBySet, } from './devtools.js';
 let effectErrorHandler = null;
 let defaultEffectErrorHandler = null;
@@ -41,7 +42,7 @@ function reportEffectErrorWithHandlers(error, source) {
         defaultEffectErrorHandler(error, source);
         return;
     }
-    console.error(`[Dalila] Error in ${source}:`, error);
+    reportObservedEffectError(error, source);
 }
 /**
  * Normalize unknown throws into Error and route to the global handler (or console).

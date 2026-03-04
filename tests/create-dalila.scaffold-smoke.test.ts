@@ -126,7 +126,7 @@ function addSecondaryHtmlEntry(appDir: string) {
     appDir,
     'src/about.ts',
     [
-      "import { signal } from 'dalila';",
+      "import { signal } from 'dalila/core/signal';",
       "import DOMPurify from 'dompurify';",
       '',
       "const status = signal('smoke-ok');",
@@ -160,6 +160,12 @@ test('create-dalila scaffold smoke covers build and multi-page dist packaging', 
       path.join(appDir, 'dist', 'vendor', 'node_modules', 'dompurify', 'dist', 'purify.es.mjs'),
       'utf8'
     );
+    const vendorDalilaDir = path.join(appDir, 'dist', 'vendor', 'dalila');
+    const vendorDalilaJsFiles = fs.readdirSync(vendorDalilaDir, { recursive: true })
+      .filter((entry): entry is string => typeof entry === 'string' && entry.endsWith('.js'))
+      .map((entry) => path.join(vendorDalilaDir, entry));
+    const vendorDalilaJsBytes = vendorDalilaJsFiles
+      .reduce((total, filePath) => total + fs.statSync(filePath).size, 0);
 
     assert.match(homeHtml, /src="\/src\/main\.js"/);
     assert.match(homeHtml, /"dompurify"\s*:\s*"\/vendor\/node_modules\/dompurify\/dist\/purify\.es\.mjs"/);
@@ -167,5 +173,10 @@ test('create-dalila scaffold smoke covers build and multi-page dist packaging', 
     assert.match(aboutHtml, /"dompurify"\s*:\s*"\/vendor\/node_modules\/dompurify\/dist\/purify\.es\.mjs"/);
     assert.match(aboutJs, /import DOMPurify from 'dompurify';/);
     assert.match(dompurifyModule, /sanitize\(value\)/);
+    assert.ok(vendorDalilaJsBytes < 625_000, `expected optimized vendor/dalila graph, got ${vendorDalilaJsBytes} bytes`);
+    assert.equal(fs.existsSync(path.join(vendorDalilaDir, 'components', 'ui', 'runtime.js')), false);
+    assert.equal(fs.existsSync(path.join(vendorDalilaDir, 'core', 'query.js')), false);
+    assert.equal(fs.existsSync(path.join(vendorDalilaDir, 'core', 'resource.js')), false);
+    assert.equal(fs.existsSync(path.join(vendorDalilaDir, 'runtime', 'bind.d.ts')), false);
   });
 });

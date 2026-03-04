@@ -44,6 +44,8 @@ const ctx = {
 bind(document.getElementById('app')!, ctx);
 ```
 
+For bundle-sensitive or no-bundler builds, prefer leaf subpaths like `dalila/core/signal` and `dalila/runtime/bind`.
+
 ## Docs
 
 ### Start here
@@ -102,6 +104,8 @@ bind(document.getElementById('app')!, ctx);
 ```txt
 dalila           → signals, scope, persist, forms, resources, query, mutations
 dalila/runtime   → bind(), mount(), configure(), components, lazy, transitions
+dalila/core/*    → leaf core modules for tighter bundles
+dalila/runtime/* → leaf runtime modules for tighter bundles
 dalila/context   → createContext(), provide(), inject()
 dalila/router    → createRouter(), file-based routes, preloading
 dalila/http      → createHttpClient()

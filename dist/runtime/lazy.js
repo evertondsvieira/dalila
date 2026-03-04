@@ -8,7 +8,7 @@
  *
  * @module dalila/runtime/lazy
  */
-import { signal } from '../core/index.js';
+import { signal } from '../core/signal.js';
 import { withSchedulerPriority } from '../core/scheduler.js';
 import { defineComponent, isComponent } from './component.js';
 // ============================================================================

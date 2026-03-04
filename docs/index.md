@@ -214,9 +214,16 @@ count.set("invalid");
 Dalila is tree-shakeable. Import only what you need:
 
 ```ts
-// Minimal: ~2KB gzipped
+// Minimal with a bundler: ~2KB gzipped
 import { signal, effect } from "dalila";
 
-// With queries: ~4KB gzipped
+// With queries and a bundler: ~4KB gzipped
 import { signal, effect, createQueryClient } from "dalila";
+```
+
+For standalone/no-bundler builds, prefer leaf subpaths so the browser does not walk wide barrel exports:
+
+```ts
+import { signal, effect } from "dalila/core/signal";
+import { bind } from "dalila/runtime/bind";
 ```

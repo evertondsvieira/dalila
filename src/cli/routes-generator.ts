@@ -1260,7 +1260,7 @@ export async function generateRoutesFile(routesDir: string, outputPath: string):
   const importLines: string[] = [];
   importLines.push(`import type { RouteTable } from 'dalila/router';`);
   if (hasHtml) {
-    importLines.push(`import { fromHtml } from 'dalila';`);
+    importLines.push(`import { fromHtml } from 'dalila/runtime/from-html';`);
   }
   if (imports.length > 0) {
     importLines.push(...imports);

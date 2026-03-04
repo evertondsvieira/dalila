@@ -18,6 +18,66 @@
       "types": "./dist/core/index.d.ts",
       "default": "./dist/core/index.js"
     },
+    "./core/scope": {
+      "types": "./dist/core/scope.d.ts",
+      "default": "./dist/core/scope.js"
+    },
+    "./core/signal": {
+      "types": "./dist/core/signal.d.ts",
+      "default": "./dist/core/signal.js"
+    },
+    "./core/observability": {
+      "types": "./dist/core/observability.d.ts",
+      "default": "./dist/core/observability.js"
+    },
+    "./core/watch": {
+      "types": "./dist/core/watch.d.ts",
+      "default": "./dist/core/watch.js"
+    },
+    "./core/when": {
+      "types": "./dist/core/when.d.ts",
+      "default": "./dist/core/when.js"
+    },
+    "./core/match": {
+      "types": "./dist/core/match.d.ts",
+      "default": "./dist/core/match.js"
+    },
+    "./core/for": {
+      "types": "./dist/core/for.d.ts",
+      "default": "./dist/core/for.js"
+    },
+    "./core/html": {
+      "types": "./dist/core/html.d.ts",
+      "default": "./dist/core/html.js"
+    },
+    "./core/dev": {
+      "types": "./dist/core/dev.d.ts",
+      "default": "./dist/core/dev.js"
+    },
+    "./core/key": {
+      "types": "./dist/core/key.d.ts",
+      "default": "./dist/core/key.js"
+    },
+    "./core/resource": {
+      "types": "./dist/core/resource.d.ts",
+      "default": "./dist/core/resource.js"
+    },
+    "./core/query": {
+      "types": "./dist/core/query.d.ts",
+      "default": "./dist/core/query.js"
+    },
+    "./core/mutation": {
+      "types": "./dist/core/mutation.d.ts",
+      "default": "./dist/core/mutation.js"
+    },
+    "./core/scheduler": {
+      "types": "./dist/core/scheduler.d.ts",
+      "default": "./dist/core/scheduler.js"
+    },
+    "./core/persist": {
+      "types": "./dist/core/persist.d.ts",
+      "default": "./dist/core/persist.js"
+    },
     "./context": {
       "types": "./dist/context/index.d.ts",
       "default": "./dist/context/index.js"
@@ -29,6 +89,30 @@
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
+    },
+    "./runtime/bind": {
+      "types": "./dist/runtime/bind.d.ts",
+      "default": "./dist/runtime/bind.js"
+    },
+    "./runtime/component": {
+      "types": "./dist/runtime/component.d.ts",
+      "default": "./dist/runtime/component.js"
+    },
+    "./runtime/lazy": {
+      "types": "./dist/runtime/lazy.d.ts",
+      "default": "./dist/runtime/lazy.js"
+    },
+    "./runtime/boundary": {
+      "types": "./dist/runtime/boundary.d.ts",
+      "default": "./dist/runtime/boundary.js"
+    },
+    "./runtime/from-html": {
+      "types": "./dist/runtime/fromHtml.d.ts",
+      "default": "./dist/runtime/fromHtml.js"
+    },
+    "./runtime/html-sinks": {
+      "types": "./dist/runtime/html-sinks.d.ts",
+      "default": "./dist/runtime/html-sinks.js"
     },
     "./router": {
       "types": "./dist/router/index.d.ts",
@@ -96,6 +180,9 @@
     },
     "./components/ui/*/*.css": "./src/components/ui/*/*.css"
   },
+  "sideEffects": [
+    "./src/components/ui/*/*.css"
+  ],
   "scripts": {
     "build": "tsc && node scripts/ensure-cli-executable.cjs",
     "dev": "tsc --watch",

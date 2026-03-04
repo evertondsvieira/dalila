@@ -49,7 +49,7 @@ my-app/
 - `npm run dev` - Start dev server and route watcher
 - `npm run routes` - Generate route files once
 - `npm run routes:watch` - Watch route files and regenerate outputs
-- `npm run build` - Generate routes, compile TypeScript, and package a standalone `dist/`
+- `npm run build` - Generate routes, compile TypeScript, and package an optimized standalone `dist/`
 - `npm run preview` - Serve the built `dist/` output locally
 
 ## Learn More

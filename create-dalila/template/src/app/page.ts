@@ -1,4 +1,4 @@
-import { computed, signal } from 'dalila';
+import { computed, signal } from 'dalila/core/signal';
 
 export function loader() {
   const count = signal(0);

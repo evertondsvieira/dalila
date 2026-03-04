@@ -6,7 +6,7 @@
  *
  * @module dalila/runtime/boundary
  */
-import { effect, signal } from '../core/index.js';
+import { effect, signal } from '../core/signal.js';
 import { isInDevMode } from '../core/dev.js';
 import { bind, warnSecurityRuntime } from './bind.js';
 import { defineComponent } from './component.js';

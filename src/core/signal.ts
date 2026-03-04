@@ -1,5 +1,6 @@
 import { getCurrentScope, Scope, withScope } from './scope.js';
 import { scheduleMicrotask, isBatching, queueInBatch } from './scheduler.js';
+import { reportObservedEffectError } from './observability.js';
 import {
   aliasEffectToNode,
   linkSubscriberSetToSignal,
@@ -71,7 +72,7 @@ function reportEffectErrorWithHandlers(error: Error, source: string): void {
     return;
   }
 
-  console.error(`[Dalila] Error in ${source}:`, error);
+  reportObservedEffectError(error, source);
 }
 
 /**

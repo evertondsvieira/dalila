@@ -6,7 +6,7 @@
  *
  * @module dalila/runtime
  */
-import { Signal } from '../core/index.js';
+import { type Signal } from '../core/signal.js';
 import type { Component } from './component.js';
 import { type TrustedTypesHtmlPolicy } from './html-sinks.js';
 export interface BindOptions {

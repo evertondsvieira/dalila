@@ -6,23 +6,21 @@
  *
  * @module dalila/runtime
  */
-import { effect, createScope, withScope, isInDevMode, signal, computeVirtualRange, getCurrentScope, FatalEffectError } from '../core/index.js';
+import { isInDevMode } from '../core/dev.js';
+import { createScope, getCurrentScope, withScope } from '../core/scope.js';
+import { effect, FatalEffectError, signal } from '../core/signal.js';
 import { withSchedulerPriority } from '../core/scheduler.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
 import { isComponent, camelToKebab } from './component.js';
-import { observeLazyElement, getLazyComponent } from './lazy.js';
 import { bindBoundary } from './boundary.js';
+import { bindPortalDirective, syncPortalElement } from './bind-portal.js';
+import { bindLazyDirective as runBindLazyDirective } from './bind-lazy-directive.js';
+import { bindEachDirective as runBindEachDirective, bindVirtualEachDirective as runBindVirtualEachDirective, getVirtualListController as getVirtualListControllerFromList, scrollToVirtualIndex as scrollToVirtualIndexFromList, } from './bind-list-directives.js';
+import { bindIfDirective as runBindIfDirective } from './bind-if-directive.js';
 import { ensureButtonTypeForSelector, queryIncludingRoot, updateNestedArrayDataPaths, } from './array-directive-dom.js';
 import { bindSlotFragments, extractSlots, fillSlots } from './internal/components/component-slots.js';
 import { resolveComponentProps as resolveComponentPropsFromElement } from './internal/components/component-props.js';
-import { createListCloneRegistry } from './internal/list/list-clone-registry.js';
-import { createListBoundCloneFactory } from './internal/list/list-clone-factory.js';
-import { createListKeyResolver } from './internal/list/list-keying.js';
-import { updateListItemMetadata } from './internal/list/list-metadata.js';
-import { insertOrderedClonesBefore, recreateChangedOrderedClones, removeMissingKeys } from './internal/list/list-reconcile.js';
-import { createFrameRerender, createQueuedListRerender, runWithResolvedPriority } from './internal/list/list-scheduler.js';
-import { clearVirtualListApi, clampVirtual, createVirtualSpacer, getElementPositionPath, getVirtualRestoreKey, getVirtualScrollRestoreValue, readVirtualCallbackOption, readVirtualHeightOption, readVirtualListApi, readVirtualMeasureOption, readVirtualNumberOption, setVirtualListApi, setVirtualScrollRestoreValue, VirtualHeightsIndex, } from './internal/virtual/virtual-list-helpers.js';
 import { hasExecutableHtmlSinkPattern, resolveHtmlSinkSecurityOptions, setElementInnerHTML, setTemplateInnerHTML, setTemplateInnerHTMLForParsing, } from './html-sinks.js';
 // ============================================================================
 // Utilities
@@ -690,7 +688,6 @@ export const DEFAULT_RUNTIME_SECURITY = Object.freeze({
     trustedTypesPolicyName: 'dalila',
     trustedTypesPolicy: null,
 });
-const portalSyncByElement = new WeakMap();
 function createProductionRuntimeSecurityConfig() {
     return {
         strict: DEFAULT_RUNTIME_SECURITY.strict,
@@ -1818,10 +1815,6 @@ function runTransitionHook(phase, el, names, registry) {
         }
     }
 }
-function syncPortalElement(el) {
-    const sync = portalSyncByElement.get(el);
-    sync?.();
-}
 function createTransitionController(el, registry, cleanups) {
     const names = readTransitionNames(el);
     const hasTransition = names.length > 0;
@@ -1869,94 +1862,14 @@ function createTransitionController(el, registry, cleanups) {
     return { hasTransition, enter, leave };
 }
 function bindPortal(root, ctx, cleanups) {
-    const elements = qsaIncludingRoot(root, '[d-portal]');
-    for (const el of elements) {
-        const rawExpression = el.getAttribute('d-portal')?.trim();
-        if (!rawExpression)
-            continue;
-        let expressionAst = null;
-        let fallbackSelector = null;
-        try {
-            expressionAst = parseExpression(rawExpression);
-        }
-        catch {
-            // Allow selector shorthand: d-portal="#modal-root"
-            fallbackSelector = rawExpression;
-        }
-        const htmlEl = el;
-        const anchor = document.createComment('d-portal');
-        htmlEl.parentNode?.insertBefore(anchor, htmlEl);
-        const coerceTarget = (value) => {
-            const resolved = resolve(value);
-            if (resolved == null || resolved === false)
-                return null;
-            if (typeof resolved === 'string') {
-                const selector = resolved.trim();
-                if (!selector)
-                    return null;
-                if (typeof document === 'undefined')
-                    return null;
-                const target = document.querySelector(selector);
-                if (!target) {
-                    warn(`d-portal: target "${selector}" not found`);
-                    return null;
-                }
-                return target;
-            }
-            if (typeof Element !== 'undefined' && resolved instanceof Element) {
-                return resolved;
-            }
-            warn('d-portal: expression must resolve to selector string, Element, or null');
-            return null;
-        };
-        const restoreToAnchor = () => {
-            const hostParent = anchor.parentNode;
-            if (!hostParent)
-                return;
-            if (htmlEl.parentNode === hostParent)
-                return;
-            const next = anchor.nextSibling;
-            if (next)
-                hostParent.insertBefore(htmlEl, next);
-            else
-                hostParent.appendChild(htmlEl);
-        };
-        const syncPortal = () => {
-            let target = null;
-            if (expressionAst) {
-                const result = evalExpressionAst(expressionAst, ctx);
-                if (!result.ok) {
-                    if (result.reason === 'missing_identifier') {
-                        warn(`d-portal: ${result.message}`);
-                    }
-                    else {
-                        warn(`d-portal: invalid expression "${rawExpression}"`);
-                    }
-                    target = null;
-                }
-                else {
-                    target = coerceTarget(result.value);
-                }
-            }
-            else {
-                target = coerceTarget(fallbackSelector);
-            }
-            if (!target) {
-                restoreToAnchor();
-                return;
-            }
-            if (htmlEl.parentNode !== target) {
-                target.appendChild(htmlEl);
-            }
-        };
-        portalSyncByElement.set(htmlEl, syncPortal);
-        bindEffect(htmlEl, syncPortal);
-        cleanups.push(() => {
-            portalSyncByElement.delete(htmlEl);
-            restoreToAnchor();
-            anchor.remove();
-        });
-    }
+    bindPortalDirective(root, ctx, cleanups, {
+        qsaIncludingRoot,
+        parseExpression,
+        evalExpressionAst,
+        resolve,
+        warn,
+        bindEffect,
+    });
 }
 // ============================================================================
 // d-lazy Directive
@@ -1966,155 +1879,16 @@ function bindPortal(root, ctx, cleanups) {
  * Loads a lazy component when it enters the viewport.
  */
 function bindLazy(root, ctx, cleanups, refs, events, options) {
-    const elements = qsaIncludingRoot(root, '[d-lazy]');
-    for (const el of elements) {
-        const lazyComponentName = normalizeBinding(el.getAttribute('d-lazy'));
-        if (!lazyComponentName)
-            continue;
-        const lazyResult = getLazyComponent(lazyComponentName);
-        if (!lazyResult) {
-            warn(`d-lazy: component "${lazyComponentName}" not found. Use createLazyComponent() to create it.`);
-            continue;
-        }
-        const { state } = lazyResult;
-        const htmlEl = el;
-        // Get loading and error templates from attributes
-        const loadingTemplate = el.getAttribute('d-lazy-loading') ?? state.loadingTemplate ?? '';
-        const errorTemplate = el.getAttribute('d-lazy-error') ?? state.errorTemplate ?? '';
-        // Remove the d-lazy attribute to prevent reprocessing
-        el.removeAttribute('d-lazy');
-        el.removeAttribute('d-lazy-loading');
-        el.removeAttribute('d-lazy-error');
-        // Track the current rendered node (starts as the original placeholder element)
-        let currentNode = htmlEl;
-        let componentMounted = false;
-        let componentDispose = null;
-        let componentEl = null;
-        let hasIntersected = false;
-        const refName = normalizeBinding(htmlEl.getAttribute('d-ref'));
-        const syncRef = (node) => {
-            if (!refName)
-                return;
-            if (node instanceof Element) {
-                refs.set(refName, node);
-            }
-        };
-        const replaceCurrentNode = (nextNode) => {
-            const parent = currentNode.parentNode;
-            if (!parent)
-                return;
-            parent.replaceChild(nextNode, currentNode);
-            currentNode = nextNode;
-            syncRef(nextNode);
-        };
-        const unmountComponent = () => {
-            if (componentDispose) {
-                componentDispose();
-                componentDispose = null;
-            }
-            componentMounted = false;
-            componentEl = null;
-        };
-        // Function to render the loaded component
-        const renderComponent = () => {
-            const comp = state.component();
-            if (!comp)
-                return;
-            // Create component element
-            const compDef = comp.definition;
-            const compEl = document.createElement(compDef.tag);
-            // Copy attributes from placeholder to component
-            for (const attr of Array.from(htmlEl.attributes)) {
-                if (!attr.name.startsWith('d-')) {
-                    compEl.setAttribute(attr.name, attr.value);
-                }
-            }
-            if (componentMounted && componentEl === compEl)
-                return;
-            replaceCurrentNode(compEl);
-            componentEl = compEl;
-            // Bind the component
-            const parentCtx = Object.create(ctx);
-            const parent = compEl.parentNode;
-            const nextSibling = compEl.nextSibling;
-            componentDispose = bind(compEl, parentCtx, {
-                components: { [compDef.tag]: comp },
-                events,
-                _skipLifecycle: true,
-                ...inheritNestedBindOptions(options, {}),
-            });
-            // bind() may replace the component host node; keep currentNode/ref pointing to the connected node.
-            if (!compEl.isConnected && parent) {
-                const renderedNode = nextSibling ? nextSibling.previousSibling : parent.lastChild;
-                if (renderedNode instanceof Node) {
-                    currentNode = renderedNode;
-                    syncRef(renderedNode);
-                }
-            }
-            componentMounted = true;
-        };
-        // Function to show loading state
-        const showLoading = () => {
-            if (loadingTemplate) {
-                if (componentMounted) {
-                    unmountComponent();
-                }
-                const loadingEl = document.createElement('div');
-                warnRawHtmlSinkHeuristic('d-lazy-loading', lazyComponentName, loadingTemplate);
-                setElementInnerHTML(loadingEl, loadingTemplate, resolveSecurityOptions(options));
-                replaceCurrentNode(loadingEl);
-            }
-        };
-        // Function to show error state
-        const showError = (err) => {
-            if (componentMounted) {
-                unmountComponent();
-            }
-            if (errorTemplate) {
-                const errorEl = document.createElement('div');
-                warnRawHtmlSinkHeuristic('d-lazy-error', lazyComponentName, errorTemplate);
-                setElementInnerHTML(errorEl, errorTemplate, resolveSecurityOptions(options));
-                replaceCurrentNode(errorEl);
-            }
-            else {
-                warn(`d-lazy: failed to load "${lazyComponentName}": ${err.message}`);
-            }
-        };
-        const syncFromState = () => {
-            // Always read reactive state so this effect stays subscribed even before visibility.
-            const loading = state.loading();
-            const error = state.error();
-            const comp = state.component();
-            if (!hasIntersected)
-                return;
-            if (error) {
-                showError(error);
-                return;
-            }
-            if (loading && !comp) {
-                showLoading();
-                return;
-            }
-            if (comp && !componentMounted) {
-                renderComponent();
-            }
-        };
-        // React to loading state changes
-        bindEffect(htmlEl, () => {
-            syncFromState();
-        });
-        // Observe element for viewport visibility
-        const cleanupObserver = observeLazyElement(htmlEl, () => {
-            hasIntersected = true;
-            syncFromState();
-            state.load();
-        }, 0 // Trigger when element enters viewport
-        );
-        cleanups.push(() => {
-            cleanupObserver();
-            unmountComponent();
-        });
-    }
+    runBindLazyDirective(root, ctx, cleanups, refs, events, options, {
+        qsaIncludingRoot,
+        normalizeBinding,
+        warn,
+        warnRawHtmlSinkHeuristic,
+        resolveSecurityOptions,
+        bind,
+        bindEffect,
+        inheritNestedBindOptions,
+    });
 }
 // ============================================================================
 // d-when Directive
@@ -2215,15 +1989,14 @@ function bindMatch(root, ctx, cleanups) {
         });
     }
 }
+// ============================================================================
+// d-virtual-each Directive
+// ============================================================================
 export function getVirtualListController(target) {
-    return readVirtualListApi(target);
+    return getVirtualListControllerFromList(target);
 }
 export function scrollToVirtualIndex(target, index, options) {
-    const controller = readVirtualListApi(target);
-    if (!controller)
-        return false;
-    controller.scrollToIndex(index, options);
-    return true;
+    return scrollToVirtualIndexFromList(target, index, options);
 }
 /**
  * Bind all [d-virtual-each] directives within root.
@@ -2235,400 +2008,17 @@ export function scrollToVirtualIndex(target, index, options) {
  * - Parent element as vertical scroll container
  */
 function bindVirtualEach(root, ctx, cleanups, options) {
-    const elements = qsaIncludingRoot(root, '[d-virtual-each]')
-        .filter(el => !el.parentElement?.closest('[d-virtual-each], [d-each]'));
-    for (const el of elements) {
-        const bindingName = normalizeBinding(el.getAttribute('d-virtual-each'));
-        if (!bindingName)
-            continue;
-        const itemHeightBinding = normalizeBinding(el.getAttribute('d-virtual-item-height'));
-        const itemHeightRaw = itemHeightBinding ?? el.getAttribute('d-virtual-item-height');
-        const itemHeightValue = readVirtualNumberOption(itemHeightRaw, ctx, 'd-virtual-item-height', { warn, resolve });
-        const fixedItemHeight = Number.isFinite(itemHeightValue) && itemHeightValue > 0
-            ? itemHeightValue
-            : NaN;
-        const dynamicHeight = readVirtualMeasureOption(normalizeBinding(el.getAttribute('d-virtual-measure')) ?? el.getAttribute('d-virtual-measure'), ctx, { resolve });
-        if (!dynamicHeight && (!Number.isFinite(fixedItemHeight) || fixedItemHeight <= 0)) {
-            warn(`d-virtual-each: invalid item height on "${bindingName}". Falling back to d-each.`);
-            el.setAttribute('d-each', bindingName);
-            el.removeAttribute('d-virtual-each');
-            el.removeAttribute('d-virtual-item-height');
-            el.removeAttribute('d-virtual-estimated-height');
-            el.removeAttribute('d-virtual-measure');
-            el.removeAttribute('d-virtual-infinite');
-            el.removeAttribute('d-virtual-overscan');
-            el.removeAttribute('d-virtual-height');
-            continue;
-        }
-        const estimatedHeightBinding = normalizeBinding(el.getAttribute('d-virtual-estimated-height'));
-        const estimatedHeightRaw = estimatedHeightBinding ?? el.getAttribute('d-virtual-estimated-height');
-        const estimatedHeightValue = readVirtualNumberOption(estimatedHeightRaw, ctx, 'd-virtual-estimated-height', { warn, resolve });
-        const estimatedItemHeight = Number.isFinite(estimatedHeightValue) && estimatedHeightValue > 0
-            ? estimatedHeightValue
-            : (Number.isFinite(fixedItemHeight) ? fixedItemHeight : 48);
-        const overscanBinding = normalizeBinding(el.getAttribute('d-virtual-overscan'));
-        const overscanRaw = overscanBinding ?? el.getAttribute('d-virtual-overscan');
-        const overscanValue = readVirtualNumberOption(overscanRaw, ctx, 'd-virtual-overscan', { warn, resolve });
-        const overscan = Number.isFinite(overscanValue)
-            ? Math.max(0, Math.floor(overscanValue))
-            : 6;
-        const viewportHeight = readVirtualHeightOption(normalizeBinding(el.getAttribute('d-virtual-height')) ?? el.getAttribute('d-virtual-height'), ctx, { resolve });
-        const onEndReached = readVirtualCallbackOption(normalizeBinding(el.getAttribute('d-virtual-infinite')) ?? el.getAttribute('d-virtual-infinite'), ctx, 'd-virtual-infinite', { warn, isSignal });
-        let binding = ctx[bindingName];
-        if (binding === undefined) {
-            warn(`d-virtual-each: "${bindingName}" not found in context`);
-            binding = [];
-        }
-        const templatePathBeforeDetach = getElementPositionPath(el);
-        const comment = document.createComment('d-virtual-each');
-        el.parentNode?.replaceChild(comment, el);
-        el.removeAttribute('d-virtual-each');
-        el.removeAttribute('d-virtual-item-height');
-        el.removeAttribute('d-virtual-estimated-height');
-        el.removeAttribute('d-virtual-measure');
-        el.removeAttribute('d-virtual-infinite');
-        el.removeAttribute('d-virtual-overscan');
-        el.removeAttribute('d-virtual-height');
-        const keyBinding = normalizeBinding(el.getAttribute('d-key'));
-        el.removeAttribute('d-key');
-        const template = el;
-        const topSpacer = createVirtualSpacer(template, 'top');
-        const bottomSpacer = createVirtualSpacer(template, 'bottom');
-        comment.parentNode?.insertBefore(topSpacer, comment);
-        comment.parentNode?.insertBefore(bottomSpacer, comment);
-        const scrollContainer = comment.parentElement;
-        if (scrollContainer) {
-            if (viewportHeight)
-                scrollContainer.style.height = viewportHeight;
-            if (!scrollContainer.style.overflowY)
-                scrollContainer.style.overflowY = 'auto';
-        }
-        const restoreKey = getVirtualRestoreKey(el.ownerDocument, templatePathBeforeDetach, scrollContainer, bindingName, keyBinding);
-        const savedScrollTop = getVirtualScrollRestoreValue(restoreKey);
-        if (scrollContainer && Number.isFinite(savedScrollTop)) {
-            scrollContainer.scrollTop = Math.max(0, savedScrollTop);
-        }
-        const observedElements = new Set();
-        let warnedNonArray = false;
-        let warnedViewportFallback = false;
-        let heightsIndex = dynamicHeight ? new VirtualHeightsIndex(0, estimatedItemHeight) : null;
-        const { keyValueToString, readKeyValue } = createListKeyResolver({
-            keyBinding,
-            itemAliases: ['item'],
-            directiveName: 'd-virtual-each',
-            warn,
-        });
-        let rowResizeObserver = null;
-        const registry = createListCloneRegistry({
-            onBeforeRemoveClone: (clone) => {
-                if (rowResizeObserver && observedElements.has(clone)) {
-                    rowResizeObserver.unobserve(clone);
-                    observedElements.delete(clone);
-                }
-            },
-        });
-        const { clonesByKey, metadataByKey, itemsByKey } = registry;
-        const createClone = createListBoundCloneFactory({
-            template,
-            parentCtx: ctx,
-            alias: 'item',
-            decorateClone: (clone, index) => {
-                clone.setAttribute('data-dalila-virtual-index', String(index));
-            },
-            bindClone: (clone, itemCtx) => bind(clone, itemCtx, inheritNestedBindOptions(options, { _skipLifecycle: true })),
-            register: registry.register,
-        });
-        function updateCloneMetadata(key, index, count) {
-            const metadata = metadataByKey.get(key);
-            updateListItemMetadata(metadata, index, count);
-            const clone = clonesByKey.get(key);
-            if (clone) {
-                clone.setAttribute('data-dalila-virtual-index', String(index));
-            }
-        }
-        const removeKey = (key) => registry.removeKey(key);
-        let currentItems = [];
-        let lastEndReachedCount = -1;
-        let endReachedPending = false;
-        const remapDynamicHeights = (prevItems, nextItems) => {
-            if (!dynamicHeight || !heightsIndex)
-                return;
-            const heightsByKey = new Map();
-            for (let i = 0; i < prevItems.length; i++) {
-                const key = keyValueToString(readKeyValue(prevItems[i], i), i);
-                if (!heightsByKey.has(key)) {
-                    heightsByKey.set(key, heightsIndex.get(i));
-                }
-            }
-            heightsIndex.reset(nextItems.length, estimatedItemHeight);
-            for (let i = 0; i < nextItems.length; i++) {
-                const key = keyValueToString(readKeyValue(nextItems[i], i), i);
-                const height = heightsByKey.get(key);
-                if (height !== undefined) {
-                    heightsIndex.set(i, height);
-                }
-            }
-        };
-        const replaceItems = (nextItems) => {
-            remapDynamicHeights(currentItems, nextItems);
-            currentItems = nextItems;
-        };
-        const maybeTriggerEndReached = (visibleEnd, totalCount) => {
-            if (!onEndReached || totalCount === 0)
-                return;
-            if (visibleEnd < totalCount)
-                return;
-            if (lastEndReachedCount === totalCount || endReachedPending)
-                return;
-            lastEndReachedCount = totalCount;
-            const result = onEndReached();
-            if (result && typeof result.then === 'function') {
-                endReachedPending = true;
-                Promise.resolve(result)
-                    .catch(() => { })
-                    .finally(() => {
-                    endReachedPending = false;
-                });
-            }
-        };
-        function renderVirtualList(items) {
-            if (virtualListDisposed)
-                return;
-            const parent = comment.parentNode;
-            if (!parent)
-                return;
-            if (dynamicHeight && heightsIndex && heightsIndex.count !== items.length) {
-                heightsIndex.reset(items.length, estimatedItemHeight);
-            }
-            const viewportHeightValue = scrollContainer?.clientHeight ?? 0;
-            const effectiveViewportHeight = viewportHeightValue > 0
-                ? viewportHeightValue
-                : (dynamicHeight ? estimatedItemHeight * 10 : fixedItemHeight * 10);
-            const scrollTop = scrollContainer?.scrollTop ?? 0;
-            if (viewportHeightValue <= 0 && !warnedViewportFallback) {
-                warnedViewportFallback = true;
-                warn('d-virtual-each: scroll container has no measurable height. Using fallback viewport size.');
-            }
-            let start = 0;
-            let end = 0;
-            let topOffset = 0;
-            let bottomOffset = 0;
-            let totalHeight = 0;
-            let visibleEndForEndReached = 0;
-            if (dynamicHeight && heightsIndex) {
-                totalHeight = heightsIndex.total();
-                if (items.length > 0) {
-                    const visibleStart = heightsIndex.indexAtOffset(scrollTop);
-                    const visibleEnd = clampVirtual(heightsIndex.lowerBound(scrollTop + effectiveViewportHeight) + 1, visibleStart + 1, items.length);
-                    visibleEndForEndReached = visibleEnd;
-                    start = clampVirtual(visibleStart - overscan, 0, items.length);
-                    end = clampVirtual(visibleEnd + overscan, start, items.length);
-                    topOffset = heightsIndex.prefix(start);
-                    bottomOffset = Math.max(0, totalHeight - heightsIndex.prefix(end));
-                }
-            }
-            else {
-                const range = computeVirtualRange({
-                    itemCount: items.length,
-                    itemHeight: fixedItemHeight,
-                    scrollTop,
-                    viewportHeight: effectiveViewportHeight,
-                    overscan,
-                });
-                start = range.start;
-                end = range.end;
-                topOffset = range.topOffset;
-                bottomOffset = range.bottomOffset;
-                totalHeight = range.totalHeight;
-                visibleEndForEndReached = clampVirtual(Math.ceil((scrollTop + effectiveViewportHeight) / fixedItemHeight), 0, items.length);
-            }
-            topSpacer.style.height = `${topOffset}px`;
-            bottomSpacer.style.height = `${bottomOffset}px`;
-            topSpacer.setAttribute('data-dalila-virtual-total', String(totalHeight));
-            const orderedClones = [];
-            const orderedKeys = [];
-            const nextKeys = new Set();
-            const changedKeys = new Set();
-            for (let i = start; i < end; i++) {
-                const item = items[i];
-                let key = keyValueToString(readKeyValue(item, i), i);
-                if (nextKeys.has(key)) {
-                    warn(`d-virtual-each: duplicate visible key "${key}" at index ${i}. Falling back to per-index key.`);
-                    key = `${key}:dup:${i}`;
-                }
-                nextKeys.add(key);
-                let clone = clonesByKey.get(key);
-                if (clone) {
-                    updateCloneMetadata(key, i, items.length);
-                    if (itemsByKey.get(key) !== item) {
-                        changedKeys.add(key);
-                    }
-                }
-                else {
-                    clone = createClone(key, item, i, items.length);
-                }
-                orderedClones.push(clone);
-                orderedKeys.push(key);
-            }
-            recreateChangedOrderedClones(orderedClones, orderedKeys, changedKeys, (key, orderedIndex) => {
-                removeKey(key);
-                return createClone(key, items[start + orderedIndex], start + orderedIndex, items.length);
-            });
-            removeMissingKeys(clonesByKey.keys(), nextKeys, removeKey);
-            insertOrderedClonesBefore(parent, orderedClones, bottomSpacer);
-            if (dynamicHeight && rowResizeObserver) {
-                const nextObserved = new Set(orderedClones);
-                for (const clone of Array.from(observedElements)) {
-                    if (nextObserved.has(clone))
-                        continue;
-                    rowResizeObserver.unobserve(clone);
-                    observedElements.delete(clone);
-                }
-                for (const clone of orderedClones) {
-                    if (observedElements.has(clone))
-                        continue;
-                    rowResizeObserver.observe(clone);
-                    observedElements.add(clone);
-                }
-            }
-            maybeTriggerEndReached(visibleEndForEndReached, items.length);
-        }
-        let framePending = false;
-        let virtualListDisposed = false;
-        const scheduleRender = createFrameRerender({
-            resolvePriority: resolveListRenderPriority,
-            isDisposed: () => virtualListDisposed,
-            isPending: () => framePending,
-            setPending: (pending) => { framePending = pending; },
-            render: () => renderVirtualList(currentItems),
-        });
-        const onScroll = () => scheduleRender();
-        const onResize = () => scheduleRender();
-        scrollContainer?.addEventListener('scroll', onScroll, { passive: true });
-        let containerResizeObserver = null;
-        if (typeof ResizeObserver !== 'undefined' && scrollContainer) {
-            containerResizeObserver = new ResizeObserver(() => {
-                if (virtualListDisposed)
-                    return;
-                scheduleRender();
-            });
-            containerResizeObserver.observe(scrollContainer);
-        }
-        else if (typeof window !== 'undefined') {
-            window.addEventListener('resize', onResize);
-        }
-        if (dynamicHeight && typeof ResizeObserver !== 'undefined' && heightsIndex) {
-            rowResizeObserver = new ResizeObserver((entries) => {
-                if (virtualListDisposed)
-                    return;
-                let changed = false;
-                for (const entry of entries) {
-                    const target = entry.target;
-                    const indexRaw = target.getAttribute('data-dalila-virtual-index');
-                    if (!indexRaw)
-                        continue;
-                    const index = Number(indexRaw);
-                    if (!Number.isFinite(index))
-                        continue;
-                    const measured = entry.contentRect?.height;
-                    if (!Number.isFinite(measured) || measured <= 0)
-                        continue;
-                    changed = heightsIndex.set(index, measured) || changed;
-                }
-                if (changed)
-                    scheduleRender();
-            });
-        }
-        const scrollToIndex = (index, options) => {
-            if (!scrollContainer || currentItems.length === 0)
-                return;
-            const safeIndex = clampVirtual(Math.floor(index), 0, currentItems.length - 1);
-            const viewportSize = scrollContainer.clientHeight > 0
-                ? scrollContainer.clientHeight
-                : (dynamicHeight ? estimatedItemHeight * 10 : fixedItemHeight * 10);
-            const align = options?.align ?? 'start';
-            let top = dynamicHeight && heightsIndex
-                ? heightsIndex.prefix(safeIndex)
-                : safeIndex * fixedItemHeight;
-            const itemSize = dynamicHeight && heightsIndex
-                ? heightsIndex.get(safeIndex)
-                : fixedItemHeight;
-            if (align === 'center') {
-                top = top - (viewportSize / 2) + (itemSize / 2);
-            }
-            else if (align === 'end') {
-                top = top - viewportSize + itemSize;
-            }
-            top = Math.max(0, top);
-            if (options?.behavior && typeof scrollContainer.scrollTo === 'function') {
-                scrollContainer.scrollTo({ top, behavior: options.behavior });
-            }
-            else {
-                scrollContainer.scrollTop = top;
-            }
-            scheduleRender();
-        };
-        const virtualApi = {
-            scrollToIndex,
-            refresh: scheduleRender,
-        };
-        if (scrollContainer) {
-            setVirtualListApi(scrollContainer, virtualApi);
-        }
-        if (isSignal(binding)) {
-            let hasRenderedInitialSignalPass = false;
-            bindEffect(scrollContainer ?? el, () => {
-                const value = binding();
-                if (Array.isArray(value)) {
-                    warnedNonArray = false;
-                    replaceItems(value);
-                }
-                else {
-                    if (!warnedNonArray) {
-                        warnedNonArray = true;
-                        warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
-                    }
-                    replaceItems([]);
-                }
-                if (!hasRenderedInitialSignalPass) {
-                    hasRenderedInitialSignalPass = true;
-                    runWithResolvedPriority(resolveListRenderPriority, () => renderVirtualList(currentItems));
-                    return;
-                }
-                scheduleRender();
-            });
-        }
-        else if (Array.isArray(binding)) {
-            replaceItems(binding);
-            runWithResolvedPriority(resolveListRenderPriority, () => renderVirtualList(currentItems));
-        }
-        else {
-            warn(`d-virtual-each: "${bindingName}" is not an array or signal-of-array`);
-        }
-        cleanups.push(() => {
-            virtualListDisposed = true;
-            framePending = false;
-            scrollContainer?.removeEventListener('scroll', onScroll);
-            if (containerResizeObserver) {
-                containerResizeObserver.disconnect();
-            }
-            else if (typeof window !== 'undefined') {
-                window.removeEventListener('resize', onResize);
-            }
-            if (rowResizeObserver) {
-                rowResizeObserver.disconnect();
-            }
-            observedElements.clear();
-            if (scrollContainer) {
-                setVirtualScrollRestoreValue(restoreKey, scrollContainer.scrollTop);
-                clearVirtualListApi(scrollContainer, virtualApi);
-            }
-            for (const key of Array.from(clonesByKey.keys()))
-                removeKey(key);
-            topSpacer.remove();
-            bottomSpacer.remove();
-        });
-    }
+    runBindVirtualEachDirective(root, ctx, cleanups, options, {
+        qsaIncludingRoot,
+        normalizeBinding,
+        warn,
+        resolve,
+        bind,
+        bindEffect,
+        inheritNestedBindOptions,
+        isSignal,
+        resolveListRenderPriority,
+    });
 }
 // ============================================================================
 // d-each Directive
@@ -2640,127 +2030,17 @@ function bindVirtualEach(root, ctx, cleanups, options) {
  * item's properties as its context.
  */
 function bindEach(root, ctx, cleanups, options) {
-    // Only bind top-level d-each elements. Nested d-each inside d-each or
-    // d-virtual-each templates must be left untouched here — they are bound when
-    // parent clones are passed to bind() individually.
-    const elements = qsaIncludingRoot(root, '[d-each]')
-        .filter(el => !el.parentElement?.closest('[d-each], [d-virtual-each]'));
-    for (const el of elements) {
-        const rawValue = el.getAttribute('d-each')?.trim() ?? '';
-        let bindingName;
-        let alias = 'item'; // default
-        const asMatch = rawValue.match(/^(\S+)\s+as\s+(\S+)$/);
-        if (asMatch) {
-            bindingName = normalizeBinding(asMatch[1]);
-            alias = asMatch[2];
-        }
-        else {
-            bindingName = normalizeBinding(rawValue);
-        }
-        if (!bindingName)
-            continue;
-        let binding = ctx[bindingName];
-        if (binding === undefined) {
-            warn(`d-each: "${bindingName}" not found in context`);
-            binding = [];
-        }
-        const comment = document.createComment('d-each');
-        el.parentNode?.replaceChild(comment, el);
-        el.removeAttribute('d-each');
-        const keyBinding = normalizeBinding(el.getAttribute('d-key'));
-        el.removeAttribute('d-key');
-        const template = el;
-        const registry = createListCloneRegistry();
-        const { clonesByKey, metadataByKey, itemsByKey } = registry;
-        const { keyValueToString, readKeyValue } = createListKeyResolver({
-            keyBinding,
-            itemAliases: [alias, 'item'],
-            directiveName: 'd-each',
-            warn,
-        });
-        const createClone = createListBoundCloneFactory({
-            template,
-            parentCtx: ctx,
-            alias,
-            bindClone: (clone, itemCtx) => bind(clone, itemCtx, inheritNestedBindOptions(options, { _skipLifecycle: true })),
-            register: registry.register,
-        });
-        function updateCloneMetadata(key, index, count) {
-            const metadata = metadataByKey.get(key);
-            updateListItemMetadata(metadata, index, count);
-        }
-        function renderList(items) {
-            const orderedClones = [];
-            const orderedKeys = [];
-            const nextKeys = new Set();
-            const changedKeys = new Set();
-            for (let i = 0; i < items.length; i++) {
-                const item = items[i];
-                let key = keyValueToString(readKeyValue(item, i), i);
-                if (nextKeys.has(key)) {
-                    warn(`d-each: duplicate key "${key}" at index ${i}. Falling back to per-index key.`);
-                    key = `${key}:dup:${i}`;
-                }
-                nextKeys.add(key);
-                let clone = clonesByKey.get(key);
-                if (clone) {
-                    updateCloneMetadata(key, i, items.length);
-                    if (itemsByKey.get(key) !== item) {
-                        changedKeys.add(key);
-                    }
-                }
-                else {
-                    clone = createClone(key, item, i, items.length);
-                }
-                orderedClones.push(clone);
-                orderedKeys.push(key);
-            }
-            const removeKey = (key) => registry.removeKey(key);
-            recreateChangedOrderedClones(orderedClones, orderedKeys, changedKeys, (key, orderedIndex) => {
-                removeKey(key);
-                return createClone(key, items[orderedIndex], orderedIndex, items.length);
-            });
-            removeMissingKeys(clonesByKey.keys(), nextKeys, removeKey);
-            const parent = comment.parentNode;
-            if (!parent)
-                return;
-            insertOrderedClonesBefore(parent, orderedClones, comment);
-        }
-        let lowPriorityRenderQueued = false;
-        let listRenderDisposed = false;
-        const scheduleLowPriorityListRender = createQueuedListRerender({
-            resolvePriority: resolveListRenderPriority,
-            isDisposed: () => listRenderDisposed,
-            isQueued: () => lowPriorityRenderQueued,
-            setQueued: (queued) => { lowPriorityRenderQueued = queued; },
-            render: renderList,
-        });
-        if (isSignal(binding)) {
-            let hasRenderedInitialSignalPass = false;
-            // Effect owned by templateScope — no manual stop needed
-            bindEffect(el, () => {
-                const value = binding();
-                const items = Array.isArray(value) ? value : [];
-                if (!hasRenderedInitialSignalPass) {
-                    hasRenderedInitialSignalPass = true;
-                    runWithResolvedPriority(resolveListRenderPriority, () => renderList(items));
-                    return;
-                }
-                scheduleLowPriorityListRender(items);
-            });
-        }
-        else if (Array.isArray(binding)) {
-            runWithResolvedPriority(resolveListRenderPriority, () => renderList(binding));
-        }
-        else {
-            warn(`d-each: "${bindingName}" is not an array or signal`);
-        }
-        cleanups.push(() => {
-            listRenderDisposed = true;
-            lowPriorityRenderQueued = false;
-            registry.cleanup();
-        });
-    }
+    runBindEachDirective(root, ctx, cleanups, options, {
+        qsaIncludingRoot,
+        normalizeBinding,
+        warn,
+        resolve,
+        bind,
+        bindEffect,
+        inheritNestedBindOptions,
+        isSignal,
+        resolveListRenderPriority,
+    });
 }
 // ============================================================================
 // d-if Directive
@@ -2771,106 +2051,15 @@ function bindEach(root, ctx, cleanups, options) {
  * the DOM entirely. A comment node is left as placeholder for insertion position.
  */
 function bindIf(root, ctx, cleanups, transitionRegistry) {
-    const elements = qsaIncludingRoot(root, '[d-if]');
-    const processedElse = new Set();
-    for (const el of elements) {
-        const bindingName = normalizeBinding(el.getAttribute('d-if'));
-        if (!bindingName)
-            continue;
-        const binding = ctx[bindingName];
-        if (binding === undefined) {
-            warn(`d-if: "${bindingName}" not found in context`);
-            continue;
-        }
-        // Detect d-else sibling BEFORE removing from DOM
-        const elseEl = el.nextElementSibling?.hasAttribute('d-else') ? el.nextElementSibling : null;
-        const comment = document.createComment('d-if');
-        el.parentNode?.replaceChild(comment, el);
-        el.removeAttribute('d-if');
-        const htmlEl = el;
-        const transitions = createTransitionController(htmlEl, transitionRegistry, cleanups);
-        // Handle d-else branch
-        let elseHtmlEl = null;
-        let elseComment = null;
-        let elseTransitions = null;
-        if (elseEl) {
-            processedElse.add(elseEl);
-            elseComment = document.createComment('d-else');
-            elseEl.parentNode?.replaceChild(elseComment, elseEl);
-            elseEl.removeAttribute('d-else');
-            elseHtmlEl = elseEl;
-            elseTransitions = createTransitionController(elseHtmlEl, transitionRegistry, cleanups);
-        }
-        // Apply initial state synchronously to avoid FOUC
-        const initialValue = !!resolve(binding);
-        if (initialValue) {
-            comment.parentNode?.insertBefore(htmlEl, comment);
-            syncPortalElement(htmlEl);
-            if (transitions.hasTransition) {
-                htmlEl.removeAttribute('data-leave');
-                htmlEl.setAttribute('data-enter', '');
-            }
-        }
-        else if (elseHtmlEl && elseComment) {
-            elseComment.parentNode?.insertBefore(elseHtmlEl, elseComment);
-            syncPortalElement(elseHtmlEl);
-            if (elseTransitions?.hasTransition) {
-                elseHtmlEl.removeAttribute('data-leave');
-                elseHtmlEl.setAttribute('data-enter', '');
-            }
-        }
-        // Then create reactive effect to keep it updated
-        if (elseHtmlEl && elseComment) {
-            const capturedElseEl = elseHtmlEl;
-            const capturedElseComment = elseComment;
-            bindEffect(htmlEl, () => {
-                const value = !!resolve(binding);
-                if (value) {
-                    if (!htmlEl.parentNode) {
-                        comment.parentNode?.insertBefore(htmlEl, comment);
-                        syncPortalElement(htmlEl);
-                    }
-                    transitions.enter();
-                    elseTransitions?.leave(() => {
-                        if (capturedElseEl.parentNode) {
-                            capturedElseEl.parentNode.removeChild(capturedElseEl);
-                        }
-                    });
-                }
-                else {
-                    transitions.leave(() => {
-                        if (htmlEl.parentNode) {
-                            htmlEl.parentNode.removeChild(htmlEl);
-                        }
-                    });
-                    if (!capturedElseEl.parentNode) {
-                        capturedElseComment.parentNode?.insertBefore(capturedElseEl, capturedElseComment);
-                        syncPortalElement(capturedElseEl);
-                    }
-                    elseTransitions?.enter();
-                }
-            });
-        }
-        else {
-            bindEffect(htmlEl, () => {
-                const value = !!resolve(binding);
-                if (value) {
-                    if (!htmlEl.parentNode) {
-                        comment.parentNode?.insertBefore(htmlEl, comment);
-                        syncPortalElement(htmlEl);
-                    }
-                    transitions.enter();
-                }
-                else {
-                    transitions.leave(() => {
-                        if (htmlEl.parentNode) {
-                            htmlEl.parentNode.removeChild(htmlEl);
-                        }
-                    });
-                }
-            });
-        }
-    }
+    runBindIfDirective(root, ctx, cleanups, transitionRegistry, {
+        qsaIncludingRoot,
+        normalizeBinding,
+        warn,
+        resolve,
+        bindEffect,
+        createTransitionController,
+        syncPortalElement,
+    });
 }
 // ============================================================================
 // d-html Directive

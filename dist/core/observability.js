@@ -1,11 +1,11 @@
-import { FatalEffectError, setDefaultEffectErrorHandler, } from "./signal.js";
+import { setDefaultEffectErrorHandler } from "./signal.js";
 export const SECURITY_RUNTIME_EVENT_NAME = "dalila:security-error";
 const MAX_SECURITY_RUNTIME_EVENTS = 25;
 const SECURITY_MESSAGE_PATTERN = /\b(sanitizehtml|trusted types?|srcdoc|javascript:|data:text\/html|xss|csp)\b/i;
 const securityRuntimeEvents = [];
 let observabilityInstalled = false;
 function isSecurityRuntimeError(error) {
-    return error instanceof FatalEffectError || (error.message.startsWith("[Dalila]")
+    return error.name === "FatalEffectError" || (error.message.startsWith("[Dalila]")
         && SECURITY_MESSAGE_PATTERN.test(error.message));
 }
 function storeSecurityRuntimeEvent(event) {
@@ -23,14 +23,14 @@ function dispatchSecurityRuntimeEvent(event) {
         detail: event,
     }));
 }
-const observabilityEffectErrorHandler = (error, source) => {
+export const observabilityEffectErrorHandler = (error, source) => {
     if (isSecurityRuntimeError(error)) {
         const event = {
             timestamp: new Date().toISOString(),
             source,
             message: error.message,
             name: error.name,
-            fatal: error instanceof FatalEffectError,
+            fatal: error.name === "FatalEffectError",
         };
         storeSecurityRuntimeEvent(event);
         dispatchSecurityRuntimeEvent(event);
@@ -39,6 +39,9 @@ const observabilityEffectErrorHandler = (error, source) => {
     }
     console.error(`[Dalila] Error in ${source}:`, error);
 };
+export function reportObservedEffectError(error, source) {
+    observabilityEffectErrorHandler(error, source);
+}
 export function installDefaultSecurityObservability() {
     if (observabilityInstalled)
         return;
