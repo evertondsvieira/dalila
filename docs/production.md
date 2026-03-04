@@ -60,6 +60,7 @@ Recommended signals to monitor in real apps:
 ## 6. Deployment notes
 
 - Dalila dev server is for local development only
+- The `create-dalila` starter writes a self-contained `dist/` directory (`npm run build`) that can be served directly
 - For production, serve built assets with your standard web server / CDN
 - Ensure CSP and security headers are configured at the app/server level
 - Follow `docs/security-hardening.md` for multi-tenant/high-risk deployments

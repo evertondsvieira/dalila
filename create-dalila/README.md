@@ -30,6 +30,7 @@ Open http://localhost:4242 to see your app.
 
 ```
 my-app/
+├── build.mjs       # Packages a standalone dist/ preview build
 ├── dev.mjs         # Runs route watcher + dev server
 ├── index.html      # App shell
 ├── src/
@@ -48,7 +49,8 @@ my-app/
 - `npm run dev` - Start dev server and route watcher
 - `npm run routes` - Generate route files once
 - `npm run routes:watch` - Watch route files and regenerate outputs
-- `npm run build` - Compile TypeScript
+- `npm run build` - Generate routes, compile TypeScript, and package a standalone `dist/`
+- `npm run preview` - Serve the built `dist/` output locally
 
 ## Learn More
 

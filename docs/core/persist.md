@@ -77,12 +77,12 @@ const user = persist(signal<User | null>(null), { name: 'current-user' });
 
 ### `preload` (optional)
 
-Enable automatic preload script injection to prevent FOUC (Flash of Unstyled Content). The dev-server detects `preload: true` and automatically injects a synchronous script that loads the value before CSS.
+Enable automatic preload script injection to prevent FOUC (Flash of Unstyled Content). The dev server and the generated app build detect `preload: true` and inject a synchronous script that loads the value before CSS.
 
 ```ts
 const theme = persist(signal('dark'), {
   name: 'app-theme',
-  preload: true  // ← Auto-injected by dev-server
+  preload: true  // ← Auto-injected by the dev/build tooling
 });
 ```
 
@@ -186,9 +186,9 @@ session.set({ user: { name: 'Alice' } });
 
 When persisting UI state like themes, you may see a flash before the persisted value loads. Use `preload: true` to prevent this.
 
-### Automatic (Dev Server)
+### Automatic (Dev Server / Starter Build)
 
-The dev-server automatically detects `preload: true` and injects the script.
+The dev server injects preload scripts while developing, and the generated starter build writes the same script into `dist/index.html`.
 
 **1. Add the flag:**
 
@@ -203,20 +203,21 @@ const theme = persist(signal('dark'), {
 
 ```html
 <head>
-  <!-- Preload scripts auto-injected by dev-server -->
+  <!-- Preload scripts auto-injected by dev/build tooling -->
   <link rel="stylesheet" href="styles.css">
 </head>
 ```
 
-**3. See it working:**
+**3. Build or start the app:**
 
 ```bash
-[Preload] Auto-injecting 1 preload script(s): app-theme
-Dalila dev server on http://localhost:4242
+npm run dev
+# or
+npm run build
 ```
 
 **How it works:**
-1. Dev-server scans `.ts` files for `preload: true`
+1. Dev tooling scans `.ts` files for `preload: true`
 2. Generates minimal inline script (~230 bytes)
 3. Injects before CSS to prevent flash
 

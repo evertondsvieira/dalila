@@ -10,17 +10,17 @@ import {
   createTabs, createDropdown, createCombobox,
   createAccordion, createCalendar, createDropzone,
   createPopover, mountUI,
-} from "dalila/ui";
+} from "dalila/components/ui";
 ```
 
 ### Per-component imports (tree-shaking)
 
 ```ts
-import { createDialog } from "dalila/ui/dialog";
-import { createTabs }   from "dalila/ui/tabs";
+import { createDialog } from "dalila/components/ui/dialog";
+import { createTabs }   from "dalila/components/ui/tabs";
 ```
 
-Each component is also available at `dalila/ui/<name>` for minimal bundle size.
+Each component is also available at `dalila/components/ui/<name>` for minimal bundle size.
 
 ---
 
@@ -28,16 +28,16 @@ Each component is also available at `dalila/ui/<name>` for minimal bundle size.
 
 ### Full bundle
 
-```html
-<link rel="stylesheet" href="dalila/ui/dalila.css" />
+```css
+@import "dalila/components/ui/dalila/dalila.css";
 ```
 
 Includes all 35+ component CSS files.
 
 ### Core only (minimal)
 
-```html
-<link rel="stylesheet" href="dalila/ui/dalila-core.css" />
+```css
+@import "dalila/components/ui/dalila-core/dalila-core.css";
 ```
 
 Includes only: tokens, typography, layout, button, input, form.
@@ -45,12 +45,12 @@ Includes only: tokens, typography, layout, button, input, form.
 ### Per-component
 
 ```css
-@import "dalila/ui/tokens.css";
-@import "dalila/ui/button.css";
-@import "dalila/ui/dialog.css";
+@import "dalila/components/ui/tokens/tokens.css";
+@import "dalila/components/ui/button/button.css";
+@import "dalila/components/ui/dialog/dialog.css";
 ```
 
-The wildcard export `dalila/ui/*.css` makes every CSS file individually importable.
+The wildcard export `dalila/components/ui/*/*.css` makes each component stylesheet importable.
 
 ---
 
@@ -506,7 +506,7 @@ Validation uses `console.warn` — it never throws, so it won't break production
 Dalila UI is SSR-safe. All browser API access (`window`, `document`) is guarded:
 
 ```ts
-import { isBrowser } from "dalila/ui/env";
+import { isBrowser } from "dalila/components/ui/env";
 // true in browsers, false in Node/Deno/Bun
 ```
 

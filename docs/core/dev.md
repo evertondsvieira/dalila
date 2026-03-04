@@ -94,7 +94,7 @@ const tempState = signal(0);
 The dev server automatically:
 
 1. **Injects HMR runtime** — handles module replacement
-2. **Preload scripts** — for `persist()` with `preload: true`
+2. **Preload scripts** — for `persist()` with `preload: true` in user projects and examples
 3. **Source maps** — for better debugging
 
 ### Console Output
@@ -102,7 +102,6 @@ The dev server automatically:
 ```
 [Dalila] HMR: Updated component.ts
 [Dalila] HMR: Full reload required for router.ts
-[Preload] Auto-injecting 1 preload script(s): app-theme
 Dalila dev server on http://localhost:4242
 ```
 

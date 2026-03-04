@@ -19,11 +19,15 @@ The format is based on Keep a Changelog, with project-oriented sections:
 - Security/release readiness documentation
 - CI workflow with Node matrix + Playwright browser matrix
 - Example smoke E2E tests
+- Scaffold smoke coverage for generated `create-dalila` apps, including standalone multi-page `dist/` output
 
 ### Changed
 
 - Dev-mode warnings for raw HTML sinks now clarify they are heuristic only
 - Playwright config runs multi-browser matrix in CI
+- `create-dalila` starter now builds a standalone previewable `dist/` output instead of TypeScript-only emit
+- Dev tooling now resolves source roots from `tsconfig` for import-map injection, `@/` aliases, and preload detection
+- UI docs and starter guidance now use the published `dalila/components/ui` entry points
 
 ### Fixed
 
@@ -31,6 +35,9 @@ The format is based on Keep a Changelog, with project-oriented sections:
 - XSRF header leakage to cross-origin requests
 - Inline preload script breakout (`</script>`) handling
 - Dev server malformed URL decode crash (`decodeURIComponent`)
+- Standalone starter packaging for import maps, additional HTML entry points, nested `outDir`, inferred `rootDir`, raw assets, and `/src/*` source rewrites
+- Dev server HMR watching for user projects, including top-level asset folders and recreated directories
+- Firefox UI component E2E timeout caused by waiting on stylesheet-heavy fixture loads
 
 ### Security
 
