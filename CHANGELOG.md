@@ -21,6 +21,7 @@ The format is based on Keep a Changelog, with project-oriented sections:
 - Example smoke E2E tests
 - Scaffold smoke coverage for generated `create-dalila` apps, including standalone multi-page `dist/` output
 - Bundle guardrails for published package contents and generated starter output
+- Raw subtree support with `d-pre` / `d-raw` (attribute and tag forms) that renders nested markup as inert text during `bind()`
 
 ### Changed
 
@@ -30,6 +31,7 @@ The format is based on Keep a Changelog, with project-oriented sections:
 - Dev tooling now resolves source roots from `tsconfig` for import-map injection, `@/` aliases, and preload detection
 - UI docs and starter guidance now use the published `dalila/components/ui` entry points
 - Added granular `dalila/core/*` and `dalila/runtime/*` exports for bundle-sensitive imports
+- `dalila check` now ignores interpolation/directive parsing inside raw blocks (`d-pre`/`d-raw`) while keeping directive validation aligned with runtime behavior
 
 ### Fixed
 

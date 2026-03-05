@@ -19,6 +19,11 @@ It scans:
 - Text interpolations: `{expr}`
 - Directive expressions: `d-*` supported by the checker (events, conditionals, list/virtual list bindings, form directives, etc.)
 
+It ignores expressions inside raw blocks:
+
+- `<pre>...</pre>` / `<code>...</code>`
+- any subtree marked with `d-pre` / `d-raw` (attribute or `<d-pre>` / `<d-raw>` tag)
+
 Security smoke scans project `.html`, `.ts`, and `.js` files under the selected path.
 
 ## Usage

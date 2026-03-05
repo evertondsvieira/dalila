@@ -53,7 +53,8 @@ export interface BindOptions {
   events?: string[];
 
   /**
-   * Selectors for elements where text interpolation should be skipped
+   * Selectors for elements where text interpolation should be skipped.
+   * `d-pre` / `d-raw` subtrees are always skipped regardless of this option.
    */
   rawTextSelectors?: string;
 
@@ -307,6 +308,85 @@ function isWarnAsErrorEnabledForActiveScope(): boolean {
   return false;
 }
 
+const RAW_BLOCK_SELECTORS = '[d-pre], [d-raw], d-pre, d-raw, [data-dalila-raw]';
+const RAW_BLOCK_STYLE_ID = 'dalila-raw-block-default-styles';
+
+function ensureRawBlockDefaultStyles(): void {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(RAW_BLOCK_STYLE_ID)) return;
+
+  const style = document.createElement('style');
+  style.id = RAW_BLOCK_STYLE_ID;
+  style.textContent = `
+[data-dalila-raw] { white-space: pre-wrap; }
+d-pre[data-dalila-raw], d-raw[data-dalila-raw] { display: block; }
+  `.trim();
+
+  if (document.head) {
+    document.head.appendChild(style);
+    return;
+  }
+
+  document.documentElement?.appendChild(style);
+}
+
+function elementDepth(el: Element): number {
+  let depth = 0;
+  let cursor: Element | null = el.parentElement;
+  while (cursor) {
+    depth += 1;
+    cursor = cursor.parentElement;
+  }
+  return depth;
+}
+
+function collectRawBlocks(root: Element): Element[] {
+  const boundary = root.closest('[data-dalila-internal-bound]');
+  const matches: Element[] = [];
+
+  if (root.matches(RAW_BLOCK_SELECTORS)) {
+    matches.push(root);
+  }
+  matches.push(...Array.from(root.querySelectorAll(RAW_BLOCK_SELECTORS)));
+
+  const inScope = matches.filter((el) => {
+    const bound = el.closest('[data-dalila-internal-bound]');
+    return bound === boundary;
+  });
+
+  inScope.sort((a, b) => elementDepth(a) - elementDepth(b));
+
+  const roots: Element[] = [];
+  for (const el of inScope) {
+    if (roots.some((parent) => parent.contains(el))) continue;
+    roots.push(el);
+  }
+
+  return roots;
+}
+
+function materializeRawBlocks(root: Element): void {
+  const rawBlocks = collectRawBlocks(root);
+  if (rawBlocks.length > 0) {
+    ensureRawBlockDefaultStyles();
+  }
+  for (const block of rawBlocks) {
+    if (block.hasAttribute('data-dalila-raw')) continue;
+    const source = block.innerHTML;
+    block.setAttribute('data-dalila-raw', '');
+    block.textContent = source;
+  }
+}
+
+function isInsideRawBlock(
+  el: Element,
+  boundary: Element | null
+): boolean {
+  const rawRoot = el.closest(RAW_BLOCK_SELECTORS);
+  if (!rawRoot) return false;
+  return rawRoot.closest('[data-dalila-internal-bound]') === boundary;
+}
+
 function createBindScanPlan(root: Element): BindScanPlan {
   const boundary = root.closest('[data-dalila-internal-bound]');
   const elements: Element[] = [];
@@ -419,17 +499,27 @@ function resolveSelectorFromIndex(plan: BindScanPlan, selector: string): Element
 }
 
 function qsaFromPlan(plan: BindScanPlan, selector: string): Element[] {
+  const boundary = plan.root.closest('[data-dalila-internal-bound]');
+
   const cacheable = !selector.includes('[');
   if (cacheable) {
     const cached = plan.selectorCache.get(selector);
     if (cached) {
-      return cached.filter(el => el === plan.root || plan.root.contains(el));
+      return cached.filter(
+        (el) =>
+          (el === plan.root || plan.root.contains(el))
+          && !isInsideRawBlock(el, boundary)
+      );
     }
   }
 
   const indexed = resolveSelectorFromIndex(plan, selector);
   const source = indexed ?? plan.elements.filter(el => el.matches(selector));
-  const matches = source.filter(el => el === plan.root || plan.root.contains(el));
+  const matches = source.filter(
+    (el) =>
+      (el === plan.root || plan.root.contains(el))
+      && !isInsideRawBlock(el, boundary)
+  );
 
   if (cacheable) plan.selectorCache.set(selector, matches);
   return matches;
@@ -454,7 +544,8 @@ function qsaIncludingRoot(root: Element, selector: string): Element[] {
 
   return out.filter(el => {
     const bound = el.closest('[data-dalila-internal-bound]');
-    return bound === boundary;
+    if (bound !== boundary) return false;
+    return !isInsideRawBlock(el, boundary);
   });
 }
 
@@ -1947,6 +2038,7 @@ function createInterpolationTemplatePlan(
     const node = walker.currentNode as Text;
     const parent = node.parentElement;
     if (parent && parent.closest(rawTextSelectors)) continue;
+    if (parent && parent.closest(RAW_BLOCK_SELECTORS)) continue;
     if (parent) {
       const bound = parent.closest('[data-dalila-internal-bound]');
       if (bound !== textBoundary) continue;
@@ -4243,6 +4335,9 @@ export function bind<T extends Record<string, unknown> = BindContext>(
     warnAsErrorScopes.add(templateScope);
   }
   linkScopeToDom(templateScope, root, describeBindRoot(root));
+  // Harden raw code-example blocks early so nested markup is rendered as
+  // inert text before any directive/event pass runs.
+  materializeRawBlocks(root);
   const bindScanPlan = createBindScanPlan(root);
   let bindCompleted = false;
   let disposed = false;

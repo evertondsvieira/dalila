@@ -129,6 +129,34 @@ The expression engine parses a safe subset of JavaScript — **no `eval` or `new
 
 **Exception:** Interpolation does not run inside `<pre>` and `<code>` (raw text).
 
+### 4.1 `d-pre` / `d-raw` Raw Subtree
+
+### Syntax
+
+```html
+<section d-pre>
+  <button d-on-click="increment">+</button>
+  <p>{count}</p>
+</section>
+
+<d-pre>
+  <button d-on-click="increment">+</button>
+  <p>{count}</p>
+</d-pre>
+```
+
+### Rules
+
+| Rule | Behavior |
+|------|----------|
+| `d-pre` | Disables Dalila processing for this element and all descendants |
+| `d-raw` | Alias of `d-pre` |
+| Activation | Works as attribute (`<div d-pre>`) or tag (`<d-pre>`) |
+| Directives inside subtree | Ignored (`d-on-*`, `d-when`, `d-text`, etc.) |
+| Interpolation inside subtree | Ignored (`{...}` stays literal text) |
+| Rendering | Subtree is materialized as plain text (`textContent`) during bind |
+| Default style | Runtime applies `white-space: pre-wrap` to raw blocks |
+
 ## 5. `d-when` Directive
 
 ### Syntax

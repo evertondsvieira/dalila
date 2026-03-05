@@ -18,6 +18,7 @@ import { hasExecutableHtmlSinkPattern, setElementInnerHTML } from './html-sinks.
 // ============================================================================
 // Types
 // ============================================================================
+const RAW_BLOCK_SELECTORS = '[d-pre], [d-raw], d-pre, d-raw, [data-dalila-raw]';
 
 export interface ErrorBoundaryOptions {
   /** Template to show when an error occurs */
@@ -149,6 +150,9 @@ export function bindBoundary(
     // Skip stale nodes from the initial snapshot.
     if (!root.contains(el)) continue;
     if (el.closest('[data-dalila-internal-bound]') !== boundary) continue;
+    // Raw blocks are inert by contract: d-* directives must not run inside.
+    const rawRoot = el.closest(RAW_BLOCK_SELECTORS);
+    if (rawRoot && rawRoot.closest('[data-dalila-internal-bound]') === boundary) continue;
 
     for (const nested of Array.from(el.querySelectorAll('[d-boundary]'))) {
       consumedNested.add(nested);

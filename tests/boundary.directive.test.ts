@@ -125,6 +125,41 @@ test('d-boundary mounts initial children synchronously when error is null', asyn
   });
 });
 
+test('d-boundary is skipped on raw-marked hosts (d-pre/d-raw)', async () => {
+  await withDom(async (doc) => {
+    const error = signal<Error | null>(new Error('boom'));
+    const root = el(
+      doc,
+      `
+      <div>
+        <section
+          id="raw-host"
+          d-pre
+          d-boundary="<p class='fallback' data-error-message></p>"
+          d-boundary-error="error"
+        >
+          <button d-on-click="noop">+</button>
+          <p>{count}</p>
+        </section>
+      </div>
+      `
+    );
+
+    const dispose = bind(root, { error, noop: () => {}, count: signal(1) });
+    await tick(20);
+
+    const host = root.querySelector('#raw-host') as HTMLElement;
+    assert.ok(host.hasAttribute('data-dalila-raw'));
+    assert.ok(host.hasAttribute('d-boundary'), 'raw host should not be consumed by boundary directive');
+    assert.equal(root.querySelector('[data-boundary-children]'), null);
+    assert.equal(root.querySelector('[data-boundary-error]'), null);
+    assert.match(host.textContent ?? '', /d-on-click="noop"/);
+    assert.match(host.textContent ?? '', /\{count\}/);
+
+    dispose();
+  });
+});
+
 test('d-boundary fallback is bind-processed and can trigger reset', async () => {
   await withDom(async (doc) => {
     const error = signal(null);

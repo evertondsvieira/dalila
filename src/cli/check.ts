@@ -22,6 +22,16 @@ interface TemplateIdentifier {
   source: string; // 'interpolation' | directive name like 'd-on-click'
 }
 
+interface HtmlRange {
+  start: number;
+  end: number;
+}
+
+const VOID_HTML_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+]);
+
 interface CheckDiagnostic {
   filePath: string;
   line: number;
@@ -479,6 +489,171 @@ function extractRootIdentifiers(expr: string): string[] {
   return result;
 }
 
+function findContainingRange(offset: number, ranges: HtmlRange[]): HtmlRange | null {
+  for (const range of ranges) {
+    if (offset < range.start) break;
+    if (offset >= range.start && offset < range.end) return range;
+  }
+  return null;
+}
+
+function isInsideRange(offset: number, ranges: HtmlRange[]): boolean {
+  return findContainingRange(offset, ranges) !== null;
+}
+
+function hasRawMarkerAttribute(attrs: string): boolean {
+  let i = 0;
+
+  while (i < attrs.length) {
+    while (i < attrs.length && /\s/.test(attrs[i])) i++;
+    if (i >= attrs.length) break;
+
+    if (attrs[i] === '/') {
+      i++;
+      continue;
+    }
+
+    const nameStart = i;
+    while (i < attrs.length && !/[\s=\/]/.test(attrs[i])) i++;
+    if (i === nameStart) {
+      i++;
+      continue;
+    }
+
+    const name = attrs.slice(nameStart, i).toLowerCase();
+    if (name === 'd-pre' || name === 'd-raw') return true;
+
+    while (i < attrs.length && /\s/.test(attrs[i])) i++;
+    if (attrs[i] !== '=') continue;
+
+    i++; // skip '='
+    while (i < attrs.length && /\s/.test(attrs[i])) i++;
+    if (i >= attrs.length) break;
+
+    const quote = attrs[i];
+    if (quote === '"' || quote === "'") {
+      i++;
+      while (i < attrs.length && attrs[i] !== quote) i++;
+      if (i < attrs.length) i++;
+      continue;
+    }
+
+    while (i < attrs.length && !/\s/.test(attrs[i])) i++;
+  }
+
+  return false;
+}
+
+function extractRawTemplateRanges(
+  html: string,
+  options: { includePreCode?: boolean } = {}
+): HtmlRange[] {
+  const ranges: HtmlRange[] = [];
+  const stack: Array<{ tagName: string; isRaw: boolean; start: number }> = [];
+  const lowerHtml = html.toLowerCase();
+  let i = 0;
+
+  while (i < html.length) {
+    // script/style contents are raw text in HTML parsing; ignore any
+    // "<...>" sequences inside them to avoid false tag detection.
+    const scriptLike = stack[stack.length - 1];
+    if (scriptLike && (scriptLike.tagName === 'script' || scriptLike.tagName === 'style')) {
+      const closeNeedle = `</${scriptLike.tagName}`;
+      const closeIndex = lowerHtml.indexOf(closeNeedle, i);
+      if (closeIndex === -1) break;
+      if (closeIndex > i) {
+        i = closeIndex;
+        continue;
+      }
+    }
+
+    if (html[i] !== '<') {
+      i++;
+      continue;
+    }
+
+    let j = i + 1;
+    let inString: '"' | "'" | null = null;
+    let escaped = false;
+    while (j < html.length) {
+      const ch = html[j];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === inString) {
+          inString = null;
+        }
+        j++;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        inString = ch;
+        j++;
+        continue;
+      }
+      if (ch === '>') break;
+      j++;
+    }
+
+    if (j >= html.length) break;
+
+    const fullTag = html.slice(i, j + 1);
+    const inner = html.slice(i + 1, j).trim();
+    const isClosingTag = inner.startsWith('/');
+
+    const normalized = isClosingTag ? inner.slice(1).trim() : inner;
+    const nameMatch = /^([a-zA-Z][\w:-]*)/.exec(normalized);
+    if (!nameMatch) {
+      i = j + 1;
+      continue;
+    }
+
+    const tagName = nameMatch[1].toLowerCase();
+    const attrs = normalized.slice(nameMatch[1].length);
+
+    if (isClosingTag) {
+      for (let stackIdx = stack.length - 1; stackIdx >= 0; stackIdx--) {
+        if (stack[stackIdx].tagName !== tagName) continue;
+        const entry = stack.splice(stackIdx, 1)[0];
+        if (entry.isRaw) {
+          ranges.push({ start: entry.start, end: i + fullTag.length });
+        }
+        break;
+      }
+      i = j + 1;
+      continue;
+    }
+
+    const isRawTag = (options.includePreCode && (tagName === 'pre' || tagName === 'code'))
+      || tagName === 'd-pre'
+      || tagName === 'd-raw'
+      || hasRawMarkerAttribute(attrs);
+
+    const isSelfClosingTag = VOID_HTML_TAGS.has(tagName);
+    if (isSelfClosingTag) {
+      if (isRawTag) {
+        ranges.push({ start: i, end: i + fullTag.length });
+      }
+      i = j + 1;
+      continue;
+    }
+
+    stack.push({ tagName, isRaw: isRawTag, start: i });
+    i = j + 1;
+  }
+
+  for (const entry of stack) {
+    if (entry.isRaw) {
+      ranges.push({ start: entry.start, end: html.length });
+    }
+  }
+
+  ranges.sort((a, b) => a.start - b.start);
+  return ranges;
+}
+
 /**
  * Extract all template identifiers from HTML content.
  *
@@ -486,7 +661,11 @@ function extractRootIdentifiers(expr: string): string[] {
  * 1. Text interpolation `{expr}` — only outside HTML tags
  * 2. Context-binding directives `d-*="value"` — specific set
  */
-function extractTemplateIdentifiers(html: string): TemplateIdentifier[] {
+function extractTemplateIdentifiers(
+  html: string,
+  rawRanges: HtmlRange[] = [],
+  interpolationRawRanges: HtmlRange[] = rawRanges
+): TemplateIdentifier[] {
   const identifiers: TemplateIdentifier[] = [];
   const lines = html.split('\n');
   const lineOffsets: number[] = [];
@@ -513,6 +692,14 @@ function extractTemplateIdentifiers(html: string): TemplateIdentifier[] {
   let tagQuote: '"' | "'" | null = null;
   let i = 0;
   while (i < html.length) {
+    if (!inTag) {
+      const rawRange = findContainingRange(i, interpolationRawRanges);
+      if (rawRange) {
+        i = rawRange.end;
+        continue;
+      }
+    }
+
     const ch = html[i];
     if (!inTag && ch === '<') {
       inTag = true;
@@ -600,6 +787,7 @@ function extractTemplateIdentifiers(html: string): TemplateIdentifier[] {
   DIRECTIVE_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = DIRECTIVE_RE.exec(html))) {
+    if (isInsideRange(match.index, rawRanges)) continue;
     const directive = match[1];
     const value = match[3].trim();
     if (!value) continue;
@@ -626,11 +814,20 @@ interface LoopRange {
   end: number;
 }
 
-function extractLoopRanges(html: string): LoopRange[] {
+function extractLoopRanges(
+  html: string,
+  rawRanges: HtmlRange[] = []
+): LoopRange[] {
   const ranges: LoopRange[] = [];
   const stack: Array<{ tagName: string; isLoop: boolean; start: number }> = [];
   let i = 0;
   while (i < html.length) {
+    const rawRange = findContainingRange(i, rawRanges);
+    if (rawRange) {
+      i = rawRange.end;
+      continue;
+    }
+
     if (html[i] !== '<') {
       i++;
       continue;
@@ -674,7 +871,7 @@ function extractLoopRanges(html: string): LoopRange[] {
       continue;
     }
 
-    const tagName = nameMatch[1];
+    const tagName = nameMatch[1].toLowerCase();
     const attrs = normalized.slice(tagName.length);
     const isSelfClosingTag = !isClosingTag && /\/\s*$/.test(normalized);
 
@@ -806,8 +1003,10 @@ function checkHtmlContent(
   validIdentifiers: Set<string>,
   diagnostics: CheckDiagnostic[]
 ): void {
-  const ids = extractTemplateIdentifiers(html);
-  const loopRanges = extractLoopRanges(html);
+  const rawRanges = extractRawTemplateRanges(html);
+  const interpolationRawRanges = extractRawTemplateRanges(html, { includePreCode: true });
+  const ids = extractTemplateIdentifiers(html, rawRanges, interpolationRawRanges);
+  const loopRanges = extractLoopRanges(html, rawRanges);
 
   for (const id of ids) {
     if (validIdentifiers.has(id.name)) continue;

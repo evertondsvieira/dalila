@@ -639,6 +639,176 @@ test('Check - braces in directive attribute values are not parsed as text interp
   });
 });
 
+// 33. d-pre blocks are ignored by template identifier checks
+test('Check - d-pre ignores interpolation and directives in subtree', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { ok: true }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<div d-pre><button d-on-click="missingHandler">x</button><p>{missingValue}</p></div><p>{ok}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
+  });
+});
+
+// 34. pre/code raw text blocks are ignored by identifier checks
+test('Check - pre/code interpolation is ignored', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { label: 'ok', click: () => {} }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<pre><code><button d-on-click="click">x</button> {alsoMissing}</code></pre><p>{label}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
+  });
+});
+
+// 34b. directives in pre/code must still be validated like runtime bind()
+test('Check - pre/code directives are validated', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { label: 'ok' }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<pre><button d-on-click="missingHandler">x</button></pre><p>{label}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /"missingHandler" is not defined in template context \(d-on-click\)/);
+  });
+});
+
+// 35. d-raw alias blocks are ignored by template identifier checks
+test('Check - d-raw ignores interpolation and directives in subtree', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { ok: true }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<section d-raw><button d-on-click="missingHandler">x</button><p>{missingValue}</p></section><p>{ok}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
+  });
+});
+
+// 36. <d-pre> custom tag blocks are ignored by template identifier checks
+test('Check - <d-pre> tag ignores interpolation and directives in subtree', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { ok: true }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<d-pre><button d-on-click="missingHandler">x</button><p>{missingValue}</p></d-pre><p>{ok}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
+  });
+});
+
+// 37. "d-pre" text inside normal attribute values must not create raw blocks
+test('Check - d-pre token inside quoted attribute value does not suppress diagnostics', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write(
+      'src/app/page.ts',
+      `export async function loader() { return { ok: true }; }`
+    );
+    write(
+      'src/app/page.html',
+      `<div title="example d-pre token"><p>{missingValue}</p></div><p>{ok}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /"missingValue" is not defined in template context \(interpolation\)/);
+  });
+});
+
+// 38. <pre> literals inside script/style text must not create raw ranges
+test('Check - script/style text literals do not suppress later interpolation diagnostics', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.ts', `export async function loader() { return { ok: true }; }`);
+    write(
+      'src/app/page.html',
+      `<script>const tpl = '<pre>demo</pre><d-pre>x</d-pre>';</script><style>.x::before{content:"<pre>";}</style><p>{missingAfterScript}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /"missingAfterScript" is not defined in template context \(interpolation\)/);
+  });
+});
+
+// 39. d-pre marker before "/>" must be parsed as attribute name (not "d-pre/")
+test('Check - d-pre boolean attribute before /> still creates raw range', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.ts', `export async function loader() { return { ok: true }; }`);
+    write(
+      'src/app/page.html',
+      `<div d-pre/><p>{missingInsideRaw}</p><p>{ok}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
+  });
+});
+
+// 40. Non-void raw tags with "/>" are treated as open tags by HTML parser
+test('Check - <d-pre/> and <d-raw/> stay open and suppress diagnostics in following subtree', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.ts', `export async function loader() { return { ok: true }; }`);
+    write(
+      'src/app/page.html',
+      `<d-pre/><p>{missingInsideDPre}</p></d-pre><d-raw/><p>{missingInsideDRaw}</p></d-raw><p>{ok}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 0, `Expected exit 0 but got ${exitCode}. Logs:\n${logs.join('\n')}`);
+  });
+});
+
+// 41. Void elements are self-closing even without "/>" and must not swallow siblings
+test('Check - void tag with d-pre does not suppress diagnostics after the tag', async () => {
+  await withTempProject(async ({ appDir, write, logs }) => {
+    write('src/app/page.ts', `export async function loader() { return { ok: true }; }`);
+    write(
+      'src/app/page.html',
+      `<img d-pre><p>{missingAfterImg}</p><p>{ok}</p>`
+    );
+
+    const exitCode = await runCheck(appDir);
+    assert.equal(exitCode, 1);
+
+    const output = logs.join('\n');
+    assert.match(output, /"missingAfterImg" is not defined in template context \(interpolation\)/);
+  });
+});
+
 test('Security smoke - inline event handlers fail automatically', async () => {
   await withTempProject(async ({ appDir, write, logs }) => {
     write('src/app/page.html', `<button onclick="alert(1)">boom</button>`);

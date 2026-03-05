@@ -103,6 +103,73 @@ function isWarnAsErrorEnabledForActiveScope() {
     }
     return false;
 }
+const RAW_BLOCK_SELECTORS = '[d-pre], [d-raw], d-pre, d-raw, [data-dalila-raw]';
+const RAW_BLOCK_STYLE_ID = 'dalila-raw-block-default-styles';
+function ensureRawBlockDefaultStyles() {
+    if (typeof document === 'undefined')
+        return;
+    if (document.getElementById(RAW_BLOCK_STYLE_ID))
+        return;
+    const style = document.createElement('style');
+    style.id = RAW_BLOCK_STYLE_ID;
+    style.textContent = `
+[data-dalila-raw] { white-space: pre-wrap; }
+d-pre[data-dalila-raw], d-raw[data-dalila-raw] { display: block; }
+  `.trim();
+    if (document.head) {
+        document.head.appendChild(style);
+        return;
+    }
+    document.documentElement?.appendChild(style);
+}
+function elementDepth(el) {
+    let depth = 0;
+    let cursor = el.parentElement;
+    while (cursor) {
+        depth += 1;
+        cursor = cursor.parentElement;
+    }
+    return depth;
+}
+function collectRawBlocks(root) {
+    const boundary = root.closest('[data-dalila-internal-bound]');
+    const matches = [];
+    if (root.matches(RAW_BLOCK_SELECTORS)) {
+        matches.push(root);
+    }
+    matches.push(...Array.from(root.querySelectorAll(RAW_BLOCK_SELECTORS)));
+    const inScope = matches.filter((el) => {
+        const bound = el.closest('[data-dalila-internal-bound]');
+        return bound === boundary;
+    });
+    inScope.sort((a, b) => elementDepth(a) - elementDepth(b));
+    const roots = [];
+    for (const el of inScope) {
+        if (roots.some((parent) => parent.contains(el)))
+            continue;
+        roots.push(el);
+    }
+    return roots;
+}
+function materializeRawBlocks(root) {
+    const rawBlocks = collectRawBlocks(root);
+    if (rawBlocks.length > 0) {
+        ensureRawBlockDefaultStyles();
+    }
+    for (const block of rawBlocks) {
+        if (block.hasAttribute('data-dalila-raw'))
+            continue;
+        const source = block.innerHTML;
+        block.setAttribute('data-dalila-raw', '');
+        block.textContent = source;
+    }
+}
+function isInsideRawBlock(el, boundary) {
+    const rawRoot = el.closest(RAW_BLOCK_SELECTORS);
+    if (!rawRoot)
+        return false;
+    return rawRoot.closest('[data-dalila-internal-bound]') === boundary;
+}
 function createBindScanPlan(root) {
     const boundary = root.closest('[data-dalila-internal-bound]');
     const elements = [];
@@ -208,16 +275,19 @@ function resolveSelectorFromIndex(plan, selector) {
     return null;
 }
 function qsaFromPlan(plan, selector) {
+    const boundary = plan.root.closest('[data-dalila-internal-bound]');
     const cacheable = !selector.includes('[');
     if (cacheable) {
         const cached = plan.selectorCache.get(selector);
         if (cached) {
-            return cached.filter(el => el === plan.root || plan.root.contains(el));
+            return cached.filter((el) => (el === plan.root || plan.root.contains(el))
+                && !isInsideRawBlock(el, boundary));
         }
     }
     const indexed = resolveSelectorFromIndex(plan, selector);
     const source = indexed ?? plan.elements.filter(el => el.matches(selector));
-    const matches = source.filter(el => el === plan.root || plan.root.contains(el));
+    const matches = source.filter((el) => (el === plan.root || plan.root.contains(el))
+        && !isInsideRawBlock(el, boundary));
     if (cacheable)
         plan.selectorCache.set(selector, matches);
     return matches;
@@ -239,7 +309,9 @@ function qsaIncludingRoot(root, selector) {
     const boundary = root.closest('[data-dalila-internal-bound]');
     return out.filter(el => {
         const bound = el.closest('[data-dalila-internal-bound]');
-        return bound === boundary;
+        if (bound !== boundary)
+            return false;
+        return !isInsideRawBlock(el, boundary);
     });
 }
 /**
@@ -1485,6 +1557,8 @@ function createInterpolationTemplatePlan(root, rawTextSelectors) {
         const node = walker.currentNode;
         const parent = node.parentElement;
         if (parent && parent.closest(rawTextSelectors))
+            continue;
+        if (parent && parent.closest(RAW_BLOCK_SELECTORS))
             continue;
         if (parent) {
             const bound = parent.closest('[data-dalila-internal-bound]');
@@ -3381,6 +3455,9 @@ export function bind(root, ctx, options = {}) {
         warnAsErrorScopes.add(templateScope);
     }
     linkScopeToDom(templateScope, root, describeBindRoot(root));
+    // Harden raw code-example blocks early so nested markup is rendered as
+    // inert text before any directive/event pass runs.
+    materializeRawBlocks(root);
     const bindScanPlan = createBindScanPlan(root);
     let bindCompleted = false;
     let disposed = false;

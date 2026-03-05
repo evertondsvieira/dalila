@@ -1415,6 +1415,142 @@ test('text interpolation – member access tracks nested zero-arity getter prope
   });
 });
 
+test('d-pre – skips directives and interpolation inside subtree', async () => {
+  await withDom(async (doc) => {
+    const count = signal(0);
+    const root = el(doc, `
+      <div>
+        <section id="raw-block" d-pre>
+          <button id="raw-btn" d-on-click="inc" onclick="alert(1)">+</button>
+          <p id="raw-text">{count}</p>
+          <a id="raw-link" href="javascript:alert(2)">x</a>
+        </section>
+        <p id="live">{count}</p>
+      </div>
+    `);
+
+    bind(root, {
+      count,
+      inc: () => count.update((n) => n + 1),
+    });
+    await tick(10);
+
+    const live = root.querySelector('#live') as HTMLElement;
+    const rawBlock = root.querySelector('#raw-block') as HTMLElement;
+
+    assert.equal(live.textContent, '0');
+    assert.ok(rawBlock.hasAttribute('data-dalila-raw'));
+    assert.equal(rawBlock.querySelector('button'), null, 'raw subtree must be converted to text');
+    assert.match(rawBlock.textContent ?? '', /d-on-click="inc"/);
+    assert.match(rawBlock.textContent ?? '', /\{count\}/);
+    assert.match(rawBlock.textContent ?? '', /href="javascript:alert\(2\)"/);
+
+    const snapshot = rawBlock.textContent;
+
+    count.set(2);
+    await tick(10);
+    assert.equal(live.textContent, '2');
+    assert.equal(rawBlock.textContent, snapshot, 'raw block must stay frozen');
+  });
+});
+
+test('d-raw – alias for d-pre skip behavior', async () => {
+  await withDom(async (doc) => {
+    const name = signal('Ana');
+    const root = el(doc, `
+      <div>
+        <article id="raw-alias" d-raw>
+          <p id="raw-name">{name}</p>
+          <button id="raw-name-btn" d-on-click="rename">rename</button>
+        </article>
+        <p id="live-name">{name}</p>
+      </div>
+    `);
+
+    bind(root, {
+      name,
+      rename: () => name.set('Bia'),
+    });
+    await tick(10);
+
+    const liveName = root.querySelector('#live-name') as HTMLElement;
+    const rawAlias = root.querySelector('#raw-alias') as HTMLElement;
+
+    assert.equal(liveName.textContent, 'Ana');
+    assert.ok(rawAlias.hasAttribute('data-dalila-raw'));
+    assert.equal(rawAlias.querySelector('#raw-name-btn'), null);
+    assert.match(rawAlias.textContent ?? '', /\{name\}/);
+    assert.match(rawAlias.textContent ?? '', /d-on-click="rename"/);
+  });
+});
+
+test('raw tag syntax – <d-pre> works without d-pre attribute', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, `
+      <div>
+        <d-pre id="raw-tag">
+          <button d-on-click="inc">+</button>
+          <p>{count}</p>
+        </d-pre>
+      </div>
+    `);
+
+    bind(root, {
+      count: signal(1),
+      inc: () => {},
+    });
+    await tick(10);
+
+    const rawTag = root.querySelector('#raw-tag') as HTMLElement;
+    assert.ok(rawTag.hasAttribute('data-dalila-raw'));
+    assert.equal(rawTag.querySelector('button'), null);
+    assert.match(rawTag.textContent ?? '', /d-on-click="inc"/);
+    assert.match(rawTag.textContent ?? '', /\{count\}/);
+    assert.ok(
+      doc.getElementById('dalila-raw-block-default-styles'),
+      'runtime should inject default raw block style helper'
+    );
+  });
+});
+
+test('d-pre – repeated bind on same DOM does not double-escape raw content', async () => {
+  await withDom(async (doc) => {
+    const root = el(doc, `
+      <div>
+        <d-pre id="raw-rebind">
+          <button d-on-click="inc">+</button>
+          <p>{count}</p>
+        </d-pre>
+      </div>
+    `);
+
+    const disposeA = bind(root, {
+      count: signal(1),
+      inc: () => {},
+    });
+    await tick(10);
+
+    const raw = root.querySelector('#raw-rebind') as HTMLElement;
+    const first = raw.innerHTML;
+    assert.match(first, /&lt;button/);
+    assert.doesNotMatch(first, /&amp;lt;/);
+
+    disposeA();
+
+    const disposeB = bind(root, {
+      count: signal(2),
+      inc: () => {},
+    });
+    await tick(10);
+
+    const second = raw.innerHTML;
+    assert.equal(second, first, 'rebind should not escape raw content again');
+    assert.doesNotMatch(second, /&amp;lt;/);
+
+    disposeB();
+  });
+});
+
 test('d-html – signal returning null renders empty innerHTML', async () => {
   await withDom(async (doc) => {
     const content = signal(null);

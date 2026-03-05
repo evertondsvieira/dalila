@@ -53,7 +53,10 @@ interface BindOptions {
   /** Event types to listen for. Default: click, input, change, submit, keydown, keyup */
   events?: string[];
 
-  /** CSS selectors inside which {...} interpolation is skipped. Default: 'pre, code' */
+  /**
+   * CSS selectors inside which {...} interpolation is skipped. Default: 'pre, code'.
+   * `d-pre` / `d-raw` subtrees are always skipped.
+   */
   rawTextSelectors?: string;
 
   /** Runtime cache policy for text interpolation template plans */
@@ -285,6 +288,34 @@ Replaces `{...}` placeholders with expression results from the context.  Multipl
 **Synchronous initial render:** The first render of every expression is synchronous — the text node is populated during `bind()`, before the microtask flush. This prevents a brief empty flash for initial values.
 
 Text inside `<pre>` and `<code>` is skipped by default (configurable via `rawTextSelectors`).
+
+### Raw subtree `d-pre` / `d-raw`
+
+Marks an element subtree as raw template text for Dalila.
+
+Inside this block:
+- `d-*` directives are not bound
+- `{...}` interpolation is not evaluated
+
+```html
+<section d-pre>
+  <button d-on-click="increment">+</button>
+  <p>{count}</p>
+</section>
+
+<d-pre>
+  <button d-on-click="increment">+</button>
+  <p>{count}</p>
+</d-pre>
+```
+
+On bind, Dalila converts the subtree content into plain text (`textContent`), so
+markup inside the block is rendered as a code snippet (not live DOM).  
+`d-raw` is an alias with the same behavior (both as attribute and tag).
+Dalila also applies a default raw-block style (`white-space: pre-wrap`) so line breaks are preserved without extra CSS.
+
+Security note: this hardening happens during `bind()`. Avoid placing executable
+`<script>` tags in static HTML files used as raw examples.
 
 ### Safe text binding `d-text`
 

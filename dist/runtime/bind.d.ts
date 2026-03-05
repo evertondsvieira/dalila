@@ -15,7 +15,8 @@ export interface BindOptions {
      */
     events?: string[];
     /**
-     * Selectors for elements where text interpolation should be skipped
+     * Selectors for elements where text interpolation should be skipped.
+     * `d-pre` / `d-raw` subtrees are always skipped regardless of this option.
      */
     rawTextSelectors?: string;
     /**
