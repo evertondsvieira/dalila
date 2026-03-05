@@ -35,6 +35,8 @@
 @import "../table/table.css";
 @import "../pagination/pagination.css";
 @import "../breadcrumb/breadcrumb.css";
+@import "../nav-bar/nav-bar.css";
+@import "../side-bar/side-bar.css";
 @import "../separator/separator.css";
 @import "../skeleton/skeleton.css";
 @import "../spinner/spinner.css";

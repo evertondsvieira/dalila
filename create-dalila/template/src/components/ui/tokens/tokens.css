@@ -115,6 +115,7 @@
 
   --d-surface-page: var(--d-bg);
   --d-surface-card: var(--d-bg-card);
+  --d-surface: var(--d-surface-card);
   --d-surface-raised: var(--d-bg-elevated);
   --d-surface-overlay: rgba(0, 0, 0, 0.4);
 

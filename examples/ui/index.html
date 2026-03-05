@@ -886,6 +886,132 @@
   </section>
 
   <!-- ============================================ -->
+  <!-- NAV BAR + SIDE BAR -->
+  <!-- ============================================ -->
+  <section>
+    <h2>Nav Bar + Side Bar</h2>
+    <p>Navigation shell with collapsible side menu sections.</p>
+
+    <div style="display: grid; gap: var(--d-space-4);">
+      <d-nav-bar>
+        <d-nav-brand href="#">Dalila Admin</d-nav-brand>
+        <d-nav-links>
+          <d-nav-link href="#" aria-current="page">Dashboard</d-nav-link>
+          <d-nav-link href="#">Projects</d-nav-link>
+          <d-nav-link href="#">Team</d-nav-link>
+          <d-nav-link href="#">Settings</d-nav-link>
+        </d-nav-links>
+      </d-nav-bar>
+
+      <div class="showcase-side-nav-layout">
+        <div class="d-side-bar-shell">
+          <d-side-bar d-attr-class="sidebarShellClass">
+            <d-side-bar-inner>
+              <d-side-bar-top>
+                <d-side-bar-brand href="#">
+                  <d-side-bar-logo>&#128048;</d-side-bar-logo>
+                  <d-side-bar-meta>
+                    <d-side-bar-name>Acme Inc</d-side-bar-name>
+                    <d-side-bar-subtitle>Enterprise</d-side-bar-subtitle>
+                  </d-side-bar-meta>
+                </d-side-bar-brand>
+              </d-side-bar-top>
+
+              <d-side-bar-header>Main Navigation</d-side-bar-header>
+              <d-side-bar-sections>
+                <d-side-bar-section open>
+                  <d-side-bar-title>Workspace</d-side-bar-title>
+                  <d-side-bar-links>
+                    <d-side-bar-link href="#" aria-current="page">
+                      <span class="d-side-bar-link-icon">&#128204;</span>
+                      <span class="d-side-bar-link-label">Overview</span>
+                    </d-side-bar-link>
+                    <d-side-bar-link href="#">
+                      <span class="d-side-bar-link-icon">&#128506;</span>
+                      <span class="d-side-bar-link-label">Roadmap</span>
+                    </d-side-bar-link>
+                    <d-side-bar-link href="#">
+                      <span class="d-side-bar-link-icon">&#128202;</span>
+                      <span class="d-side-bar-link-label">Analytics</span>
+                    </d-side-bar-link>
+                  </d-side-bar-links>
+                </d-side-bar-section>
+
+                <d-side-bar-section>
+                  <d-side-bar-title>Projects</d-side-bar-title>
+                  <d-side-bar-links>
+                    <d-side-bar-link href="#">
+                      <span class="d-side-bar-link-icon">&#128241;</span>
+                      <span class="d-side-bar-link-label">Mobile App</span>
+                    </d-side-bar-link>
+                    <d-side-bar-link href="#">
+                      <span class="d-side-bar-link-icon">&#127912;</span>
+                      <span class="d-side-bar-link-label">Design System</span>
+                    </d-side-bar-link>
+                    <d-side-bar-link href="#">
+                      <span class="d-side-bar-link-icon">&#127760;</span>
+                      <span class="d-side-bar-link-label">Landing Page</span>
+                    </d-side-bar-link>
+                  </d-side-bar-links>
+                </d-side-bar-section>
+
+                <d-side-bar-section>
+                  <d-side-bar-title>Support</d-side-bar-title>
+                  <d-side-bar-links>
+                    <d-side-bar-link href="#">
+                      <span class="d-side-bar-link-icon">&#128218;</span>
+                      <span class="d-side-bar-link-label">Docs</span>
+                    </d-side-bar-link>
+                    <d-side-bar-link href="#">
+                      <span class="d-side-bar-link-icon">&#9881;</span>
+                      <span class="d-side-bar-link-label">Settings</span>
+                    </d-side-bar-link>
+                  </d-side-bar-links>
+                </d-side-bar-section>
+              </d-side-bar-sections>
+            </d-side-bar-inner>
+          </d-side-bar>
+
+          <div class="d-side-bar-rail">
+            <button
+              d-attr-class="sidebarToggleClass"
+              type="button"
+              d-on-click="onSidebarToggle"
+              d-attr-aria-expanded="sidebarExpanded"
+              d-attr-aria-label="sidebarToggleLabel"
+              d-attr-title="sidebarToggleLabel">
+              <svg class="d-side-bar-toggle-icon d-side-bar-toggle-icon-collapse" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                <path d="M9 4v16"></path>
+                <path d="m16 15-3-3 3-3"></path>
+              </svg>
+              <svg class="d-side-bar-toggle-icon d-side-bar-toggle-icon-expand" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                <path d="M9 4v16"></path>
+                <path d="m14 9 3 3-3 3"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <d-card style="width: 100%;">
+          <d-card-header>
+            <d-card-title>Content Area</d-card-title>
+            <d-card-description>
+              Use the side menu titles to open and close each section.
+            </d-card-description>
+          </d-card-header>
+          <d-card-body>
+            <d-text tone="muted">
+              This block represents the main page content next to the sidebar.
+            </d-text>
+          </d-card-body>
+        </d-card>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
   <!-- SEPARATOR -->
   <!-- ============================================ -->
   <section>

@@ -55,6 +55,13 @@ section > p {
   margin-bottom: var(--d-space-4);
 }
 
+.showcase-side-nav-layout {
+  display: grid;
+  gap: var(--d-space-5);
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+}
+
 .theme-toggle {
   position: fixed;
   top: var(--d-space-4);
@@ -167,4 +174,14 @@ code {
   font-size: var(--d-text-sm);
   color: var(--d-text-secondary);
   margin: 0;
+}
+
+@media (max-width: 840px) {
+  body {
+    padding: var(--d-space-8) var(--d-space-4);
+  }
+
+  .showcase-side-nav-layout {
+    grid-template-columns: 1fr;
+  }
 }

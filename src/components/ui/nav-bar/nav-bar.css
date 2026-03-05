@@ -1,0 +1,75 @@
+/* Dalila UI — Nav Bar */
+
+.d-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--d-space-4);
+  width: 100%;
+  padding: var(--d-space-3) var(--d-space-4);
+  border: 1px solid var(--d-border-color);
+  border-radius: var(--d-radius-lg);
+  background: var(--d-surface);
+}
+
+.d-nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--d-space-2);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-base);
+  font-weight: var(--d-font-semibold);
+  color: var(--d-text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.d-nav-links {
+  display: flex;
+  align-items: center;
+  gap: var(--d-space-1);
+  flex-wrap: wrap;
+}
+
+.d-nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: var(--d-space-1) var(--d-space-3);
+  border-radius: var(--d-radius-md);
+  font-family: var(--d-font-sans);
+  font-size: var(--d-text-sm);
+  font-weight: var(--d-font-medium);
+  color: var(--d-text-secondary);
+  text-decoration: none;
+  transition:
+    background var(--d-duration-fast) var(--d-ease),
+    color var(--d-duration-fast) var(--d-ease);
+}
+
+.d-nav-link:hover {
+  color: var(--d-text-primary);
+  background: var(--d-surface-raised);
+}
+
+.d-nav-link[aria-current="page"],
+.d-nav-link.active {
+  color: #fff;
+  background: var(--d-accent);
+}
+
+@media (max-width: 640px) {
+  .d-nav-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .d-nav-links {
+    width: 100%;
+  }
+
+  .d-nav-link {
+    flex: 1 1 auto;
+  }
+}

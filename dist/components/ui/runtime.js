@@ -30,6 +30,12 @@ const TAG_ALIASES = {
     "d-table-wrapper": "div", "d-table": "table",
     "d-pagination": "nav", "d-page": "button", "d-page-ellipsis": "span",
     "d-breadcrumb": "ol", "d-breadcrumb-item": "li",
+    "d-nav-bar": "nav", "d-nav-brand": "a", "d-nav-links": "div", "d-nav-link": "a",
+    "d-side-bar": "aside", "d-side-bar-header": "div", "d-side-bar-sections": "div",
+    "d-side-bar-inner": "div", "d-side-bar-footer": "div", "d-side-bar-avatar": "span",
+    "d-side-bar-top": "div", "d-side-bar-brand": "a", "d-side-bar-logo": "span", "d-side-bar-meta": "div",
+    "d-side-bar-name": "span", "d-side-bar-subtitle": "span", "d-side-bar-toggle": "button",
+    "d-side-bar-section": "details", "d-side-bar-title": "summary", "d-side-bar-links": "div", "d-side-bar-link": "a",
     "d-separator": "hr", "d-separator-label": "div",
     "d-skeleton": "div", "d-loading": "div", "d-spinner": "span",
     "d-empty": "div", "d-empty-icon": "div", "d-empty-title": "h3", "d-empty-text": "p",
@@ -72,6 +78,12 @@ const TAG_DEFAULT_CLASS = {
     "d-table-wrapper": "d-table-wrapper", "d-table": "d-table",
     "d-pagination": "d-pagination", "d-page": "d-page", "d-page-ellipsis": "d-page-ellipsis",
     "d-breadcrumb": "d-breadcrumb", "d-breadcrumb-item": "d-breadcrumb-item",
+    "d-nav-bar": "d-nav-bar", "d-nav-brand": "d-nav-brand", "d-nav-links": "d-nav-links", "d-nav-link": "d-nav-link",
+    "d-side-bar": "d-side-bar", "d-side-bar-header": "d-side-bar-header", "d-side-bar-sections": "d-side-bar-sections",
+    "d-side-bar-inner": "d-side-bar-inner", "d-side-bar-footer": "d-side-bar-footer", "d-side-bar-avatar": "d-side-bar-avatar",
+    "d-side-bar-top": "d-side-bar-top", "d-side-bar-brand": "d-side-bar-brand", "d-side-bar-logo": "d-side-bar-logo", "d-side-bar-meta": "d-side-bar-meta",
+    "d-side-bar-name": "d-side-bar-name", "d-side-bar-subtitle": "d-side-bar-subtitle", "d-side-bar-toggle": "d-side-bar-toggle",
+    "d-side-bar-section": "d-side-bar-section", "d-side-bar-title": "d-side-bar-title", "d-side-bar-links": "d-side-bar-links", "d-side-bar-link": "d-side-bar-link",
     "d-separator": "d-separator", "d-separator-label": "d-separator-label",
     "d-skeleton": "d-skeleton", "d-loading": "d-loading", "d-spinner": "d-spinner",
     "d-empty": "d-empty", "d-empty-icon": "d-empty-icon", "d-empty-title": "d-empty-title", "d-empty-text": "d-empty-text",
@@ -125,6 +137,7 @@ const TAG_UPGRADE_RULES = {
     "d-calendar-nav": { defaultType: "button" },
     "d-calendar-day": { defaultType: "button" },
     "d-combobox-input": { defaultType: "text" },
+    "d-side-bar-toggle": { defaultType: "button" },
 };
 // ── Tag upgrade engine ──────────────────────────────────────────────
 function upgradeDalilaTags(root) {
