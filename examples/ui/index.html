@@ -904,8 +904,41 @@
       </d-nav-bar>
 
       <div class="showcase-side-nav-layout">
-        <div class="d-side-bar-shell">
-          <d-side-bar d-attr-class="sidebarShellClass">
+        <div class="showcase-side-nav-mobile-bar">
+          <div class="showcase-side-nav-mobile-meta">
+            <span class="showcase-side-nav-mobile-kicker">Navigation</span>
+            <span class="showcase-side-nav-mobile-brand">Dalila Admin</span>
+          </div>
+
+          <d-side-bar-toggle
+            d-attr-class="sidebarMobileToggleClass"
+            type="button"
+            aria-controls="showcase-sidebar"
+            d-on-click="onSidebarToggle"
+            d-attr-aria-expanded="sidebarMobileExpanded"
+            d-attr-aria-label="sidebarMobileToggleLabel"
+            d-attr-title="sidebarMobileToggleLabel">
+            <svg class="d-side-bar-toggle-icon d-side-bar-mobile-icon-menu" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16"></path>
+              <path d="M4 12h16"></path>
+              <path d="M4 17h16"></path>
+            </svg>
+            <svg class="d-side-bar-toggle-icon d-side-bar-mobile-icon-close" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6 18 18"></path>
+              <path d="M18 6 6 18"></path>
+            </svg>
+          </d-side-bar-toggle>
+        </div>
+
+        <div class="d-side-bar-shell d-side-bar-mobile-shell">
+          <button
+            d-attr-class="sidebarBackdropClass"
+            type="button"
+            d-on-click="closeSidebarMobileMenu"
+            aria-label="Fechar menu lateral">
+          </button>
+
+          <d-side-bar id="showcase-sidebar" d-attr-class="sidebarClass" d-on-click="onSidebarNavClick">
             <d-side-bar-inner>
               <d-side-bar-top>
                 <d-side-bar-brand href="#">
@@ -976,6 +1009,7 @@
             <button
               d-attr-class="sidebarToggleClass"
               type="button"
+              aria-controls="showcase-sidebar"
               d-on-click="onSidebarToggle"
               d-attr-aria-expanded="sidebarExpanded"
               d-attr-aria-label="sidebarToggleLabel"
