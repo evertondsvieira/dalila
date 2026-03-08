@@ -23,9 +23,15 @@ interface TrustedTypesLike {
 
 const TRUSTED_POLICY_CACHE_KEY = Symbol.for('dalila.runtime.trustedTypesPolicies');
 const TRUSTED_POLICY_PARSE_SUFFIX = '--dalila-parse';
-const EXECUTABLE_HTML_SCRIPT_PATTERN = /<script[\s/>]/i;
 const EXECUTABLE_HTML_EVENT_ATTR_PATTERN = /<[^>]+\son[a-z0-9:_-]+\s*=/i;
-const EXECUTABLE_HTML_URL_ATTR_PATTERN = /<[^>]+\s(?:href|src|xlink:href|formaction|action|poster)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+const EXECUTABLE_HTML_URL_ATTR_NAMES = new Set([
+  'href',
+  'src',
+  'xlink:href',
+  'formaction',
+  'action',
+  'poster',
+]);
 const EXECUTABLE_DATA_URL_PATTERN = /^data:(?:text\/html|application\/xhtml\+xml|image\/svg\+xml)\b/i;
 
 function getTrustedPolicyCache(): Map<string, TrustedTypesHtmlPolicy> {
@@ -48,16 +54,209 @@ function normalizeHtmlUrlAttrValue(value: string): string {
   return value.replace(/[\u0000-\u0020\u007f]+/g, '').toLowerCase();
 }
 
-function hasExecutableHtmlUrlAttribute(value: string): boolean {
-  EXECUTABLE_HTML_URL_ATTR_PATTERN.lastIndex = 0;
+function isHtmlWhitespaceCode(code: number): boolean {
+  return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d;
+}
 
-  let match: RegExpExecArray | null = null;
-  while ((match = EXECUTABLE_HTML_URL_ATTR_PATTERN.exec(value)) !== null) {
-    const attrValue = match[1] ?? match[2] ?? match[3] ?? '';
-    const normalized = normalizeHtmlUrlAttrValue(attrValue);
-    if (!normalized) continue;
-    if (normalized.startsWith('javascript:')) return true;
-    if (EXECUTABLE_DATA_URL_PATTERN.test(normalized)) return true;
+function isHtmlAttributeNameChar(code: number): boolean {
+  return !Number.isNaN(code)
+    && code !== 0x20
+    && code !== 0x09
+    && code !== 0x0a
+    && code !== 0x0c
+    && code !== 0x0d
+    && code !== 0x22
+    && code !== 0x27
+    && code !== 0x2f
+    && code !== 0x3c
+    && code !== 0x3d
+    && code !== 0x3e
+    && code !== 0x60;
+}
+
+function isTagBoundaryChar(char: string | undefined): boolean {
+  return !char || /[\s/>]/.test(char);
+}
+
+function getPreviousNonWhitespaceChar(
+  value: string,
+  end: number,
+  start = 0
+): string | undefined {
+  for (let index = end - 1; index >= start; index -= 1) {
+    if (!isHtmlWhitespaceCode(value.charCodeAt(index))) {
+      return value[index];
+    }
+  }
+
+  return undefined;
+}
+
+function isHtmlTagStartChar(char: string | undefined): boolean {
+  return !!char && /[A-Za-z/!?]/.test(char);
+}
+
+function findTagLikeStart(
+  value: string,
+  start: number,
+  end = value.length
+): number {
+  let index = value.indexOf('<', start);
+
+  while (index !== -1 && index < end) {
+    if (isHtmlTagStartChar(value[index + 1])) {
+      return index;
+    }
+    index = value.indexOf('<', index + 1);
+  }
+
+  return -1;
+}
+
+function hasExecutableHtmlScriptTag(value: string): boolean {
+  const lower = value.toLowerCase();
+  let searchIndex = 0;
+
+  while (searchIndex < lower.length) {
+    const index = lower.indexOf('<script', searchIndex);
+    if (index === -1) return false;
+    if (isTagBoundaryChar(lower[index + 7])) {
+      return true;
+    }
+    searchIndex = index + 7;
+  }
+
+  return false;
+}
+
+function hasExecutableProtocol(value: string): boolean {
+  return value.startsWith('javascript:')
+    || value.startsWith('vbscript:')
+    || EXECUTABLE_DATA_URL_PATTERN.test(value);
+}
+
+function hasExecutableHtmlUrlAttribute(value: string): boolean {
+  let index = 0;
+
+  while (index < value.length) {
+    const tagStart = value.indexOf('<', index);
+    if (tagStart === -1) return false;
+
+    let cursor = tagStart + 1;
+    const firstCode = value.charCodeAt(cursor);
+    if (
+      Number.isNaN(firstCode)
+      || value[cursor] === '/'
+      || value[cursor] === '!'
+      || value[cursor] === '?'
+    ) {
+      index = cursor;
+      continue;
+    }
+
+    while (cursor < value.length && !isHtmlWhitespaceCode(value.charCodeAt(cursor)) && value[cursor] !== '>') {
+      cursor += 1;
+    }
+
+    while (cursor < value.length && value[cursor] !== '>') {
+      while (cursor < value.length && isHtmlWhitespaceCode(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+
+      if (cursor >= value.length || value[cursor] === '>') {
+        break;
+      }
+
+      if (value[cursor] === '/') {
+        cursor += 1;
+        continue;
+      }
+
+      const nameStart = cursor;
+      while (cursor < value.length && isHtmlAttributeNameChar(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+      if (cursor === nameStart) {
+        cursor += 1;
+        continue;
+      }
+
+      const attrName = value.slice(nameStart, cursor).toLowerCase();
+
+      while (cursor < value.length && isHtmlWhitespaceCode(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+
+      if (value[cursor] !== '=') {
+        continue;
+      }
+      cursor += 1;
+
+      while (cursor < value.length && isHtmlWhitespaceCode(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+
+      if (cursor >= value.length) {
+        break;
+      }
+
+      let attrValue = '';
+      let recoveryTagIndex = -1;
+      let unterminatedQuotedValue = false;
+      const quote = value[cursor];
+      if (quote === '"' || quote === '\'') {
+        cursor += 1;
+        const valueStart = cursor;
+        const closingQuoteIndex = value.indexOf(quote, valueStart);
+        const quotedValueEnd = closingQuoteIndex === -1 ? value.length : closingQuoteIndex;
+        recoveryTagIndex = findTagLikeStart(value, valueStart, quotedValueEnd);
+
+        if (closingQuoteIndex === -1) {
+          unterminatedQuotedValue = true;
+          const valueEnd = recoveryTagIndex === -1 ? value.length : recoveryTagIndex;
+          attrValue = value.slice(valueStart, valueEnd);
+        } else {
+          const hasSuspiciousQuotedRestart = recoveryTagIndex !== -1
+            && getPreviousNonWhitespaceChar(value, closingQuoteIndex, valueStart) === '=';
+
+          if (hasSuspiciousQuotedRestart) {
+            unterminatedQuotedValue = true;
+            attrValue = value.slice(valueStart, recoveryTagIndex);
+          } else {
+            cursor = closingQuoteIndex;
+            attrValue = value.slice(valueStart, cursor);
+            cursor += 1;
+          }
+        }
+      } else {
+        const valueStart = cursor;
+        while (
+          cursor < value.length
+          && !isHtmlWhitespaceCode(value.charCodeAt(cursor))
+          && value[cursor] !== '>'
+        ) {
+          cursor += 1;
+        }
+        attrValue = value.slice(valueStart, cursor);
+      }
+
+      if (EXECUTABLE_HTML_URL_ATTR_NAMES.has(attrName)) {
+        const normalized = normalizeHtmlUrlAttrValue(attrValue);
+        if (normalized && hasExecutableProtocol(normalized)) {
+          return true;
+        }
+      }
+
+      if (unterminatedQuotedValue && recoveryTagIndex !== -1) {
+        return hasExecutableHtmlUrlAttribute(value.slice(recoveryTagIndex));
+      }
+
+      if (unterminatedQuotedValue) {
+        return false;
+      }
+    }
+
+    index = cursor + 1;
   }
 
   return false;
@@ -65,7 +264,7 @@ function hasExecutableHtmlUrlAttribute(value: string): boolean {
 
 export function hasExecutableHtmlSinkPattern(value: string): boolean {
   if (!value) return false;
-  return EXECUTABLE_HTML_SCRIPT_PATTERN.test(value)
+  return hasExecutableHtmlScriptTag(value)
     || EXECUTABLE_HTML_EVENT_ATTR_PATTERN.test(value)
     || hasExecutableHtmlUrlAttribute(value);
 }

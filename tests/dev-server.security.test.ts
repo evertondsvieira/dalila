@@ -63,7 +63,18 @@ test('dev-server: preload script escapes </script> breakout sequences', () => {
   );
 
   assert.equal(script.includes('</script>'), false);
-  assert.ok(script.includes('\\x3C'));
+  assert.ok(script.includes('\\u003C') || script.includes('\\x3C'));
+});
+
+test('dev-server: import map script escapes inline script breakout sequences', () => {
+  const script = devServer.createImportMapScript(
+    `/node_modules/dalila/dist</script><script>alert(1)</script>`,
+    `/src/</script><img src=x onerror=alert(1)>/`
+  );
+
+  assert.equal(script.includes('</script><script>alert(1)</script>'), false);
+  assert.equal(script.includes('</script><img src=x onerror=alert(1)>'), false);
+  assert.ok(script.includes('\\u003C'));
 });
 
 test('dev-server: --dist resolves to the built dist root', () => {
@@ -235,6 +246,46 @@ test('dev-server: merges dalila entries into an existing import map without drop
   assert.match(result.script, /"dompurify"\s*:\s*"\/node_modules\/dompurify\/dist\/purify\.es\.mjs"/);
   assert.match(result.script, /"dalila"\s*:\s*"\/node_modules\/dalila\/dist\/index\.js"/);
   assert.match(result.script, /"dalila\/runtime\/bind"\s*:\s*"\/node_modules\/dalila\/dist\/runtime\/bind\.js"/);
+});
+
+test('dev-server: malformed script attributes do not hang import map merging', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '  <script " type="importmap">',
+    '    {"imports":{"dompurify":"/node_modules/dompurify/dist/purify.es.mjs"}}',
+    '  </script>',
+    '</head>',
+    '<body></body>',
+    '</html>',
+  ].join('\n');
+
+  const result = devServer.mergeImportMapIntoHtml(html, '/node_modules/dalila/dist');
+
+  assert.equal(result.merged, false);
+  assert.equal(result.html, html);
+});
+
+test('dev-server: later valid import maps are still found after a malformed script opener', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '  <script foo="></script>',
+    '  <script type="importmap">',
+    '    {"imports":{"dompurify":"/node_modules/dompurify/dist/purify.es.mjs"}}',
+    '  </script>',
+    '</head>',
+    '<body></body>',
+    '</html>',
+  ].join('\n');
+
+  const result = devServer.mergeImportMapIntoHtml(html, '/node_modules/dalila/dist');
+
+  assert.equal(result.merged, true);
+  assert.equal((result.html.match(/type="importmap"/g) || []).length, 0);
+  assert.match(result.script, /"dompurify"\s*:\s*"\/node_modules\/dompurify\/dist\/purify\.es\.mjs"/);
 });
 
 test('dev-server: top-level asset directories outside src remain recursively watched', () => {

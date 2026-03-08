@@ -622,7 +622,39 @@ test('createPreloadScript: escapes inline script breakout sequences', async () =
   });
 
   assert.equal(script.includes('</script>'), false, 'Should not contain literal </script>');
-  assert.ok(script.includes('\\x3C/script\\x3E') || script.includes('\\x3C'), 'Should escape < characters');
+  assert.ok(
+    script.includes('\\u003C\\u002Fscript\\u003E')
+      || script.includes('\\u003C')
+      || script.includes('\\x3C'),
+    'Should escape < characters'
+  );
+});
+
+test('createPreloadScript: preserves literal bang in --!> sequences', async () => {
+  const { createPreloadScript } = await import('../dist/core/persist.js');
+
+  const script = createPreloadScript({
+    storageKey: 'theme--!>key',
+    defaultValue: 'light--!>mode',
+    attribute: 'data-theme--!>attr',
+  });
+
+  assert.equal(script.includes('--\\u003E'), false);
+  assert.equal(script.includes('--!\\u003E'), true);
+});
+
+test('createPreloadScript: preserves JSON escapes in serialized values', async () => {
+  const { createPreloadScript } = await import('../dist/core/persist.js');
+
+  const script = createPreloadScript({
+    storageKey: 'theme\\path',
+    defaultValue: 'line1\nline2',
+    attribute: 'data\\theme',
+  });
+
+  assert.equal(script.includes('theme\\\\path'), true);
+  assert.equal(script.includes('line1\\nline2'), true);
+  assert.equal(script.includes('data\\\\theme'), true);
 });
 
 test('preload script: executes without errors', async () => {

@@ -76,6 +76,15 @@ function el(doc: Document, html: string): HTMLElement {
   return root as HTMLElement;
 }
 
+function removeElementsFromHtml(html: string, selector: string): string {
+  const doc = globalThis.document?.implementation?.createHTMLDocument('sanitize')
+    ?? new JSDOM('<!doctype html><html><body></body></html>').window.document;
+  const wrapper = doc.createElement('div');
+  wrapper.innerHTML = html;
+  wrapper.querySelectorAll(selector).forEach((node) => node.remove());
+  return wrapper.innerHTML;
+}
+
 /** Run fn, collect every console.warn call, return the array of messages. */
 async function captureWarns(fn: () => void | Promise<void>): Promise<string[]> {
   const warns: string[] = [];
@@ -2262,7 +2271,7 @@ test('fromHtml – propagates local sanitizeHtml for strict d-html bindings', as
   await withDom(async () => {
     const root = fromHtml('<section><div d-html="content"></div></section>', {
       data: { content: '<img src=x onerror=alert(1)><b>ok</b>' },
-      sanitizeHtml: (html) => html.replace(/<img[^>]*>/gi, ''),
+      sanitizeHtml: (html) => removeElementsFromHtml(html, 'img'),
       security: { strict: true },
     });
     await tick(10);
@@ -2645,7 +2654,7 @@ test('d-html – uses sanitizeHtml override when provided', async () => {
     const root = el(doc, '<div d-html="content"></div>');
 
     bind(root, { content }, {
-      sanitizeHtml: (html) => html.replace(/<img[^>]*>/gi, ''),
+      sanitizeHtml: (html) => removeElementsFromHtml(html, 'img'),
     });
     await tick(10);
 
@@ -2661,7 +2670,7 @@ test('d-html – custom sanitizeHtml runs before warnAsError heuristic checks', 
 
     const scheduledFatalThrows = await captureZeroDelayTimeouts(async () => {
       bind(root, { content }, {
-        sanitizeHtml: (html) => html.replace(/<script[\s\S]*?<\/script>/gi, ''),
+        sanitizeHtml: (html) => removeElementsFromHtml(html, 'script'),
         security: { warnAsError: true },
       });
       await tick(20);
@@ -2727,7 +2736,7 @@ test('d-html – sanitizeHtml is propagated to d-each clone bindings', async () 
     const root = el(doc, '<div d-each="items" d-html="item"></div>');
 
     bind(root, { items }, {
-      sanitizeHtml: (html) => html.replace(/<img[^>]*>/gi, ''),
+      sanitizeHtml: (html) => removeElementsFromHtml(html, 'img'),
     });
     await tick(10);
 
@@ -2812,7 +2821,7 @@ test('runtime defaults – use DOMPurify automatically when available', async ()
     (globalThis as any).DOMPurify = {
       sanitize: (html: string, options: Record<string, unknown>) => {
         calls.push(options);
-        return html.replace(/<img[^>]*>/gi, '');
+        return removeElementsFromHtml(html, 'img');
       },
     };
 

@@ -597,11 +597,27 @@ export interface PreloadScriptOptions {
 }
 
 function escapeInlineScriptContent(script: string): string {
-  return script
-    .replace(/</g, '\\x3C')
-    .replace(/-->/g, '--\\x3E')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
+  return script.replace(
+    /--!>|-->|[<>\u2028\u2029]/g,
+    (match) => {
+      switch (match) {
+        case '--!>':
+          return '--!\\u003E';
+        case '-->':
+          return '--\\u003E';
+        case '<':
+          return '\\u003C';
+        case '>':
+          return '\\u003E';
+        case '\u2028':
+          return '\\u2028';
+        case '\u2029':
+          return '\\u2029';
+        default:
+          return match;
+      }
+    }
+  );
 }
 
 /**

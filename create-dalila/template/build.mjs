@@ -38,6 +38,319 @@ const STATIC_FILE_EXCLUDES = new Set([
   'dev.mjs',
 ]);
 
+function escapeInlineScriptContent(script) {
+  return script.replace(/--!>|-->|[<>\u2028\u2029]/g, (match) => {
+    switch (match) {
+      case '--!>':
+        return '--!\\u003E';
+      case '-->':
+        return '--\\u003E';
+      case '<':
+        return '\\u003C';
+      case '>':
+        return '\\u003E';
+      case '\u2028':
+        return '\\u2028';
+      case '\u2029':
+        return '\\u2029';
+      default:
+        return match;
+    }
+  });
+}
+
+function stringifyInlineScriptPayload(value, indent = 0) {
+  const json = escapeInlineScriptContent(JSON.stringify(value, null, 2));
+  if (indent <= 0) {
+    return json;
+  }
+
+  const padding = ' '.repeat(indent);
+  return json
+    .split('\n')
+    .map((line) => `${padding}${line}`)
+    .join('\n');
+}
+
+function normalizePreloadStorageType(storageType) {
+  return storageType === 'sessionStorage' ? 'sessionStorage' : 'localStorage';
+}
+
+function isHtmlWhitespaceChar(char) {
+  return char === ' ' || char === '\n' || char === '\r' || char === '\t' || char === '\f';
+}
+
+function isHtmlTagBoundary(char) {
+  return !char || isHtmlWhitespaceChar(char) || char === '>' || char === '/';
+}
+
+function findHtmlTagEnd(html, startIndex) {
+  let quote = null;
+
+  for (let index = startIndex; index < html.length; index += 1) {
+    const char = html[index];
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === '\'') {
+      quote = char;
+      continue;
+    }
+
+    if (char === '>') {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function findScriptCloseTagStart(lower, searchIndex) {
+  let index = lower.indexOf('</script', searchIndex);
+
+  while (index !== -1) {
+    if (isHtmlTagBoundary(lower[index + 8])) {
+      return index;
+    }
+    index = lower.indexOf('</script', index + 8);
+  }
+
+  return -1;
+}
+
+function getHtmlAttributeValue(attributesSource, attributeName) {
+  const name = attributeName.toLowerCase();
+  let index = 0;
+
+  while (index < attributesSource.length) {
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (index >= attributesSource.length) {
+      return null;
+    }
+
+    if (attributesSource[index] === '/') {
+      index += 1;
+      continue;
+    }
+
+    const nameStart = index;
+    while (
+      index < attributesSource.length
+      && !isHtmlWhitespaceChar(attributesSource[index])
+      && !['=', '>', '"', '\'', '`'].includes(attributesSource[index])
+    ) {
+      index += 1;
+    }
+    if (index === nameStart) {
+      index += 1;
+      continue;
+    }
+
+    const currentName = attributesSource.slice(nameStart, index).toLowerCase();
+
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (attributesSource[index] !== '=') {
+      continue;
+    }
+    index += 1;
+
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (index >= attributesSource.length) {
+      return currentName === name ? '' : null;
+    }
+
+    let value = '';
+    const quote = attributesSource[index];
+    if (quote === '"' || quote === '\'') {
+      index += 1;
+      const valueStart = index;
+      while (index < attributesSource.length && attributesSource[index] !== quote) {
+        index += 1;
+      }
+      value = attributesSource.slice(valueStart, index);
+      if (index < attributesSource.length) {
+        index += 1;
+      }
+    } else {
+      const valueStart = index;
+      while (
+        index < attributesSource.length
+        && !isHtmlWhitespaceChar(attributesSource[index])
+        && attributesSource[index] !== '>'
+      ) {
+        index += 1;
+      }
+      value = attributesSource.slice(valueStart, index);
+    }
+
+    if (currentName === name) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function replaceHtmlAttributeValue(attributesSource, attributeName, nextValue) {
+  const name = attributeName.toLowerCase();
+  let index = 0;
+
+  while (index < attributesSource.length) {
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (index >= attributesSource.length) {
+      return null;
+    }
+
+    if (attributesSource[index] === '/') {
+      index += 1;
+      continue;
+    }
+
+    const nameStart = index;
+    while (
+      index < attributesSource.length
+      && !isHtmlWhitespaceChar(attributesSource[index])
+      && !['=', '>', '"', '\'', '`'].includes(attributesSource[index])
+    ) {
+      index += 1;
+    }
+    if (index === nameStart) {
+      index += 1;
+      continue;
+    }
+
+    const currentName = attributesSource.slice(nameStart, index).toLowerCase();
+
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (attributesSource[index] !== '=') {
+      continue;
+    }
+    index += 1;
+
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    const valueStart = index;
+    if (index >= attributesSource.length) {
+      return currentName === name
+        ? `${attributesSource.slice(0, valueStart)}"${nextValue}"`
+        : null;
+    }
+
+    let valueEnd = index;
+    const quote = attributesSource[index];
+    if (quote === '"' || quote === '\'') {
+      index += 1;
+      while (index < attributesSource.length && attributesSource[index] !== quote) {
+        index += 1;
+      }
+      valueEnd = index < attributesSource.length ? index + 1 : index;
+      if (index < attributesSource.length) {
+        index += 1;
+      }
+    } else {
+      while (
+        index < attributesSource.length
+        && !isHtmlWhitespaceChar(attributesSource[index])
+        && attributesSource[index] !== '>'
+      ) {
+        index += 1;
+      }
+      valueEnd = index;
+    }
+
+    if (currentName === name) {
+      return `${attributesSource.slice(0, valueStart)}"${nextValue}"${attributesSource.slice(valueEnd)}`;
+    }
+  }
+
+  return null;
+}
+
+function forEachHtmlScriptElement(html, visitor) {
+  const lower = html.toLowerCase();
+  let searchIndex = 0;
+
+  while (searchIndex < html.length) {
+    const openStart = lower.indexOf('<script', searchIndex);
+    if (openStart === -1) {
+      return;
+    }
+    if (!isHtmlTagBoundary(lower[openStart + 7])) {
+      searchIndex = openStart + 7;
+      continue;
+    }
+
+    const openEnd = findHtmlTagEnd(html, openStart);
+    if (openEnd === -1) {
+      searchIndex = openStart + 7;
+      continue;
+    }
+
+    const closeStart = findScriptCloseTagStart(lower, openEnd + 1);
+    if (closeStart === -1) {
+      searchIndex = openStart + 7;
+      continue;
+    }
+
+    const closeEnd = findHtmlTagEnd(html, closeStart);
+    if (closeEnd === -1) {
+      searchIndex = closeStart + 8;
+      continue;
+    }
+
+    const element = {
+      attributesSource: html.slice(openStart + 7, openEnd),
+      content: html.slice(openEnd + 1, closeStart),
+      fullMatch: html.slice(openStart, closeEnd + 1),
+      start: openStart,
+      end: closeEnd + 1,
+    };
+
+    if (visitor(element) === false) {
+      return;
+    }
+
+    searchIndex = closeEnd + 1;
+  }
+}
+
+function findFirstHtmlScriptElementByType(html, type) {
+  let found = null;
+
+  forEachHtmlScriptElement(html, (element) => {
+    const scriptType = getHtmlAttributeValue(element.attributesSource, 'type');
+    if ((scriptType ?? '').toLowerCase() !== type) {
+      return true;
+    }
+
+    found = element;
+    return false;
+  });
+
+  return found;
+}
+
 function resolvePackageModule(moduleName, projectDir) {
   try {
     return require.resolve(moduleName, { paths: [projectDir] });
@@ -110,15 +423,16 @@ export function detectPreloadScripts(baseDir) {
 }
 
 export function generatePreloadScript(name, defaultValue, storageType = 'localStorage') {
-  const k = JSON.stringify(name);
-  const d = JSON.stringify(defaultValue);
-  const script = `(function(){try{var v=${storageType}.getItem(${k});document.documentElement.setAttribute('data-theme',v?JSON.parse(v):${d})}catch(e){document.documentElement.setAttribute('data-theme',${d})}})();`;
+  const safeStorageType = normalizePreloadStorageType(storageType);
+  const payload = JSON.stringify({
+    key: name,
+    defaultValue,
+    storageType: safeStorageType,
+  });
+  const fallbackValue = JSON.stringify(defaultValue);
+  const script = `(function(){try{var p=${payload};var s=window[p.storageType];var v=s.getItem(p.key);document.documentElement.setAttribute('data-theme',v==null?p.defaultValue:JSON.parse(v))}catch(e){document.documentElement.setAttribute('data-theme',${fallbackValue})}})();`;
 
-  return script
-    .replace(/</g, '\\x3C')
-    .replace(/-->/g, '--\\x3E')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
+  return escapeInlineScriptContent(script);
 }
 
 function renderPreloadScriptTags(baseDir) {
@@ -630,9 +944,8 @@ function packageExistingImportMapScopes(projectDir, vendorDir, scopes, buildConf
 }
 
 function extractImportMap(html) {
-  const importMapPattern = /<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i;
-  const match = html.match(importMapPattern);
-  if (!match) {
+  const importMapElement = findFirstHtmlScriptElementByType(html, 'importmap');
+  if (!importMapElement) {
     return {
       html,
       importMap: { imports: {} },
@@ -641,7 +954,7 @@ function extractImportMap(html) {
 
   let importMap = { imports: {} };
   try {
-    const parsed = JSON.parse(match[1]);
+    const parsed = JSON.parse(importMapElement.content);
     if (parsed && typeof parsed === 'object') {
       importMap = parsed;
     }
@@ -650,16 +963,13 @@ function extractImportMap(html) {
   }
 
   return {
-    html: html.replace(match[0], '').trimEnd() + '\n',
+    html: `${html.slice(0, importMapElement.start)}${html.slice(importMapElement.end)}`.trimEnd() + '\n',
     importMap,
   };
 }
 
-function renderImportMapScript(importMap) {
-  const payload = JSON.stringify(importMap, null, 2)
-    .split('\n')
-    .map(line => `    ${line}`)
-    .join('\n');
+export function renderImportMapScript(importMap) {
+  const payload = stringifyInlineScriptPayload(importMap, 4);
 
   return `  <script type="importmap">\n${payload}\n  </script>`;
 }
@@ -1347,12 +1657,12 @@ function collectHtmlModuleEntries(html, htmlUrl, ts) {
   let hasUnresolvedDynamicImport = false;
   let hasUnresolvedRuntimeUrl = false;
 
-  html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (fullMatch, attrs, content) => {
-    const typeMatch = attrs.match(/\btype=["']([^"']+)["']/i);
-    const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
-    if (!typeMatch || typeMatch[1] !== 'module') {
-      if (srcMatch) {
-        const classicScriptUrl = resolveSpecifierToPackagedUrl(srcMatch[1], htmlUrl, { imports: {}, scopes: {} });
+  forEachHtmlScriptElement(html, ({ attributesSource, content }) => {
+    const type = getHtmlAttributeValue(attributesSource, 'type');
+    const src = getHtmlAttributeValue(attributesSource, 'src');
+    if ((type ?? '').toLowerCase() !== 'module') {
+      if (src) {
+        const classicScriptUrl = resolveSpecifierToPackagedUrl(src, htmlUrl, { imports: {}, scopes: {} });
         if (classicScriptUrl && isJavaScriptModuleUrl(classicScriptUrl)) {
           classicScriptUrls.add(classicScriptUrl);
         }
@@ -1374,15 +1684,15 @@ function collectHtmlModuleEntries(html, htmlUrl, ts) {
           hasUnresolvedRuntimeUrl = true;
         }
       }
-      return fullMatch;
+      return;
     }
 
-    if (srcMatch) {
-      const entryModuleUrl = resolveSpecifierToPackagedUrl(srcMatch[1], htmlUrl, { imports: {}, scopes: {} });
+    if (src) {
+      const entryModuleUrl = resolveSpecifierToPackagedUrl(src, htmlUrl, { imports: {}, scopes: {} });
       if (entryModuleUrl) {
         entryModuleUrls.add(entryModuleUrl);
       }
-      return fullMatch;
+      return;
     }
 
     const collectedSpecifiers = collectModuleSpecifierKinds(content, ts);
@@ -1404,8 +1714,6 @@ function collectHtmlModuleEntries(html, htmlUrl, ts) {
     if (collectedSpecifiers.hasUnresolvedRuntimeUrl) {
       hasUnresolvedRuntimeUrl = true;
     }
-
-    return fullMatch;
   });
 
   return {
@@ -1762,29 +2070,51 @@ function rewritePackagedModuleSpecifiers(buildConfig) {
 }
 
 function rewriteHtmlModuleScripts(html, buildConfig, baseDirAbs = buildConfig.projectDir) {
-  return html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (fullMatch, attrs, content) => {
-    const typeMatch = attrs.match(/\btype=["']([^"']+)["']/i);
-    if (!typeMatch || typeMatch[1] !== 'module') {
-      return fullMatch;
+  let rewrittenHtml = '';
+  let lastIndex = 0;
+
+  forEachHtmlScriptElement(html, (element) => {
+    rewrittenHtml += html.slice(lastIndex, element.start);
+    lastIndex = element.end;
+
+    const type = getHtmlAttributeValue(element.attributesSource, 'type');
+    if ((type ?? '').toLowerCase() !== 'module') {
+      rewrittenHtml += element.fullMatch;
+      return;
     }
 
-    const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
-    if (srcMatch) {
-      const rewrittenSrc = rewriteLocalSourceTarget(srcMatch[1], buildConfig, baseDirAbs);
+    const src = getHtmlAttributeValue(element.attributesSource, 'src');
+    if (src) {
+      const rewrittenSrc = rewriteLocalSourceTarget(src, buildConfig, baseDirAbs);
       if (!rewrittenSrc) {
-        return fullMatch;
+        rewrittenHtml += element.fullMatch;
+        return;
       }
 
-      return fullMatch.replace(srcMatch[0], `src="${rewrittenSrc}"`);
+      const rewrittenAttributesSource = replaceHtmlAttributeValue(element.attributesSource, 'src', rewrittenSrc);
+      if (rewrittenAttributesSource != null) {
+        rewrittenHtml += `<script${rewrittenAttributesSource}>${element.content}</script>`;
+        return;
+      }
+
+      rewrittenHtml += element.fullMatch;
+      return;
     }
 
-    const rewrittenContent = rewriteInlineModuleSpecifiers(content, buildConfig, baseDirAbs);
-    if (rewrittenContent === content) {
-      return fullMatch;
+    const rewrittenContent = rewriteInlineModuleSpecifiers(element.content, buildConfig, baseDirAbs);
+    if (rewrittenContent === element.content) {
+      rewrittenHtml += element.fullMatch;
+      return;
     }
 
-    return `<script${attrs}>${rewrittenContent}</script>`;
+    rewrittenHtml += `<script${element.attributesSource}>${rewrittenContent}</script>`;
   });
+
+  if (lastIndex === 0) {
+    return html;
+  }
+
+  return `${rewrittenHtml}${html.slice(lastIndex)}`;
 }
 
 function buildHtmlDocument(html, importEntries, buildConfig, modulePreloadUrls = []) {

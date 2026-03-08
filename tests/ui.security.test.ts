@@ -24,6 +24,58 @@ function setupDOM() {
 describe('mountUI security propagation', () => {
   beforeEach(setupDOM);
 
+  it('runtime HTML sink detection does not hang on malformed attribute starters', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(hasExecutableHtmlSinkPattern('<img " src="javascript:alert(1)">'), true);
+    assert.equal(hasExecutableHtmlSinkPattern('<div "></div>'), false);
+  });
+
+  it('runtime HTML sink detection recovers after unterminated quoted attributes', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(
+      hasExecutableHtmlSinkPattern('<div foo="></div><img src="javascript:alert(1)">'),
+      true
+    );
+  });
+
+  it('runtime HTML sink detection keeps quoted URLs executable when they contain <', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(
+      hasExecutableHtmlSinkPattern('<a href="javascript:alert(1)//<">x</a>'),
+      true
+    );
+  });
+
+  it('runtime HTML sink detection keeps quoted URLs executable when they contain tag-like < text', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(
+      hasExecutableHtmlSinkPattern('<a href="javascript:alert(1)//<img">x</a>'),
+      true
+    );
+  });
+
+  it('runtime HTML sink detection ignores tag-like text inside safely quoted URLs', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(
+      hasExecutableHtmlSinkPattern('<a href="https://example.com/?q=<img src=javascript:alert(1)>">x</a>'),
+      false
+    );
+  });
+
+  it('runtime HTML sink detection continues scanning after comment-like text in quoted attrs', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(
+      hasExecutableHtmlSinkPattern('<img title="<!--" src="javascript:alert(1)">'),
+      true
+    );
+  });
+
   it('propagates strict security to runtime bindings and blocks dangerous URLs', async () => {
     const { mountUI } = await import('../dist/components/ui/runtime.js');
     const { signal } = await import('../dist/core/signal.js');

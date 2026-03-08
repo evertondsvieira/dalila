@@ -422,6 +422,24 @@ test('create-dalila build packaging rewrites dev-style js source urls and inline
   });
 });
 
+test('create-dalila template escapes inline import map payloads', async () => {
+  const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
+  const { renderImportMapScript } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);
+
+  const script = renderImportMapScript({
+    imports: {
+      unsafe: '/</script><script>alert(1)</script>.js',
+    },
+  });
+
+  assert.equal(script.includes('</script><script>alert(1)</script>'), false);
+  const importMapMatch = script.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
+  assert.ok(importMapMatch);
+
+  const importMap = JSON.parse(importMapMatch[1]);
+  assert.equal(importMap.imports.unsafe, '/</script><script>alert(1)</script>.js');
+});
+
 test('create-dalila build packaging preserves @/ alias and preload for custom rootDir', async () => {
   const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
   const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);

@@ -27,6 +27,7 @@ function resolveServerConfig(argv = process.argv.slice(2), cwd = process.cwd()) 
 const serverConfig = resolveServerConfig();
 const projectDir = serverConfig.projectDir;
 const rootDir = serverConfig.rootDir;
+const rootDirAbs = fs.existsSync(rootDir) ? fs.realpathSync(rootDir) : path.resolve(rootDir);
 const distMode = serverConfig.distMode;
 const isDalilaRepo = serverConfig.isDalilaRepo;
 const defaultEntry = serverConfig.defaultEntry;
@@ -107,6 +108,313 @@ function send(res, status, body, headers = {}) {
   res.end(body);
 }
 
+const FORBIDDEN_PATH_ERROR_CODE = 'DALILA_FORBIDDEN_PATH';
+
+function createForbiddenPathError() {
+  const error = new Error('Forbidden');
+  error.code = FORBIDDEN_PATH_ERROR_CODE;
+  return error;
+}
+
+function isPathInsideRoot(candidatePath) {
+  const normalizedPath = path.resolve(candidatePath);
+  const relativePath = path.relative(rootDirAbs, normalizedPath);
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function normalizeServedPath(candidatePath) {
+  if (typeof candidatePath !== 'string' || candidatePath.length === 0) {
+    return null;
+  }
+
+  const normalizedPath = path.resolve(candidatePath);
+  return isPathInsideRoot(normalizedPath) ? normalizedPath : null;
+}
+
+function statServedPath(targetPath) {
+  const safePath = normalizeServedPath(targetPath);
+  if (!safePath) {
+    throw createForbiddenPathError();
+  }
+
+  return {
+    safePath,
+    stat: fs.statSync(safePath),
+  };
+}
+
+function existsServedPath(targetPath) {
+  const safePath = normalizeServedPath(targetPath);
+  return safePath ? fs.existsSync(safePath) : false;
+}
+
+function readServedFile(targetPath, encoding, callback) {
+  const safePath = normalizeServedPath(targetPath);
+  if (!safePath) {
+    queueMicrotask(() => callback(createForbiddenPathError()));
+    return;
+  }
+
+  fs.readFile(safePath, encoding, callback);
+}
+
+function replaceServedPathExtension(targetPath, fromExtension, toExtension) {
+  const safePath = normalizeServedPath(targetPath);
+  if (!safePath || !safePath.endsWith(fromExtension)) {
+    return null;
+  }
+
+  return normalizeServedPath(`${safePath.slice(0, -fromExtension.length)}${toExtension}`);
+}
+
+function appendServedPathExtension(targetPath, extension) {
+  const safePath = normalizeServedPath(targetPath);
+  if (!safePath) {
+    return null;
+  }
+
+  return normalizeServedPath(`${safePath}${extension}`);
+}
+
+function joinServedPath(targetPath, childPath) {
+  const safePath = normalizeServedPath(targetPath);
+  if (!safePath) {
+    return null;
+  }
+
+  return normalizeServedPath(path.join(safePath, childPath));
+}
+
+function escapeInlineScriptContent(script) {
+  return script.replace(/--!>|-->|[<>\u2028\u2029]/g, (match) => {
+    switch (match) {
+      case '--!>':
+        return '--!\\u003E';
+      case '-->':
+        return '--\\u003E';
+      case '<':
+        return '\\u003C';
+      case '>':
+        return '\\u003E';
+      case '\u2028':
+        return '\\u2028';
+      case '\u2029':
+        return '\\u2029';
+      default:
+        return match;
+    }
+  });
+}
+
+function stringifyInlineScriptPayload(value, indent = 0) {
+  const json = escapeInlineScriptContent(JSON.stringify(value, null, 2));
+  if (indent <= 0) {
+    return json;
+  }
+
+  const padding = ' '.repeat(indent);
+  return json
+    .split('\n')
+    .map((line) => `${padding}${line}`)
+    .join('\n');
+}
+
+function normalizePreloadStorageType(storageType) {
+  return storageType === 'sessionStorage' ? 'sessionStorage' : 'localStorage';
+}
+
+function isHtmlWhitespaceChar(char) {
+  return char === ' ' || char === '\n' || char === '\r' || char === '\t' || char === '\f';
+}
+
+function isHtmlTagBoundary(char) {
+  return !char || isHtmlWhitespaceChar(char) || char === '>' || char === '/';
+}
+
+function findHtmlTagEnd(html, startIndex) {
+  let quote = null;
+
+  for (let index = startIndex; index < html.length; index += 1) {
+    const char = html[index];
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === '\'') {
+      quote = char;
+      continue;
+    }
+
+    if (char === '>') {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function findScriptCloseTagStart(lower, searchIndex) {
+  let index = lower.indexOf('</script', searchIndex);
+
+  while (index !== -1) {
+    if (isHtmlTagBoundary(lower[index + 8])) {
+      return index;
+    }
+    index = lower.indexOf('</script', index + 8);
+  }
+
+  return -1;
+}
+
+function getHtmlAttributeValue(attributesSource, attributeName) {
+  const name = attributeName.toLowerCase();
+  let index = 0;
+
+  while (index < attributesSource.length) {
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (index >= attributesSource.length) {
+      return null;
+    }
+
+    if (attributesSource[index] === '/') {
+      index += 1;
+      continue;
+    }
+
+    const nameStart = index;
+    while (
+      index < attributesSource.length
+      && !isHtmlWhitespaceChar(attributesSource[index])
+      && !['=', '>', '"', '\'', '`'].includes(attributesSource[index])
+    ) {
+      index += 1;
+    }
+    if (index === nameStart) {
+      index += 1;
+      continue;
+    }
+
+    const currentName = attributesSource.slice(nameStart, index).toLowerCase();
+
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (attributesSource[index] !== '=') {
+      continue;
+    }
+    index += 1;
+
+    while (index < attributesSource.length && isHtmlWhitespaceChar(attributesSource[index])) {
+      index += 1;
+    }
+
+    if (index >= attributesSource.length) {
+      return currentName === name ? '' : null;
+    }
+
+    let value = '';
+    const quote = attributesSource[index];
+    if (quote === '"' || quote === '\'') {
+      index += 1;
+      const valueStart = index;
+      while (index < attributesSource.length && attributesSource[index] !== quote) {
+        index += 1;
+      }
+      value = attributesSource.slice(valueStart, index);
+      if (index < attributesSource.length) {
+        index += 1;
+      }
+    } else {
+      const valueStart = index;
+      while (
+        index < attributesSource.length
+        && !isHtmlWhitespaceChar(attributesSource[index])
+        && attributesSource[index] !== '>'
+      ) {
+        index += 1;
+      }
+      value = attributesSource.slice(valueStart, index);
+    }
+
+    if (currentName === name) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function forEachHtmlScriptElement(html, visitor) {
+  const lower = html.toLowerCase();
+  let searchIndex = 0;
+
+  while (searchIndex < html.length) {
+    const openStart = lower.indexOf('<script', searchIndex);
+    if (openStart === -1) {
+      return;
+    }
+    if (!isHtmlTagBoundary(lower[openStart + 7])) {
+      searchIndex = openStart + 7;
+      continue;
+    }
+
+    const openEnd = findHtmlTagEnd(html, openStart);
+    if (openEnd === -1) {
+      searchIndex = openStart + 7;
+      continue;
+    }
+
+    const closeStart = findScriptCloseTagStart(lower, openEnd + 1);
+    if (closeStart === -1) {
+      searchIndex = openStart + 7;
+      continue;
+    }
+
+    const closeEnd = findHtmlTagEnd(html, closeStart);
+    if (closeEnd === -1) {
+      searchIndex = closeStart + 8;
+      continue;
+    }
+
+    const element = {
+      attributesSource: html.slice(openStart + 7, openEnd),
+      content: html.slice(openEnd + 1, closeStart),
+      fullMatch: html.slice(openStart, closeEnd + 1),
+      start: openStart,
+      end: closeEnd + 1,
+    };
+
+    if (visitor(element) === false) {
+      return;
+    }
+
+    searchIndex = closeEnd + 1;
+  }
+}
+
+function findFirstHtmlScriptElementByType(html, type) {
+  let found = null;
+
+  forEachHtmlScriptElement(html, (element) => {
+    const scriptType = getHtmlAttributeValue(element.attributesSource, 'type');
+    if ((scriptType ?? '').toLowerCase() !== type) {
+      return true;
+    }
+
+    found = element;
+    return false;
+  });
+
+  return found;
+}
+
 /**
  * Secure path resolution:
  * - Strip leading slashes to treat URL as relative
@@ -126,18 +434,8 @@ function resolvePath(urlPath) {
   const relativePath = decoded.replace(/^\/+/, '').replace(/\\/g, '/');
 
   // Resolve to absolute path
-  const fsPath = path.resolve(rootDir, relativePath);
-
-  // Normalize for comparison (handles .., ., etc.)
-  const normalizedPath = path.normalize(fsPath);
-
-  // Security check: must be within rootDir
-  // Use startsWith with path.sep to prevent /root matching /rootkit
-  if (!normalizedPath.startsWith(rootDir + path.sep) && normalizedPath !== rootDir) {
-    return null;
-  }
-
-  return normalizedPath;
+  const fsPath = path.resolve(rootDirAbs, relativePath);
+  return normalizeServedPath(fsPath);
 }
 
 function safeDecodeUrlPath(url) {
@@ -327,18 +625,17 @@ function createImportMapEntries(dalilaPath, sourceDirPath = '/src/') {
 }
 
 function createImportMapScript(dalilaPath, sourceDirPath = '/src/') {
-  const payload = JSON.stringify({ imports: createImportMapEntries(dalilaPath, sourceDirPath) }, null, 2)
-    .split('\n')
-    .map(line => `    ${line}`)
-    .join('\n');
+  const payload = stringifyInlineScriptPayload(
+    { imports: createImportMapEntries(dalilaPath, sourceDirPath) },
+    4
+  );
 
   return `  <script type="importmap">\n${payload}\n  </script>`;
 }
 
 function mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath = '/src/') {
-  const importMapPattern = /<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/i;
-  const match = html.match(importMapPattern);
-  if (!match) {
+  const importMapElement = findFirstHtmlScriptElementByType(html, 'importmap');
+  if (!importMapElement) {
     return {
       html,
       merged: false,
@@ -346,7 +643,7 @@ function mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath = '/src/') {
     };
   }
 
-  const existingPayload = match[1]?.trim() || '{}';
+  const existingPayload = importMapElement.content.trim() || '{}';
   let importMap;
   try {
     importMap = JSON.parse(existingPayload);
@@ -368,14 +665,11 @@ function mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath = '/src/') {
       ...existingImports,
     },
   };
-  const payload = JSON.stringify(mergedImportMap, null, 2)
-    .split('\n')
-    .map(line => `    ${line}`)
-    .join('\n');
+  const payload = stringifyInlineScriptPayload(mergedImportMap, 4);
   const script = `  <script type="importmap">\n${payload}\n  </script>`;
 
   return {
-    html: html.replace(importMapPattern, ''),
+    html: `${html.slice(0, importMapElement.start)}${html.slice(importMapElement.end)}`,
     merged: true,
     script,
   };
@@ -468,14 +762,15 @@ function findTypeScriptFiles(dir, files = []) {
  * Generate inline preload script
  */
 function generatePreloadScript(name, defaultValue, storageType = 'localStorage') {
-  const k = JSON.stringify(name);
-  const d = JSON.stringify(defaultValue);
-  const script = `(function(){try{var v=${storageType}.getItem(${k});document.documentElement.setAttribute('data-theme',v?JSON.parse(v):${d})}catch(e){document.documentElement.setAttribute('data-theme',${d})}})();`;
-  return script
-    .replace(/</g, '\\x3C')
-    .replace(/-->/g, '--\\x3E')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
+  const safeStorageType = normalizePreloadStorageType(storageType);
+  const payload = JSON.stringify({
+    key: name,
+    defaultValue,
+    storageType: safeStorageType,
+  });
+  const fallbackValue = JSON.stringify(defaultValue);
+  const script = `(function(){try{var p=${payload};var s=window[p.storageType];var v=s.getItem(p.key);document.documentElement.setAttribute('data-theme',v==null?p.defaultValue:JSON.parse(v))}catch(e){document.documentElement.setAttribute('data-theme',${fallbackValue})}})();`;
+  return escapeInlineScriptContent(script);
 }
 
 function renderPreloadScriptTags(baseDir) {
@@ -578,8 +873,8 @@ function addLoadingAttributes(html) {
 // ============================================================================
 // Binding Injection (for HTML files that need runtime bindings)
 // ============================================================================
-function injectBindings(html, requestPath) {
-  const normalizedPath = normalizeHtmlRequestPath(requestPath);
+function injectBindings(html, options = {}) {
+  const isPlaygroundPage = options.isPlaygroundPage === true;
   // Different paths for dalila repo vs user projects
   const dalilaPath = isDalilaRepo ? '/dist' : '/node_modules/dalila/dist';
   const sourceDirPath = buildProjectSourceDirPath(projectDir);
@@ -760,7 +1055,7 @@ function injectBindings(html, requestPath) {
   }
 
   // Dalila repo: only inject import map for non-playground pages
-  if (normalizedPath !== '/examples/playground/index.html') {
+  if (!isPlaygroundPage) {
     return injectHeadFragments(html, [importMap], {
       beforeModule: true,
       beforeStyles: true,
@@ -1004,7 +1299,9 @@ const server = http.createServer((req, res) => {
 
   let targetPath = fsPath;
   try {
-    const stat = fs.statSync(targetPath);
+    const target = statServedPath(targetPath);
+    targetPath = target.safePath;
+    const stat = target.stat;
     if (stat.isDirectory()) {
       // Redirect directory URLs without trailing slash to include it
       if (!requestPath.endsWith('/')) {
@@ -1012,13 +1309,23 @@ const server = http.createServer((req, res) => {
         res.end();
         return;
       }
-      targetPath = path.join(targetPath, 'index.html');
+      const indexPath = joinServedPath(targetPath, 'index.html');
+      if (!indexPath) {
+        send(res, 403, 'Forbidden');
+        return;
+      }
+      targetPath = indexPath;
     }
-  } catch {
+  } catch (err) {
+    if (err && err.code === FORBIDDEN_PATH_ERROR_CODE) {
+      send(res, 403, 'Forbidden');
+      return;
+    }
+
     // If .js file not found, try .ts alternative
     if (targetPath.endsWith('.js')) {
-      const tsPath = targetPath.replace(/\.js$/, '.ts');
-      if (fs.existsSync(tsPath)) {
+      const tsPath = replaceServedPathExtension(targetPath, '.js', '.ts');
+      if (tsPath && existsServedPath(tsPath)) {
         targetPath = tsPath;
       } else {
         send(res, 404, 'Not Found');
@@ -1026,11 +1333,11 @@ const server = http.createServer((req, res) => {
       }
     } else {
       // Extensionless import — try .ts, then .js
-      const tsPath = targetPath + '.ts';
-      const jsPath = targetPath + '.js';
-      if (!path.extname(targetPath) && isScriptRequest && fs.existsSync(tsPath)) {
+      const tsPath = appendServedPathExtension(targetPath, '.ts');
+      const jsPath = appendServedPathExtension(targetPath, '.js');
+      if (!path.extname(targetPath) && isScriptRequest && tsPath && existsServedPath(tsPath)) {
         targetPath = tsPath;
-      } else if (!path.extname(targetPath) && isScriptRequest && fs.existsSync(jsPath)) {
+      } else if (!path.extname(targetPath) && isScriptRequest && jsPath && existsServedPath(jsPath)) {
         targetPath = jsPath;
       } else {
         const spaFallback = resolveSpaFallbackPath(requestPath);
@@ -1052,8 +1359,12 @@ const server = http.createServer((req, res) => {
     && isScriptRequest
     && !isNavigationRequest;
   if (isRawQuery || isHtmlModuleImport) {
-    fs.readFile(targetPath, 'utf8', (err, source) => {
+    readServedFile(targetPath, 'utf8', (err, source) => {
       if (err) {
+        if (err.code === FORBIDDEN_PATH_ERROR_CODE) {
+          send(res, 403, 'Forbidden');
+          return;
+        }
         send(res, err.code === 'ENOENT' ? 404 : 500, err.code === 'ENOENT' ? 'Not Found' : 'Error');
         return;
       }
@@ -1069,8 +1380,12 @@ const server = http.createServer((req, res) => {
 
   // TypeScript transpilation (only if ts available)
   if (targetPath.endsWith('.ts') && ts) {
-    fs.readFile(targetPath, 'utf8', (err, source) => {
+    readServedFile(targetPath, 'utf8', (err, source) => {
       if (err) {
+        if (err.code === FORBIDDEN_PATH_ERROR_CODE) {
+          send(res, 403, 'Forbidden');
+          return;
+        }
         if (err.code === 'ENOENT' || err.code === 'EISDIR') {
           send(res, 404, 'Not Found');
           return;
@@ -1104,15 +1419,23 @@ const server = http.createServer((req, res) => {
   }
 
   // Static file serving
-  fs.readFile(targetPath, (err, data) => {
+  readServedFile(targetPath, null, (err, data) => {
     if (err) {
+      if (err.code === FORBIDDEN_PATH_ERROR_CODE) {
+        send(res, 403, 'Forbidden');
+        return;
+      }
       if (err.code === 'ENOENT' || err.code === 'EISDIR') {
         const spaFallback = resolveSpaFallbackPath(requestPath);
         if (spaFallback) {
           targetPath = spaFallback.fsPath;
           resolvedRequestPath = spaFallback.requestPath;
-          fs.readFile(targetPath, (fallbackErr, fallbackData) => {
+          readServedFile(targetPath, null, (fallbackErr, fallbackData) => {
             if (fallbackErr) {
+              if (fallbackErr.code === FORBIDDEN_PATH_ERROR_CODE) {
+                send(res, 403, 'Forbidden');
+                return;
+              }
               send(res, 404, 'Not Found');
               return;
             }
@@ -1125,7 +1448,9 @@ const server = http.createServer((req, res) => {
             };
 
             if (shouldInjectBindings(resolvedRequestPath, htmlSource)) {
-              const html = injectBindings(htmlSource, resolvedRequestPath);
+              const html = injectBindings(htmlSource, {
+                isPlaygroundPage: normalizeHtmlRequestPath(resolvedRequestPath) === '/examples/playground/index.html',
+              });
               writeResponseHead(res, 200, headers);
               res.end(html);
               return;
@@ -1157,7 +1482,9 @@ const server = http.createServer((req, res) => {
     if (ext === '.html') {
       const htmlSource = data.toString('utf8');
       if (shouldInjectBindings(resolvedRequestPath, htmlSource)) {
-        const html = injectBindings(htmlSource, resolvedRequestPath);
+        const html = injectBindings(htmlSource, {
+          isPlaygroundPage: normalizeHtmlRequestPath(resolvedRequestPath) === '/examples/playground/index.html',
+        });
         writeResponseHead(res, 200, headers);
         res.end(html);
         return;
