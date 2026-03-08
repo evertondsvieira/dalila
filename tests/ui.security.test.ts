@@ -67,6 +67,15 @@ describe('mountUI security propagation', () => {
     );
   });
 
+  it('runtime HTML sink detection ignores benign data image URLs', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(
+      hasExecutableHtmlSinkPattern('<img src="data:image/png;base64,aaaa">'),
+      false
+    );
+  });
+
   it('runtime HTML sink detection continues scanning after comment-like text in quoted attrs', async () => {
     const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
 

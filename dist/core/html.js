@@ -1,8 +1,21 @@
 // Placeholder tokens injected into raw HTML so that dynamic values can be
 // located and replaced after the browser parses the markup.
-const TOKEN_PREFIX = '__DALILA_SLOT_';
 const TOKEN_SUFFIX = '__';
-const TOKEN_REGEX = /__DALILA_SLOT_(\d+)__/g;
+let tokenNamespaceCounter = 0;
+function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function createTokenSpec(strings) {
+    const source = strings.join('');
+    let prefix = '';
+    do {
+        prefix = `__DALILA_SLOT_${(tokenNamespaceCounter++).toString(36)}_`;
+    } while (source.includes(prefix));
+    return {
+        prefix,
+        regex: new RegExp(`${escapeRegExp(prefix)}(\\d+)${escapeRegExp(TOKEN_SUFFIX)}`, 'g'),
+    };
+}
 function isNode(value) {
     return typeof Node !== 'undefined' && value instanceof Node;
 }
@@ -35,14 +48,15 @@ function toAttributeValue(value) {
     return String(value);
 }
 /** Walk a text node, replacing placeholder tokens with their corresponding values. */
-function replaceTextTokens(node, values) {
+function replaceTextTokens(node, values, tokenSpec) {
     const text = node.nodeValue ?? '';
-    if (!text.includes(TOKEN_PREFIX))
+    if (!text.includes(tokenSpec.prefix))
         return;
     const fragment = document.createDocumentFragment();
     let lastIndex = 0;
     let match = null;
-    while ((match = TOKEN_REGEX.exec(text))) {
+    tokenSpec.regex.lastIndex = 0;
+    while ((match = tokenSpec.regex.exec(text))) {
         const matchIndex = match.index;
         const tokenLength = match[0].length;
         if (matchIndex > lastIndex) {
@@ -69,11 +83,12 @@ function replaceTextTokens(node, values) {
  * Single-token attributes set to null/undefined/false are removed entirely
  * (useful for conditional boolean attributes like `disabled`).
  */
-function replaceAttributeTokens(element, values) {
+function replaceAttributeTokens(element, values, tokenSpec) {
     for (const attr of Array.from(element.attributes)) {
-        if (!attr.value.includes(TOKEN_PREFIX))
+        if (!attr.value.includes(tokenSpec.prefix))
             continue;
-        const tokenMatches = Array.from(attr.value.matchAll(TOKEN_REGEX));
+        tokenSpec.regex.lastIndex = 0;
+        const tokenMatches = Array.from(attr.value.matchAll(tokenSpec.regex));
         const singleTokenMatch = tokenMatches.length === 1 && attr.value.trim() === tokenMatches[0][0];
         if (singleTokenMatch) {
             const value = values[Number(tokenMatches[0][1])];
@@ -82,7 +97,8 @@ function replaceAttributeTokens(element, values) {
                 continue;
             }
         }
-        const nextValue = attr.value.replace(TOKEN_REGEX, (_, index) => {
+        tokenSpec.regex.lastIndex = 0;
+        const nextValue = attr.value.replace(tokenSpec.regex, (_, index) => {
             const value = values[Number(index)];
             return toAttributeValue(value);
         });
@@ -108,11 +124,12 @@ function replaceAttributeTokens(element, values) {
  * ```
  */
 export function html(strings, ...values) {
+    const tokenSpec = createTokenSpec(strings);
     let markup = '';
     for (let i = 0; i < strings.length; i += 1) {
         markup += strings[i];
         if (i < values.length) {
-            markup += `${TOKEN_PREFIX}${i}${TOKEN_SUFFIX}`;
+            markup += `${tokenSpec.prefix}${i}${TOKEN_SUFFIX}`;
         }
     }
     const template = document.createElement('template');
@@ -125,11 +142,11 @@ export function html(strings, ...values) {
     }
     for (const node of nodes) {
         if (node.nodeType === Node.TEXT_NODE) {
-            replaceTextTokens(node, values);
+            replaceTextTokens(node, values, tokenSpec);
             continue;
         }
         if (node.nodeType === Node.ELEMENT_NODE) {
-            replaceAttributeTokens(node, values);
+            replaceAttributeTokens(node, values, tokenSpec);
         }
     }
     return fragment;

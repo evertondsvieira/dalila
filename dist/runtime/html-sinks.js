@@ -80,7 +80,19 @@ function hasExecutableHtmlScriptTag(value) {
 function hasExecutableProtocol(value) {
     return value.startsWith('javascript:')
         || value.startsWith('vbscript:')
-        || value.startsWith('data:');
+        || hasExecutableDataProtocol(value);
+}
+function hasExecutableDataProtocol(value) {
+    if (!value.startsWith('data:'))
+        return false;
+    const metadataStart = 'data:'.length;
+    const metadataEnd = value.indexOf(',', metadataStart);
+    const metadata = (metadataEnd === -1 ? value.slice(metadataStart) : value.slice(metadataStart, metadataEnd))
+        .toLowerCase();
+    const mediaType = metadata.split(';', 1)[0].trim();
+    return mediaType === 'text/html'
+        || mediaType === 'application/xhtml+xml'
+        || mediaType === 'image/svg+xml';
 }
 function hasExecutableHtmlEventAttribute(value) {
     let index = 0;

@@ -2282,6 +2282,20 @@ test('fromHtml – propagates local sanitizeHtml for strict d-html bindings', as
   });
 });
 
+test('fromHtml – returns the actual single root element when markup has one root', async () => {
+  await withDom(async () => {
+    const root = fromHtml('<section class="card"><span d-text="name"></span></section>', {
+      data: { name: 'Dalila' },
+    });
+    await tick(10);
+
+    assert.equal(root.tagName, 'SECTION');
+    assert.equal(root.className, 'card');
+    assert.equal(root.style.display, '');
+    assert.equal(root.textContent, 'Dalila');
+  });
+});
+
 test('trustedTypes – policy rejections do not fall back to raw HTML writes', async () => {
   await withDom(async (doc) => {
     const root = el(doc, '<div d-html="content"></div>');

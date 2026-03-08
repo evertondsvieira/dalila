@@ -15,9 +15,12 @@ export function fromHtml(html, options = {}) {
     const resolvedSecurity = resolveConfiguredRuntimeSecurityOptions(security);
     const template = document.createElement('template');
     setTemplateInnerHTML(template, html, resolvedSecurity);
-    const container = document.createElement('div');
-    container.style.display = 'contents';
-    container.appendChild(template.content);
+    const singleRoot = resolveSingleRootElement(template.content);
+    const container = singleRoot ?? document.createElement('div');
+    if (!singleRoot) {
+        container.style.display = 'contents';
+        container.appendChild(template.content);
+    }
     // Bind BEFORE inserting children so the layout's bind() only processes
     // the layout's own HTML — children are already bound by their own fromHtml() call.
     const dispose = bind(container, data ?? {}, { _internal: true, sanitizeHtml, security });
@@ -36,4 +39,18 @@ export function fromHtml(html, options = {}) {
         }
     }
     return container;
+}
+function resolveSingleRootElement(fragment) {
+    let root = null;
+    for (const node of Array.from(fragment.childNodes)) {
+        if (node.nodeType === Node.TEXT_NODE && !(node.textContent ?? '').trim()) {
+            continue;
+        }
+        if (node.nodeType === Node.ELEMENT_NODE && node instanceof HTMLElement && !root) {
+            root = node;
+            continue;
+        }
+        return null;
+    }
+    return root;
 }

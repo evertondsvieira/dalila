@@ -17,9 +17,31 @@ type HTMLValue =
 
 // Placeholder tokens injected into raw HTML so that dynamic values can be
 // located and replaced after the browser parses the markup.
-const TOKEN_PREFIX = '__DALILA_SLOT_';
 const TOKEN_SUFFIX = '__';
-const TOKEN_REGEX = /__DALILA_SLOT_(\d+)__/g;
+let tokenNamespaceCounter = 0;
+
+interface HtmlTokenSpec {
+  prefix: string;
+  regex: RegExp;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function createTokenSpec(strings: TemplateStringsArray): HtmlTokenSpec {
+  const source = strings.join('');
+  let prefix = '';
+
+  do {
+    prefix = `__DALILA_SLOT_${(tokenNamespaceCounter++).toString(36)}_`;
+  } while (source.includes(prefix));
+
+  return {
+    prefix,
+    regex: new RegExp(`${escapeRegExp(prefix)}(\\d+)${escapeRegExp(TOKEN_SUFFIX)}`, 'g'),
+  };
+}
 
 function isNode(value: unknown): value is Node {
   return typeof Node !== 'undefined' && value instanceof Node;
@@ -60,15 +82,16 @@ function toAttributeValue(value: HTMLValue): string {
 }
 
 /** Walk a text node, replacing placeholder tokens with their corresponding values. */
-function replaceTextTokens(node: Text, values: HTMLValue[]): void {
+function replaceTextTokens(node: Text, values: HTMLValue[], tokenSpec: HtmlTokenSpec): void {
   const text = node.nodeValue ?? '';
-  if (!text.includes(TOKEN_PREFIX)) return;
+  if (!text.includes(tokenSpec.prefix)) return;
 
   const fragment = document.createDocumentFragment();
   let lastIndex = 0;
   let match: RegExpExecArray | null = null;
+  tokenSpec.regex.lastIndex = 0;
 
-  while ((match = TOKEN_REGEX.exec(text))) {
+  while ((match = tokenSpec.regex.exec(text))) {
     const matchIndex = match.index;
     const tokenLength = match[0].length;
 
@@ -100,10 +123,15 @@ function replaceTextTokens(node: Text, values: HTMLValue[]): void {
  * Single-token attributes set to null/undefined/false are removed entirely
  * (useful for conditional boolean attributes like `disabled`).
  */
-function replaceAttributeTokens(element: Element, values: HTMLValue[]): void {
+function replaceAttributeTokens(
+  element: Element,
+  values: HTMLValue[],
+  tokenSpec: HtmlTokenSpec
+): void {
   for (const attr of Array.from(element.attributes)) {
-    if (!attr.value.includes(TOKEN_PREFIX)) continue;
-    const tokenMatches = Array.from(attr.value.matchAll(TOKEN_REGEX));
+    if (!attr.value.includes(tokenSpec.prefix)) continue;
+    tokenSpec.regex.lastIndex = 0;
+    const tokenMatches = Array.from(attr.value.matchAll(tokenSpec.regex));
     const singleTokenMatch = tokenMatches.length === 1 && attr.value.trim() === tokenMatches[0][0];
 
     if (singleTokenMatch) {
@@ -114,7 +142,8 @@ function replaceAttributeTokens(element: Element, values: HTMLValue[]): void {
       }
     }
 
-    const nextValue = attr.value.replace(TOKEN_REGEX, (_, index) => {
+    tokenSpec.regex.lastIndex = 0;
+    const nextValue = attr.value.replace(tokenSpec.regex, (_, index) => {
       const value = values[Number(index)];
       return toAttributeValue(value);
     });
@@ -141,11 +170,12 @@ function replaceAttributeTokens(element: Element, values: HTMLValue[]): void {
  * ```
  */
 export function html(strings: TemplateStringsArray, ...values: HTMLValue[]): DocumentFragment {
+  const tokenSpec = createTokenSpec(strings);
   let markup = '';
   for (let i = 0; i < strings.length; i += 1) {
     markup += strings[i];
     if (i < values.length) {
-      markup += `${TOKEN_PREFIX}${i}${TOKEN_SUFFIX}`;
+      markup += `${tokenSpec.prefix}${i}${TOKEN_SUFFIX}`;
     }
   }
 
@@ -165,12 +195,12 @@ export function html(strings: TemplateStringsArray, ...values: HTMLValue[]): Doc
 
   for (const node of nodes) {
     if (node.nodeType === Node.TEXT_NODE) {
-      replaceTextTokens(node as Text, values);
+      replaceTextTokens(node as Text, values, tokenSpec);
       continue;
     }
 
     if (node.nodeType === Node.ELEMENT_NODE) {
-      replaceAttributeTokens(node as Element, values);
+      replaceAttributeTokens(node as Element, values, tokenSpec);
     }
   }
 
