@@ -58,6 +58,7 @@ function reportEffectError(error, source) {
     }
     reportEffectErrorWithHandlers(err, source);
 }
+export const WRITABLE_SIGNAL_MARKER = Symbol('dalila.writable-signal');
 /**
  * Currently executing effect for dependency collection.
  * Any signal read while this is set subscribes this effect.
@@ -220,6 +221,12 @@ export function signal(initialValue) {
             subscriber.deps?.delete(subscribers);
         };
     };
+    Object.defineProperty(read, WRITABLE_SIGNAL_MARKER, {
+        value: true,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+    });
     signalRef = read;
     registerSignal(signalRef, 'signal', {
         scopeRef: owningScope,
@@ -253,6 +260,12 @@ export function readonly(source) {
     });
     Object.defineProperty(read, 'update', {
         value: throwReadonlyMutationError,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+    });
+    Object.defineProperty(read, WRITABLE_SIGNAL_MARKER, {
+        value: false,
         configurable: false,
         enumerable: false,
         writable: false,
@@ -452,8 +465,6 @@ export function computed(fn) {
     let dirty = true;
     const subscribers = new Set();
     let signalRef;
-    // Dep sets that `markDirty` is currently registered in (so we can unsubscribe on recompute).
-    let trackedDeps = new Set();
     /**
      * Internal invalidator.
      * Runs synchronously when any dependency changes.
@@ -467,20 +478,11 @@ export function computed(fn) {
     });
     markDirty.disposed = false;
     markDirty.sync = true;
-    const cleanupDeps = () => {
-        for (const depSet of trackedDeps) {
-            depSet.delete(markDirty);
-            untrackDependencyBySet(depSet, markDirty);
-        }
-        trackedDeps.clear();
-        if (markDirty.deps)
-            markDirty.deps.clear();
-    };
     const recomputeIfDirty = () => {
         if (!dirty)
             return;
         trackComputedRunStart(signalRef);
-        cleanupDeps();
+        cleanupEffectDeps(markDirty);
         const prevEffect = activeEffect;
         const prevScope = activeScope;
         // Collect deps into markDirty.
@@ -489,8 +491,6 @@ export function computed(fn) {
         try {
             value = fn();
             dirty = false;
-            if (markDirty.deps)
-                trackedDeps = new Set(markDirty.deps);
         }
         finally {
             trackComputedRunEnd(signalRef);
@@ -534,6 +534,12 @@ export function computed(fn) {
             subscriber.deps?.delete(subscribers);
         };
     };
+    Object.defineProperty(read, WRITABLE_SIGNAL_MARKER, {
+        value: false,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+    });
     signalRef = read;
     registerSignal(signalRef, 'computed', {
         scopeRef: owningScope,

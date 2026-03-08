@@ -8,7 +8,7 @@
  */
 import { isInDevMode } from '../core/dev.js';
 import { createScope, getCurrentScope, withScope } from '../core/scope.js';
-import { effect, FatalEffectError, signal } from '../core/signal.js';
+import { effect, FatalEffectError, signal, WRITABLE_SIGNAL_MARKER, } from '../core/signal.js';
 import { withSchedulerPriority } from '../core/scheduler.js';
 import { WRAPPED_HANDLER } from '../form/form.js';
 import { linkScopeToDom, withDevtoolsDomTarget } from '../core/devtools.js';
@@ -34,8 +34,14 @@ function isSignal(value) {
 function isWritableSignal(value) {
     if (!isSignal(value))
         return false;
+    const marker = value[WRITABLE_SIGNAL_MARKER];
+    if (marker === true)
+        return true;
+    if (marker === false)
+        return false;
     // `computed()` exposes set/update that always throw. Probe with a no-op write
     // (same value) to detect read-only signals without mutating state.
+    // Keep the fallback for signal-like values that do not carry Dalila's marker.
     try {
         const current = value.peek();
         value.set(current);
@@ -105,6 +111,19 @@ function isWarnAsErrorEnabledForActiveScope() {
 }
 const RAW_BLOCK_SELECTORS = '[d-pre], [d-raw], d-pre, d-raw, [data-dalila-raw]';
 const RAW_BLOCK_STYLE_ID = 'dalila-raw-block-default-styles';
+const INTERNAL_BOUND_SELECTOR = '[data-dalila-internal-bound]';
+function createNearestBoundaryResolver() {
+    const cache = new WeakMap();
+    return (el) => {
+        if (!el)
+            return null;
+        if (cache.has(el))
+            return cache.get(el) ?? null;
+        const nearest = el.closest(INTERNAL_BOUND_SELECTOR);
+        cache.set(el, nearest);
+        return nearest;
+    };
+}
 function ensureRawBlockDefaultStyles() {
     if (typeof document === 'undefined')
         return;
@@ -132,14 +151,15 @@ function elementDepth(el) {
     return depth;
 }
 function collectRawBlocks(root) {
-    const boundary = root.closest('[data-dalila-internal-bound]');
+    const resolveBoundary = createNearestBoundaryResolver();
+    const boundary = resolveBoundary(root);
     const matches = [];
     if (root.matches(RAW_BLOCK_SELECTORS)) {
         matches.push(root);
     }
     matches.push(...Array.from(root.querySelectorAll(RAW_BLOCK_SELECTORS)));
     const inScope = matches.filter((el) => {
-        const bound = el.closest('[data-dalila-internal-bound]');
+        const bound = resolveBoundary(el);
         return bound === boundary;
     });
     inScope.sort((a, b) => elementDepth(a) - elementDepth(b));
@@ -171,7 +191,8 @@ function isInsideRawBlock(el, boundary) {
     return rawRoot.closest('[data-dalila-internal-bound]') === boundary;
 }
 function createBindScanPlan(root) {
-    const boundary = root.closest('[data-dalila-internal-bound]');
+    const resolveBoundary = createNearestBoundaryResolver();
+    const boundary = resolveBoundary(root);
     const elements = [];
     const attrIndex = new Map();
     const tagIndex = new Map();
@@ -191,16 +212,13 @@ function createBindScanPlan(root) {
         }
     };
     if (root.matches('*')) {
-        const rootBoundary = root.closest('[data-dalila-internal-bound]');
-        if (rootBoundary === boundary) {
-            elements.push(root);
-            indexElement(root);
-        }
+        elements.push(root);
+        indexElement(root);
     }
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     while (walker.nextNode()) {
         const el = walker.currentNode;
-        const nearestBound = el.closest('[data-dalila-internal-bound]');
+        const nearestBound = resolveBoundary(el);
         if (nearestBound !== boundary)
             continue;
         elements.push(el);
@@ -208,6 +226,7 @@ function createBindScanPlan(root) {
     }
     return {
         root,
+        boundary,
         elements,
         attrIndex,
         tagIndex,
@@ -275,19 +294,18 @@ function resolveSelectorFromIndex(plan, selector) {
     return null;
 }
 function qsaFromPlan(plan, selector) {
-    const boundary = plan.root.closest('[data-dalila-internal-bound]');
     const cacheable = !selector.includes('[');
     if (cacheable) {
         const cached = plan.selectorCache.get(selector);
         if (cached) {
             return cached.filter((el) => (el === plan.root || plan.root.contains(el))
-                && !isInsideRawBlock(el, boundary));
+                && !isInsideRawBlock(el, plan.boundary));
         }
     }
     const indexed = resolveSelectorFromIndex(plan, selector);
     const source = indexed ?? plan.elements.filter(el => el.matches(selector));
     const matches = source.filter((el) => (el === plan.root || plan.root.contains(el))
-        && !isInsideRawBlock(el, boundary));
+        && !isInsideRawBlock(el, plan.boundary));
     if (cacheable)
         plan.selectorCache.set(selector, matches);
     return matches;
@@ -306,9 +324,9 @@ function qsaIncludingRoot(root, selector) {
     // scope; anything deeper was already bound by a nested bind() call.
     // This also handles manual bind() calls on elements inside a clone:
     // root won't have the marker, but root.closest() will find the clone.
-    const boundary = root.closest('[data-dalila-internal-bound]');
+    const boundary = root.closest(INTERNAL_BOUND_SELECTOR);
     return out.filter(el => {
-        const bound = el.closest('[data-dalila-internal-bound]');
+        const bound = el.closest(INTERNAL_BOUND_SELECTOR);
         if (bound !== boundary)
             return false;
         return !isInsideRawBlock(el, boundary);
@@ -1552,7 +1570,8 @@ function createInterpolationTemplatePlan(root, rawTextSelectors) {
     const bindings = [];
     let totalExpressions = 0;
     let fastPathExpressions = 0;
-    const textBoundary = root.closest('[data-dalila-internal-bound]');
+    const resolveBoundary = createNearestBoundaryResolver();
+    const textBoundary = resolveBoundary(root);
     while (walker.nextNode()) {
         const node = walker.currentNode;
         const parent = node.parentElement;
@@ -1561,7 +1580,7 @@ function createInterpolationTemplatePlan(root, rawTextSelectors) {
         if (parent && parent.closest(RAW_BLOCK_SELECTORS))
             continue;
         if (parent) {
-            const bound = parent.closest('[data-dalila-internal-bound]');
+            const bound = resolveBoundary(parent);
             if (bound !== textBoundary)
                 continue;
         }

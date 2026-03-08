@@ -105,6 +105,8 @@ type EffectFn = (() => void) & {
   runner?: () => void;
 };
 
+export const WRITABLE_SIGNAL_MARKER = Symbol('dalila.writable-signal');
+
 /**
  * Currently executing effect for dependency collection.
  * Any signal read while this is set subscribes this effect.
@@ -194,6 +196,8 @@ export interface Signal<T> {
   peek(): T;
   /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
   on(callback: (value: T) => void): () => void;
+  /** Internal nominal marker used by the runtime to detect writable signals quickly. */
+  readonly [WRITABLE_SIGNAL_MARKER]?: true;
 }
 
 export interface ReadonlySignal<T> {
@@ -203,6 +207,8 @@ export interface ReadonlySignal<T> {
   peek(): T;
   /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
   on(callback: (value: T) => void): () => void;
+  /** Internal nominal marker used by the runtime to detect signal mutability quickly. */
+  readonly [WRITABLE_SIGNAL_MARKER]?: boolean;
 }
 
 export interface ComputedSignal<T> extends ReadonlySignal<T> {
@@ -324,6 +330,13 @@ export function signal<T>(initialValue: T): Signal<T> {
     };
   };
 
+  Object.defineProperty(read, WRITABLE_SIGNAL_MARKER, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+
   signalRef = read as unknown as object;
   registerSignal(signalRef, 'signal', {
     scopeRef: owningScope,
@@ -365,6 +378,12 @@ export function readonly<T>(source: Signal<T>): ReadonlySignal<T> {
   });
   Object.defineProperty(read, 'update', {
     value: throwReadonlyMutationError,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  Object.defineProperty(read, WRITABLE_SIGNAL_MARKER, {
+    value: false,
     configurable: false,
     enumerable: false,
     writable: false,
@@ -597,9 +616,6 @@ export function computed<T>(fn: () => T): ComputedSignal<T> {
   const subscribers = new Set<EffectFn>();
   let signalRef: object;
 
-  // Dep sets that `markDirty` is currently registered in (so we can unsubscribe on recompute).
-  let trackedDeps = new Set<Set<EffectFn>>();
-
   /**
    * Internal invalidator.
    * Runs synchronously when any dependency changes.
@@ -613,19 +629,10 @@ export function computed<T>(fn: () => T): ComputedSignal<T> {
   markDirty.disposed = false;
   markDirty.sync = true;
 
-  const cleanupDeps = () => {
-    for (const depSet of trackedDeps) {
-      depSet.delete(markDirty);
-      untrackDependencyBySet(depSet, markDirty);
-    }
-    trackedDeps.clear();
-    if (markDirty.deps) markDirty.deps.clear();
-  };
-
   const recomputeIfDirty = () => {
     if (!dirty) return;
     trackComputedRunStart(signalRef);
-    cleanupDeps();
+    cleanupEffectDeps(markDirty);
 
     const prevEffect = activeEffect;
     const prevScope = activeScope;
@@ -637,7 +644,6 @@ export function computed<T>(fn: () => T): ComputedSignal<T> {
     try {
       value = fn();
       dirty = false;
-      if (markDirty.deps) trackedDeps = new Set(markDirty.deps);
     } finally {
       trackComputedRunEnd(signalRef);
       activeEffect = prevEffect;
@@ -689,6 +695,12 @@ export function computed<T>(fn: () => T): ComputedSignal<T> {
       subscriber.deps?.delete(subscribers);
     };
   };
+  Object.defineProperty(read, WRITABLE_SIGNAL_MARKER, {
+    value: false,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
 
   signalRef = read as unknown as object;
   registerSignal(signalRef, 'computed', {

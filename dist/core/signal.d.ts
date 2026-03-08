@@ -28,6 +28,7 @@ export declare function setEffectErrorHandler(handler: EffectErrorHandler | null
  * User-provided handlers registered via `setEffectErrorHandler()` always win.
  */
 export declare function setDefaultEffectErrorHandler(handler: EffectErrorHandler | null): void;
+export declare const WRITABLE_SIGNAL_MARKER: unique symbol;
 export interface Signal<T> {
     /** Read the current value (with dependency tracking if inside an effect). */
     (): T;
@@ -39,6 +40,8 @@ export interface Signal<T> {
     peek(): T;
     /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
     on(callback: (value: T) => void): () => void;
+    /** Internal nominal marker used by the runtime to detect writable signals quickly. */
+    readonly [WRITABLE_SIGNAL_MARKER]?: true;
 }
 export interface ReadonlySignal<T> {
     /** Read the current value (with dependency tracking if inside an effect). */
@@ -47,6 +50,8 @@ export interface ReadonlySignal<T> {
     peek(): T;
     /** Subscribe to value changes manually (outside of effects). Returns unsubscribe function. */
     on(callback: (value: T) => void): () => void;
+    /** Internal nominal marker used by the runtime to detect signal mutability quickly. */
+    readonly [WRITABLE_SIGNAL_MARKER]?: boolean;
 }
 export interface ComputedSignal<T> extends ReadonlySignal<T> {
     /** Nominal marker to improve IntelliSense/readability in docs and types. */
