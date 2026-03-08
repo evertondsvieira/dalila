@@ -35,6 +35,6 @@
   },
   "homepage": "https://github.com/evertondsvieira/dalila/blob/main/README.md",
   "dependencies": {
-    "dalila": "^1.10.3"
+    "dalila": "^1.10.4"
   }
 }
