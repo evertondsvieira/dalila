@@ -17,6 +17,7 @@ const devServer = require('../scripts/dev-server.cjs') as {
   getRequestPath: (url: string) => string | null;
   safeDecodeUrlPath: (url: string) => string | null;
   createImportMapEntries: (dalilaPath: string) => Record<string, string>;
+  createImportMapScript: (dalilaPath: string, sourceDirPath?: string) => string;
   buildUserProjectHeadAdditions: (projectRoot: string, dalilaPath: string) => string[];
   mergeImportMapIntoHtml: (
     html: string,
