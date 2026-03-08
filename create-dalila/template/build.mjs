@@ -72,6 +72,10 @@ function stringifyInlineScriptPayload(value, indent = 0) {
     .join('\n');
 }
 
+function stringifyInlineScriptLiteral(value) {
+  return escapeInlineScriptContent(JSON.stringify(value));
+}
+
 function normalizePreloadStorageType(storageType) {
   return storageType === 'sessionStorage' ? 'sessionStorage' : 'localStorage';
 }
@@ -424,15 +428,15 @@ export function detectPreloadScripts(baseDir) {
 
 export function generatePreloadScript(name, defaultValue, storageType = 'localStorage') {
   const safeStorageType = normalizePreloadStorageType(storageType);
-  const payload = JSON.stringify({
+  const payload = stringifyInlineScriptLiteral({
     key: name,
     defaultValue,
     storageType: safeStorageType,
   });
-  const fallbackValue = JSON.stringify(defaultValue);
+  const fallbackValue = stringifyInlineScriptLiteral(defaultValue);
   const script = `(function(){try{var p=${payload};var s=window[p.storageType];var v=s.getItem(p.key);document.documentElement.setAttribute('data-theme',v==null?p.defaultValue:JSON.parse(v))}catch(e){document.documentElement.setAttribute('data-theme',${fallbackValue})}})();`;
 
-  return escapeInlineScriptContent(script);
+  return script;
 }
 
 function renderPreloadScriptTags(baseDir) {

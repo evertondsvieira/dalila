@@ -492,6 +492,9 @@ function escapeInlineScriptContent(script) {
         }
     });
 }
+function stringifyInlineScriptLiteral(value) {
+    return escapeInlineScriptContent(JSON.stringify(value));
+}
 /**
  * Generate a minimal inline script to prevent FOUC.
  *
@@ -499,13 +502,14 @@ function escapeInlineScriptContent(script) {
  */
 export function createPreloadScript(options) {
     const { storageKey, defaultValue, target = 'documentElement', attribute = 'data-theme', storageType = 'localStorage', } = options;
-    // Use JSON.stringify to safely embed strings (avoid breaking quotes / injection)
-    const k = JSON.stringify(storageKey);
-    const d = JSON.stringify(defaultValue);
-    const a = JSON.stringify(attribute);
+    const safeTarget = target === 'body' ? 'body' : 'documentElement';
+    const safeStorageType = storageType === 'sessionStorage' ? 'sessionStorage' : 'localStorage';
+    const k = stringifyInlineScriptLiteral(storageKey);
+    const d = stringifyInlineScriptLiteral(defaultValue);
+    const a = stringifyInlineScriptLiteral(attribute);
     // Still minified
-    const script = `(function(){try{var s=${storageType}.getItem(${k});var v=s==null?${d}:JSON.parse(s);document.${target}.setAttribute(${a},v)}catch(e){document.${target}.setAttribute(${a},${d})}})();`;
-    return escapeInlineScriptContent(script);
+    const script = `(function(){try{var s=${safeStorageType}.getItem(${k});var v=s==null?${d}:JSON.parse(s);document.${safeTarget}.setAttribute(${a},v)}catch(e){document.${safeTarget}.setAttribute(${a},${d})}})();`;
+    return script;
 }
 export function createThemeScript(storageKey, defaultTheme = 'light') {
     return createPreloadScript({

@@ -23,7 +23,6 @@ interface TrustedTypesLike {
 
 const TRUSTED_POLICY_CACHE_KEY = Symbol.for('dalila.runtime.trustedTypesPolicies');
 const TRUSTED_POLICY_PARSE_SUFFIX = '--dalila-parse';
-const EXECUTABLE_HTML_EVENT_ATTR_PATTERN = /<[^>]+\son[a-z0-9:_-]+\s*=/i;
 const EXECUTABLE_HTML_URL_ATTR_NAMES = new Set([
   'href',
   'src',
@@ -32,7 +31,6 @@ const EXECUTABLE_HTML_URL_ATTR_NAMES = new Set([
   'action',
   'poster',
 ]);
-const EXECUTABLE_DATA_URL_PATTERN = /^data:(?:text\/html|application\/xhtml\+xml|image\/svg\+xml)\b/i;
 
 function getTrustedPolicyCache(): Map<string, TrustedTypesHtmlPolicy> {
   const host = globalThis as typeof globalThis & {
@@ -75,7 +73,7 @@ function isHtmlAttributeNameChar(code: number): boolean {
 }
 
 function isTagBoundaryChar(char: string | undefined): boolean {
-  return !char || /[\s/>]/.test(char);
+  return !char || char === '/' || char === '>' || isHtmlWhitespaceCode(char.charCodeAt(0));
 }
 
 function getPreviousNonWhitespaceChar(
@@ -132,7 +130,107 @@ function hasExecutableHtmlScriptTag(value: string): boolean {
 function hasExecutableProtocol(value: string): boolean {
   return value.startsWith('javascript:')
     || value.startsWith('vbscript:')
-    || EXECUTABLE_DATA_URL_PATTERN.test(value);
+    || value.startsWith('data:');
+}
+
+function hasExecutableHtmlEventAttribute(value: string): boolean {
+  let index = 0;
+
+  while (index < value.length) {
+    const tagStart = value.indexOf('<', index);
+    if (tagStart === -1) return false;
+
+    let cursor = tagStart + 1;
+    const firstCode = value.charCodeAt(cursor);
+    if (
+      Number.isNaN(firstCode)
+      || value[cursor] === '/'
+      || value[cursor] === '!'
+      || value[cursor] === '?'
+    ) {
+      index = cursor;
+      continue;
+    }
+
+    while (
+      cursor < value.length
+      && !isHtmlWhitespaceCode(value.charCodeAt(cursor))
+      && value[cursor] !== '>'
+    ) {
+      cursor += 1;
+    }
+
+    while (cursor < value.length && value[cursor] !== '>') {
+      while (cursor < value.length && isHtmlWhitespaceCode(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+
+      if (cursor >= value.length || value[cursor] === '>') {
+        break;
+      }
+
+      if (value[cursor] === '/') {
+        cursor += 1;
+        continue;
+      }
+
+      const nameStart = cursor;
+      while (cursor < value.length && isHtmlAttributeNameChar(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+      if (cursor === nameStart) {
+        cursor += 1;
+        continue;
+      }
+
+      const attrName = value.slice(nameStart, cursor).toLowerCase();
+
+      while (cursor < value.length && isHtmlWhitespaceCode(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+
+      if (value[cursor] !== '=') {
+        continue;
+      }
+
+      if (attrName.startsWith('on')) {
+        return true;
+      }
+
+      cursor += 1;
+
+      while (cursor < value.length && isHtmlWhitespaceCode(value.charCodeAt(cursor))) {
+        cursor += 1;
+      }
+
+      if (cursor >= value.length) {
+        break;
+      }
+
+      const quote = value[cursor];
+      if (quote === '"' || quote === '\'') {
+        cursor += 1;
+        const closingQuoteIndex = value.indexOf(quote, cursor);
+        if (closingQuoteIndex === -1) {
+          break;
+        }
+        cursor = closingQuoteIndex + 1;
+        continue;
+      }
+
+      while (
+        cursor < value.length
+        && !isHtmlWhitespaceCode(value.charCodeAt(cursor))
+        && value[cursor] !== '>'
+      ) {
+        cursor += 1;
+      }
+    }
+
+    index = cursor + 1;
+  }
+
+  return false;
 }
 
 function hasExecutableHtmlUrlAttribute(value: string): boolean {
@@ -265,7 +363,7 @@ function hasExecutableHtmlUrlAttribute(value: string): boolean {
 export function hasExecutableHtmlSinkPattern(value: string): boolean {
   if (!value) return false;
   return hasExecutableHtmlScriptTag(value)
-    || EXECUTABLE_HTML_EVENT_ATTR_PATTERN.test(value)
+    || hasExecutableHtmlEventAttribute(value)
     || hasExecutableHtmlUrlAttribute(value);
 }
 
