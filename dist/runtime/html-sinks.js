@@ -78,9 +78,13 @@ function hasExecutableHtmlScriptTag(value) {
     return false;
 }
 function hasExecutableProtocol(value) {
-    return value.startsWith('javascript:')
-        || value.startsWith('vbscript:')
-        || hasExecutableDataProtocol(value);
+    if (value.startsWith('javascript:') || value.startsWith('vbscript:')) {
+        return true;
+    }
+    if (!value.startsWith('data:')) {
+        return false;
+    }
+    return hasExecutableDataProtocol(value);
 }
 function hasExecutableDataProtocol(value) {
     if (!value.startsWith('data:'))

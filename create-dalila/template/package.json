@@ -15,7 +15,7 @@
     "node": ">=22.6.0"
   },
   "dependencies": {
-    "dalila": "^1.10.2",
+    "dalila": "^1.10.5",
     "dompurify": "^3.2.7"
   },
   "devDependencies": {

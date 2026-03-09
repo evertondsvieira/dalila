@@ -128,9 +128,15 @@ function hasExecutableHtmlScriptTag(value: string): boolean {
 }
 
 function hasExecutableProtocol(value: string): boolean {
-  return value.startsWith('javascript:')
-    || value.startsWith('vbscript:')
-    || hasExecutableDataProtocol(value);
+  if (value.startsWith('javascript:') || value.startsWith('vbscript:')) {
+    return true;
+  }
+
+  if (!value.startsWith('data:')) {
+    return false;
+  }
+
+  return hasExecutableDataProtocol(value);
 }
 
 function hasExecutableDataProtocol(value: string): boolean {

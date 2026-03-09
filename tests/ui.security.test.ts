@@ -76,6 +76,15 @@ describe('mountUI security propagation', () => {
     );
   });
 
+  it('runtime HTML sink detection flags executable data URLs', async () => {
+    const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
+
+    assert.equal(
+      hasExecutableHtmlSinkPattern('<iframe src="data:text/html,%3Cscript%3Ealert(1)%3C/script%3E"></iframe>'),
+      true
+    );
+  });
+
   it('runtime HTML sink detection continues scanning after comment-like text in quoted attrs', async () => {
     const { hasExecutableHtmlSinkPattern } = await import('../dist/runtime/html-sinks.js');
 
