@@ -184,7 +184,7 @@
     "./packages/dalila-ui/src/*/*.css"
   ],
   "scripts": {
-    "build": "tsc && tsc -p packages/dalila-ui/tsconfig.json && node scripts/ensure-cli-executable.cjs",
+    "build": "tsc && tsc -p packages/dalila-ui/tsconfig.json && node scripts/ensure-cli-executable.cjs && node scripts/ensure-ui-local-links.cjs",
     "dev": "node scripts/watch-dev.cjs",
     "serve": "node scripts/dev-server.cjs",
     "test:unit": "npm run build && node scripts/run-unit-tests.cjs",
@@ -221,11 +221,15 @@
     "jsdom": "^28.1.0",
     "typescript": "^5.9.3"
   },
+  "overrides": {
+    "undici": "^7.24.0"
+  },
   "files": [
     "dist",
     "packages/dalila-ui/dist",
     "packages/dalila-ui/src/*/*.css",
     "scripts/dev-server.cjs",
+    "scripts/ensure-ui-local-links.cjs",
     "README.md"
   ],
   "repository": {

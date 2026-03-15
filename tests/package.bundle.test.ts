@@ -20,6 +20,7 @@ test('package metadata exposes granular bundle-friendly entry points', () => {
   );
 
   assert.deepEqual(packageJson.sideEffects, ['./packages/dalila-ui/src/*/*.css']);
+  assert.match(packageJson.scripts.build, /ensure-ui-local-links\.cjs/);
   assert.equal(packageJson.scripts.dev, 'node scripts/watch-dev.cjs');
   assert.ok(packageJson.exports['./core/signal']);
   assert.ok(packageJson.exports['./core/persist']);
@@ -32,6 +33,8 @@ test('package metadata exposes granular bundle-friendly entry points', () => {
   assert.equal(packageJson.exports['./components/ui/*/*.css'], './packages/dalila-ui/src/*/*.css');
   assert.ok(packageJson.files.includes('packages/dalila-ui/dist'));
   assert.ok(packageJson.files.includes('packages/dalila-ui/src/*/*.css'));
+  assert.ok(packageJson.files.includes('scripts/ensure-ui-local-links.cjs'));
+  assert.equal(packageJson.overrides.undici, '^7.24.0');
   assert.deepEqual(uiPackageJson.sideEffects, ['./src/*/*.css']);
   assert.ok(uiPackageJson.exports['.']);
   assert.ok(uiPackageJson.exports['./dialog']);

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const repoRoot = path.join(__dirname, '..');
 const tscBin = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+const ensureUiLocalLinksScript = path.join(repoRoot, 'scripts', 'ensure-ui-local-links.cjs');
 
 const watchTargets = [
   {
@@ -90,6 +91,15 @@ function shutdown(signal) {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+const ensureLinks = spawnSync(process.execPath, [ensureUiLocalLinksScript], {
+  cwd: repoRoot,
+  stdio: 'inherit',
+});
+
+if (ensureLinks.status !== 0) {
+  process.exit(ensureLinks.status ?? 1);
+}
 
 for (const target of watchTargets) {
   spawnWatcher(target);
