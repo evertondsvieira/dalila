@@ -1,3 +1,6 @@
+function isPortalExpressionFailure(result) {
+    return result.ok === false;
+}
 const portalSyncByElement = new WeakMap();
 export function syncPortalElement(el) {
     const sync = portalSyncByElement.get(el);
@@ -60,7 +63,7 @@ export function bindPortalDirective(root, ctx, cleanups, deps) {
             let target = null;
             if (expressionAst) {
                 const result = deps.evalExpressionAst(expressionAst, ctx);
-                if (!result.ok) {
+                if (isPortalExpressionFailure(result)) {
                     if (result.reason === 'missing_identifier') {
                         deps.warn(`d-portal: ${result.message}`);
                     }

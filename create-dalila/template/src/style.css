@@ -10,7 +10,7 @@
  *    @import './components/ui/dalila/dalila.css';
  *
  * 2. Import JavaScript functionality from the npm package:
- *    import { createDialog, createToast } from 'dalila/components/ui';
+ *    import { createDialog, createToast } from 'dalila-ui';
  */
 
 @import './components/ui/dalila/dalila.css';

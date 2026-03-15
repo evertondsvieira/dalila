@@ -10,17 +10,17 @@ import {
   createTabs, createDropdown, createCombobox,
   createAccordion, createCalendar, createDropzone,
   createPopover, mountUI,
-} from "dalila/components/ui";
+} from "dalila-ui";
 ```
 
 ### Per-component imports (tree-shaking)
 
 ```ts
-import { createDialog } from "dalila/components/ui/dialog";
-import { createTabs }   from "dalila/components/ui/tabs";
+import { createDialog } from "dalila-ui/dialog";
+import { createTabs }   from "dalila-ui/tabs";
 ```
 
-Each component is also available at `dalila/components/ui/<name>` for minimal bundle size.
+Each component is also available at `dalila-ui/<name>` for minimal bundle size.
 
 ---
 
@@ -29,7 +29,7 @@ Each component is also available at `dalila/components/ui/<name>` for minimal bu
 ### Full bundle
 
 ```css
-@import "dalila/components/ui/dalila/dalila.css";
+@import "dalila-ui/dalila/dalila.css";
 ```
 
 Includes all 35+ component CSS files.
@@ -37,7 +37,7 @@ Includes all 35+ component CSS files.
 ### Core only (minimal)
 
 ```css
-@import "dalila/components/ui/dalila-core/dalila-core.css";
+@import "dalila-ui/dalila-core/dalila-core.css";
 ```
 
 Includes only: tokens, typography, layout, button, input, form.
@@ -45,12 +45,12 @@ Includes only: tokens, typography, layout, button, input, form.
 ### Per-component
 
 ```css
-@import "dalila/components/ui/tokens/tokens.css";
-@import "dalila/components/ui/button/button.css";
-@import "dalila/components/ui/dialog/dialog.css";
+@import "dalila-ui/tokens/tokens.css";
+@import "dalila-ui/button/button.css";
+@import "dalila-ui/dialog/dialog.css";
 ```
 
-The wildcard export `dalila/components/ui/*/*.css` makes each component stylesheet importable.
+The wildcard export `dalila-ui/*/*.css` makes each component stylesheet importable.
 
 ---
 
@@ -421,7 +421,7 @@ The router needs to render the HTML first before UI components can attach to DOM
 ```ts
 // src/app/page.ts
 import { computed, signal } from 'dalila';
-import { createDialog, mountUI } from 'dalila/components/ui';
+import { createDialog, mountUI } from 'dalila-ui';
 
 class HomePageVM {
   count = signal(0);
@@ -506,7 +506,7 @@ Validation uses `console.warn` — it never throws, so it won't break production
 Dalila UI is SSR-safe. All browser API access (`window`, `document`) is guarded:
 
 ```ts
-import { isBrowser } from "dalila/components/ui/env";
+import { isBrowser } from "dalila-ui/env";
 // true in browsers, false in Node/Deno/Bun
 ```
 

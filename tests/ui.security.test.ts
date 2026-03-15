@@ -95,7 +95,7 @@ describe('mountUI security propagation', () => {
   });
 
   it('propagates strict security to runtime bindings and blocks dangerous URLs', async () => {
-    const { mountUI } = await import('../dist/components/ui/runtime.js');
+    const { mountUI } = await import('../packages/dalila-ui/dist/runtime.js');
     const { signal } = await import('../dist/core/signal.js');
 
     const root = documentRef.createElement('div');
@@ -116,7 +116,7 @@ describe('mountUI security propagation', () => {
   });
 
   it('propagates sanitizeHtml into mountUI bind call', async () => {
-    const { mountUI } = await import('../dist/components/ui/runtime.js');
+    const { mountUI } = await import('../packages/dalila-ui/dist/runtime.js');
     const { signal } = await import('../dist/core/signal.js');
 
     const root = documentRef.createElement('div');

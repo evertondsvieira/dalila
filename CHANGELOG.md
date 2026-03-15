@@ -29,7 +29,7 @@ The format is based on Keep a Changelog, with project-oriented sections:
 - Playwright config runs multi-browser matrix in CI
 - `create-dalila` starter now builds an optimized standalone previewable `dist/` output instead of TypeScript-only emit
 - Dev tooling now resolves source roots from `tsconfig` for import-map injection, `@/` aliases, and preload detection
-- UI docs and starter guidance now use the published `dalila/components/ui` entry points
+- UI docs and starter guidance now use the published `dalila-ui` entry points
 - Added granular `dalila/core/*` and `dalila/runtime/*` exports for bundle-sensitive imports
 - `dalila check` now ignores interpolation/directive parsing inside raw blocks (`d-pre`/`d-raw`) while keeping directive validation aligned with runtime behavior
 

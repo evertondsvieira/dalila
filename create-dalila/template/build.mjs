@@ -475,9 +475,119 @@ function copyStaticSourceAssets(sourceDir, destinationDir) {
   }
 }
 
-function resolveDalilaPackageRoot(projectDir) {
-  const dalilaEntry = require.resolve('dalila', { paths: [projectDir] });
-  return path.dirname(path.dirname(dalilaEntry));
+function copyCssSourceTree(sourceDir, destinationDir) {
+  if (!fs.existsSync(sourceDir)) return;
+
+  for (const filePath of walkFiles(sourceDir)) {
+    if (isScriptSourceFile(filePath) || filePath.endsWith('.d.ts')) {
+      continue;
+    }
+
+    const relativePath = path.relative(sourceDir, filePath);
+    const targetPath = path.join(destinationDir, relativePath);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.copyFileSync(filePath, targetPath);
+  }
+}
+
+function resolvePackageRoot(packageName, projectDir) {
+  const packageEntry = require.resolve(packageName, { paths: [projectDir] });
+  return path.dirname(path.dirname(packageEntry));
+}
+
+function resolveOptionalPackageRoot(packageName, projectDir) {
+  try {
+    return resolvePackageRoot(packageName, projectDir);
+  } catch {
+    return null;
+  }
+}
+
+function resolveCompatDalilaUiRoot(dalilaRoot) {
+  if (!dalilaRoot) {
+    return null;
+  }
+
+  const compatRoot = path.join(dalilaRoot, 'packages', 'dalila-ui');
+  return fs.existsSync(path.join(compatRoot, 'dist')) ? compatRoot : null;
+}
+
+function rewriteCssPackageImports(source, packageRoots = {}) {
+  const usedPackages = new Set();
+  const dalilaUiSourceDir = packageRoots['dalila-ui']
+    ? path.join(packageRoots['dalila-ui'], 'src')
+    : null;
+  const legacyDalilaUiSourceDir = packageRoots['dalila']
+    ? path.join(packageRoots['dalila'], 'packages', 'dalila-ui', 'src')
+    : null;
+  const hasDalilaUiSourceDir = dalilaUiSourceDir && fs.existsSync(dalilaUiSourceDir);
+  const hasLegacyDalilaUiSourceDir = legacyDalilaUiSourceDir && fs.existsSync(legacyDalilaUiSourceDir);
+  if (!hasDalilaUiSourceDir && !hasLegacyDalilaUiSourceDir) {
+    return { source, usedPackages };
+  }
+
+  const rewrittenSource = source.replace(
+    /@import\s+(?:url\(\s*)?(["'])([^"']+)\1(?:\s*\))?/g,
+    (fullMatch, quote, specifier) => {
+      if (specifier.startsWith('dalila-ui/')) {
+        const relativePath = specifier.slice('dalila-ui/'.length);
+        const sourcePath = hasDalilaUiSourceDir
+          ? path.join(dalilaUiSourceDir, relativePath)
+          : null;
+        if (!sourcePath || !fs.existsSync(sourcePath)) {
+          return fullMatch;
+        }
+        usedPackages.add('dalila-ui');
+        return fullMatch.replace(specifier, `/vendor/dalila-ui/src/${relativePath}`);
+      }
+
+      if (specifier.startsWith('dalila/components/ui/')) {
+        const relativePath = specifier.slice('dalila/components/ui/'.length);
+        const legacySourcePath = hasLegacyDalilaUiSourceDir
+          ? path.join(legacyDalilaUiSourceDir, relativePath)
+          : null;
+        const sourcePath = legacySourcePath && fs.existsSync(legacySourcePath)
+          ? legacySourcePath
+          : hasDalilaUiSourceDir
+            ? path.join(dalilaUiSourceDir, relativePath)
+            : null;
+        if (!sourcePath || !fs.existsSync(sourcePath)) {
+          return fullMatch;
+        }
+        usedPackages.add('dalila-ui');
+        return fullMatch.replace(specifier, `/vendor/dalila-ui/src/${relativePath}`);
+      }
+
+      return fullMatch;
+    }
+  );
+
+  return {
+    source: rewrittenSource,
+    usedPackages,
+  };
+}
+
+function resolvePackageCssSourceDir(packageName, packageRoots = {}) {
+  if (packageName !== 'dalila-ui') {
+    return null;
+  }
+
+  const dalilaUiRoot = packageRoots['dalila-ui'] ?? null;
+  if (dalilaUiRoot) {
+    const sourceDir = path.join(dalilaUiRoot, 'src');
+    if (fs.existsSync(sourceDir)) {
+      return sourceDir;
+    }
+  }
+
+  const dalilaRoot = packageRoots['dalila'] ?? null;
+  if (!dalilaRoot) {
+    return null;
+  }
+
+  const compatSourceDir = path.join(dalilaRoot, 'packages', 'dalila-ui', 'src');
+  return fs.existsSync(compatSourceDir) ? compatSourceDir : null;
 }
 
 function formatTypeScriptError(ts, diagnostic) {
@@ -595,30 +705,58 @@ function resolveExportTarget(target) {
   return target.default || target.import || null;
 }
 
-function buildDalilaImportEntries(projectDir) {
-  const dalilaRoot = resolveDalilaPackageRoot(projectDir);
-  const dalilaPackageJson = JSON.parse(
-    fs.readFileSync(path.join(dalilaRoot, 'package.json'), 'utf8')
+function buildPackageImportEntries(packageName, packageRoot, options = {}) {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8')
   );
-  const distRoot = path.join(dalilaRoot, 'dist');
-  const distIndexPath = path.join(distRoot, 'index.js');
   const imports = {};
+  const legacyDalilaUiRoot = options.legacyDalilaUiRoot ?? null;
 
-  for (const [subpath, target] of Object.entries(dalilaPackageJson.exports ?? {})) {
+  for (const [subpath, target] of Object.entries(packageJson.exports ?? {})) {
     const exportTarget = resolveExportTarget(target);
     if (!exportTarget || !exportTarget.endsWith('.js')) continue;
 
-    const absoluteTarget = path.resolve(dalilaRoot, exportTarget);
+    const isLegacyUiExport = packageName === 'dalila' && subpath.startsWith('./components/ui');
+    const resolvedPackageRoot = isLegacyUiExport && legacyDalilaUiRoot
+      ? legacyDalilaUiRoot
+      : packageRoot;
+    const normalizedTarget = isLegacyUiExport
+      ? exportTarget.replace(/^\.\/packages\/dalila-ui\//, './')
+      : exportTarget;
+    const distRoot = path.join(resolvedPackageRoot, 'dist');
+    const distIndexPath = path.join(distRoot, 'index.js');
+    const absoluteTarget = path.resolve(resolvedPackageRoot, normalizedTarget);
     if (absoluteTarget !== distIndexPath && !absoluteTarget.startsWith(distRoot + path.sep)) {
       continue;
     }
 
     const relativeTarget = path.relative(distRoot, absoluteTarget).replace(/\\/g, '/');
-    const specifier = subpath === '.' ? 'dalila' : `dalila/${subpath.slice(2)}`;
-    imports[specifier] = `/vendor/dalila/${relativeTarget}`;
+    const specifier = subpath === '.' ? packageName : `${packageName}/${subpath.slice(2)}`;
+    const vendorPackageName = isLegacyUiExport ? 'dalila-compat-ui' : packageName;
+    imports[specifier] = `/vendor/${vendorPackageName}/${relativeTarget}`;
   }
 
   return imports;
+}
+
+function buildDalilaImportEntries(projectDir) {
+  const dalilaRoot = resolvePackageRoot('dalila', projectDir);
+  const compatDalilaUiRoot = resolveCompatDalilaUiRoot(dalilaRoot);
+  const dalilaUiRoot = resolveOptionalPackageRoot('dalila-ui', projectDir);
+  const legacyDalilaUiRoot = compatDalilaUiRoot ?? dalilaUiRoot;
+
+  return {
+    ...buildPackageImportEntries('dalila', dalilaRoot, { legacyDalilaUiRoot }),
+    ...(dalilaUiRoot ? buildPackageImportEntries('dalila-ui', dalilaUiRoot) : {}),
+  };
+}
+
+function isVendoredDalilaModuleUrl(moduleUrl, dalilaRoots) {
+  const { pathname } = splitUrlTarget(moduleUrl);
+
+  return Object.keys(dalilaRoots ?? {}).some((packageName) =>
+    pathname.startsWith(`/vendor/${packageName}/`)
+  );
 }
 
 function normalizeNodeModulesImportTarget(target, projectDir, baseDirAbs = projectDir) {
@@ -1763,11 +1901,15 @@ function collectImportMapModuleUrls(importMap, htmlUrl) {
   return [...moduleUrls];
 }
 
-function resolvePackagedModuleSourcePath(moduleUrl, buildConfig, dalilaRoot) {
+function resolvePackagedModuleSourcePath(moduleUrl, buildConfig, dalilaRoots) {
   const { pathname } = splitUrlTarget(moduleUrl);
 
-  if (pathname.startsWith('/vendor/dalila/')) {
-    return path.join(dalilaRoot, 'dist', pathname.slice('/vendor/dalila/'.length));
+  const packageRoots = Object.entries(dalilaRoots ?? {});
+  for (const [packageName, packageRoot] of packageRoots) {
+    const vendorPrefix = `/vendor/${packageName}/`;
+    if (pathname.startsWith(vendorPrefix)) {
+      return path.join(packageRoot, 'dist', pathname.slice(vendorPrefix.length));
+    }
   }
 
   if (pathname.startsWith('/vendor/node_modules/')) {
@@ -1782,7 +1924,14 @@ function resolvePackagedModuleSourcePath(moduleUrl, buildConfig, dalilaRoot) {
   return path.join(buildConfig.projectDir, pathname.slice(1));
 }
 
-function traceReachableModules(page, importMap, buildConfig, dalilaRoot) {
+function isDalilaPackageSpecifier(specifier) {
+  return specifier === 'dalila'
+    || specifier.startsWith('dalila/')
+    || specifier === 'dalila-ui'
+    || specifier.startsWith('dalila-ui/');
+}
+
+function traceReachableModules(page, importMap, buildConfig, dalilaRoots) {
   const reachableModuleUrls = new Set();
   const staticReachableModuleUrls = new Set();
   const usedDalilaSpecifiers = new Set();
@@ -1821,7 +1970,7 @@ function traceReachableModules(page, importMap, buildConfig, dalilaRoot) {
   }
 
   for (const specifier of page.inlineModuleSpecifiers) {
-    if (specifier === 'dalila' || specifier.startsWith('dalila/')) {
+    if (isDalilaPackageSpecifier(specifier)) {
       usedDalilaSpecifiers.add(specifier);
     }
 
@@ -1851,7 +2000,7 @@ function traceReachableModules(page, importMap, buildConfig, dalilaRoot) {
       processedKeys.add(queueKey);
     }
 
-    const sourcePath = resolvePackagedModuleSourcePath(moduleUrl, buildConfig, dalilaRoot);
+    const sourcePath = resolvePackagedModuleSourcePath(moduleUrl, buildConfig, dalilaRoots);
     ensureFileExists(sourcePath, `module dependency "${moduleUrl}"`);
     reachableModuleUrls.add(moduleUrl);
     if (isStaticRoot) {
@@ -1870,7 +2019,7 @@ function traceReachableModules(page, importMap, buildConfig, dalilaRoot) {
       hasUnresolvedRuntimeUrl = true;
     }
     for (const specifier of collectedSpecifiers.allSpecifiers) {
-      if (specifier === 'dalila' || specifier.startsWith('dalila/')) {
+      if (isDalilaPackageSpecifier(specifier)) {
         usedDalilaSpecifiers.add(specifier);
       }
 
@@ -1894,34 +2043,47 @@ function traceReachableModules(page, importMap, buildConfig, dalilaRoot) {
   };
 }
 
-function copyReachableDalilaModules(reachableModuleUrls, packageOutDirAbs, dalilaRoot) {
+function resolveVendoredPackageSourcePath(moduleUrl, dalilaRoots) {
+  const { pathname } = splitUrlTarget(moduleUrl);
+
+  for (const [packageName, packageRoot] of Object.entries(dalilaRoots ?? {})) {
+    const vendorPrefix = `/vendor/${packageName}/`;
+    if (pathname.startsWith(vendorPrefix)) {
+      return path.join(packageRoot, 'dist', pathname.slice(vendorPrefix.length));
+    }
+  }
+
+  return null;
+}
+
+function copyReachableDalilaModules(reachableModuleUrls, packageOutDirAbs, dalilaRoots) {
   for (const moduleUrl of reachableModuleUrls) {
-    const { pathname } = splitUrlTarget(moduleUrl);
-    if (!pathname.startsWith('/vendor/dalila/')) {
+    const sourcePath = resolveVendoredPackageSourcePath(moduleUrl, dalilaRoots);
+    if (!sourcePath) {
       continue;
     }
 
-    const sourcePath = path.join(dalilaRoot, 'dist', pathname.slice('/vendor/dalila/'.length));
+    const { pathname } = splitUrlTarget(moduleUrl);
     const destinationPath = path.join(packageOutDirAbs, pathname.slice(1));
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
     fs.copyFileSync(sourcePath, destinationPath);
   }
 }
 
-function copyDalilaModuleClosure(moduleUrls, packageOutDirAbs, dalilaRoot, ts) {
+function copyDalilaModuleClosure(moduleUrls, packageOutDirAbs, dalilaRoots, ts) {
   const pendingUrls = [...moduleUrls];
   const copiedUrls = new Set();
 
   while (pendingUrls.length > 0) {
     const moduleUrl = pendingUrls.pop();
-    const { pathname } = splitUrlTarget(moduleUrl);
-    if (!pathname.startsWith('/vendor/dalila/') || copiedUrls.has(moduleUrl)) {
+    const sourcePath = resolveVendoredPackageSourcePath(moduleUrl, dalilaRoots);
+    if (!sourcePath || copiedUrls.has(moduleUrl)) {
       continue;
     }
 
     copiedUrls.add(moduleUrl);
-    const sourcePath = path.join(dalilaRoot, 'dist', pathname.slice('/vendor/dalila/'.length));
-    ensureFileExists(sourcePath, `dalila module "${moduleUrl}"`);
+    const { pathname } = splitUrlTarget(moduleUrl);
+    ensureFileExists(sourcePath, `package module "${moduleUrl}"`);
     const destinationPath = path.join(packageOutDirAbs, pathname.slice(1));
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
     fs.copyFileSync(sourcePath, destinationPath);
@@ -1930,7 +2092,7 @@ function copyDalilaModuleClosure(moduleUrls, packageOutDirAbs, dalilaRoot, ts) {
     const collectedSpecifiers = collectModuleSpecifierKinds(source, ts);
     for (const specifier of collectedSpecifiers.allSpecifiers) {
       const resolvedUrl = resolveSpecifierToPackagedUrl(specifier, moduleUrl, { imports: {}, scopes: {} });
-      if (resolvedUrl?.startsWith('/vendor/dalila/')) {
+      if (resolvedUrl && isVendoredDalilaModuleUrl(resolvedUrl, dalilaRoots)) {
         pendingUrls.push(resolvedUrl);
       }
     }
@@ -1983,10 +2145,13 @@ function pickDalilaImportEntries(dalilaImportEntries, usedDalilaSpecifiers, requ
   return selectedEntries;
 }
 
-function copyDalilaImportEntryTargets(importEntries, packageOutDirAbs, dalilaRoot, ts) {
+function copyDalilaImportEntryTargets(importEntries, packageOutDirAbs, dalilaRoots, ts) {
   const dalilaModuleUrls = Object.values(importEntries)
-    .filter((target) => typeof target === 'string' && target.startsWith('/vendor/dalila/'));
-  copyDalilaModuleClosure(dalilaModuleUrls, packageOutDirAbs, dalilaRoot, ts);
+    .filter(
+      (target) => typeof target === 'string'
+        && isVendoredDalilaModuleUrl(target, dalilaRoots)
+    );
+  copyDalilaModuleClosure(dalilaModuleUrls, packageOutDirAbs, dalilaRoots, ts);
 }
 
 function shouldPackageHtmlEntry(source) {
@@ -2213,18 +2378,43 @@ function collectTopLevelStaticDirs(projectDir, buildConfig) {
     .map((entry) => entry.name);
 }
 
-function copyTopLevelStaticDirs(projectDir, packageOutDirAbs, buildConfig, copiedAssetPaths = new Set()) {
-  for (const dirName of collectTopLevelStaticDirs(projectDir, buildConfig)) {
-    const sourceDir = path.join(projectDir, dirName);
-    const destinationDir = path.join(packageOutDirAbs, dirName);
-    copyDirectoryContents(sourceDir, destinationDir);
-    for (const copiedPath of walkFiles(destinationDir)) {
-      copiedAssetPaths.add(copiedPath);
+function copyAssetFile(sourcePath, destinationPath, packageRoots = {}, copiedCssPackages = new Set()) {
+  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+
+  if (sourcePath.endsWith('.css')) {
+    const rewrittenCss = rewriteCssPackageImports(fs.readFileSync(sourcePath, 'utf8'), packageRoots);
+    for (const packageName of rewrittenCss.usedPackages) {
+      copiedCssPackages.add(packageName);
     }
+    fs.writeFileSync(destinationPath, rewrittenCss.source);
+    return;
+  }
+
+  fs.copyFileSync(sourcePath, destinationPath);
+}
+
+function copyAssetDirectory(sourceDir, destinationDir, packageRoots = {}, copiedAssetPaths = new Set(), copiedCssPackages = new Set()) {
+  if (!fs.existsSync(sourceDir)) {
+    return;
+  }
+
+  for (const sourcePath of walkFiles(sourceDir)) {
+    const relativePath = path.relative(sourceDir, sourcePath);
+    const destinationPath = path.join(destinationDir, relativePath);
+    copyAssetFile(sourcePath, destinationPath, packageRoots, copiedCssPackages);
+    copiedAssetPaths.add(destinationPath);
   }
 }
 
-function copyTopLevelStaticFiles(projectDir, packageOutDirAbs, copiedAssetPaths = new Set()) {
+function copyTopLevelStaticDirs(projectDir, packageOutDirAbs, buildConfig, packageRoots = {}, copiedAssetPaths = new Set(), copiedCssPackages = new Set()) {
+  for (const dirName of collectTopLevelStaticDirs(projectDir, buildConfig)) {
+    const sourceDir = path.join(projectDir, dirName);
+    const destinationDir = path.join(packageOutDirAbs, dirName);
+    copyAssetDirectory(sourceDir, destinationDir, packageRoots, copiedAssetPaths, copiedCssPackages);
+  }
+}
+
+function copyTopLevelStaticFiles(projectDir, packageOutDirAbs, packageRoots = {}, copiedAssetPaths = new Set(), copiedCssPackages = new Set()) {
   for (const entry of fs.readdirSync(projectDir, { withFileTypes: true })) {
     if (!entry.isFile() || entry.name.startsWith('.') || STATIC_FILE_EXCLUDES.has(entry.name)) {
       continue;
@@ -2232,8 +2422,7 @@ function copyTopLevelStaticFiles(projectDir, packageOutDirAbs, copiedAssetPaths 
 
     const sourcePath = path.join(projectDir, entry.name);
     const destinationPath = path.join(packageOutDirAbs, entry.name);
-    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-    fs.copyFileSync(sourcePath, destinationPath);
+    copyAssetFile(sourcePath, destinationPath, packageRoots, copiedCssPackages);
     copiedAssetPaths.add(destinationPath);
   }
 }
@@ -2253,8 +2442,9 @@ function resolveSourceAssetRoots(projectDir, buildConfig) {
   return [...new Set(sourceRoots)];
 }
 
-function copyPackagedSourceAssets(projectDir, buildConfig) {
+function copyPackagedSourceAssets(projectDir, buildConfig, packageRoots = {}) {
   const copiedAssetPaths = new Set();
+  const copiedCssPackages = new Set();
   for (const sourceDir of resolveSourceAssetRoots(projectDir, buildConfig)) {
     for (const filePath of walkFiles(sourceDir)) {
       if (isScriptSourceFile(filePath) || filePath.endsWith('.d.ts')) {
@@ -2273,8 +2463,7 @@ function copyPackagedSourceAssets(projectDir, buildConfig) {
       }
 
       for (const destinationPath of destinationPaths) {
-        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-        fs.copyFileSync(filePath, destinationPath);
+        copyAssetFile(filePath, destinationPath, packageRoots, copiedCssPackages);
         copiedAssetPaths.add(destinationPath);
       }
     }
@@ -2283,18 +2472,32 @@ function copyPackagedSourceAssets(projectDir, buildConfig) {
   const publicDir = path.join(projectDir, 'public');
   if (fs.existsSync(publicDir)) {
     const publicOutDir = path.join(buildConfig.packageOutDirAbs, 'public');
-    copyDirectoryContents(publicDir, publicOutDir);
-    for (const copiedPath of walkFiles(publicOutDir)) {
-      const relativePath = path.relative(publicOutDir, copiedPath);
-      const sourcePath = path.join(publicDir, relativePath);
-      if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isFile()) {
-        copiedAssetPaths.add(copiedPath);
-      }
-    }
+    copyAssetDirectory(publicDir, publicOutDir, packageRoots, copiedAssetPaths, copiedCssPackages);
   }
 
-  copyTopLevelStaticDirs(projectDir, buildConfig.packageOutDirAbs, buildConfig, copiedAssetPaths);
-  copyTopLevelStaticFiles(projectDir, buildConfig.packageOutDirAbs, copiedAssetPaths);
+  copyTopLevelStaticDirs(
+    projectDir,
+    buildConfig.packageOutDirAbs,
+    buildConfig,
+    packageRoots,
+    copiedAssetPaths,
+    copiedCssPackages
+  );
+  copyTopLevelStaticFiles(
+    projectDir,
+    buildConfig.packageOutDirAbs,
+    packageRoots,
+    copiedAssetPaths,
+    copiedCssPackages
+  );
+
+  for (const packageName of copiedCssPackages) {
+    const sourceDir = resolvePackageCssSourceDir(packageName, packageRoots);
+    if (!sourceDir) {
+      continue;
+    }
+    copyCssSourceTree(sourceDir, path.join(buildConfig.packageOutDirAbs, 'vendor', packageName, 'src'));
+  }
 
   return copiedAssetPaths;
 }
@@ -2325,7 +2528,7 @@ function walkProjectHtmlFiles(dir, files = []) {
   return files;
 }
 
-function collectHtmlEntryPoints(projectDir, vendorDir, buildConfig, copiedPackages, dalilaImportEntries, dalilaRoot) {
+function collectHtmlEntryPoints(projectDir, vendorDir, buildConfig, copiedPackages, dalilaImportEntries, dalilaRoots) {
   const pages = [];
 
   for (const sourceHtmlPath of walkProjectHtmlFiles(projectDir)) {
@@ -2394,7 +2597,7 @@ function collectHtmlEntryPoints(projectDir, vendorDir, buildConfig, copiedPackag
       },
       traceImportMap,
       buildConfig,
-      dalilaRoot
+      dalilaRoots
     );
     const publicImportMapTrace = traceReachableModules(
       {
@@ -2404,7 +2607,7 @@ function collectHtmlEntryPoints(projectDir, vendorDir, buildConfig, copiedPackag
       },
       traceImportMap,
       buildConfig,
-      dalilaRoot
+      dalilaRoots
     );
 
     pages.push({
@@ -2455,7 +2658,17 @@ export async function buildProject(projectDir = process.cwd()) {
   const initialBuildConfig = loadTypeScriptBuildConfig(rootDir);
   const distDir = initialBuildConfig.packageOutDirAbs;
   const vendorDir = path.join(distDir, 'vendor');
-  const dalilaRoot = resolveDalilaPackageRoot(rootDir);
+  const dalilaRoots = {
+    dalila: resolvePackageRoot('dalila', rootDir),
+  };
+  const compatDalilaUiRoot = resolveCompatDalilaUiRoot(dalilaRoots.dalila);
+  const dalilaUiRoot = resolveOptionalPackageRoot('dalila-ui', rootDir) ?? compatDalilaUiRoot;
+  if (compatDalilaUiRoot) {
+    dalilaRoots['dalila-compat-ui'] = compatDalilaUiRoot;
+  }
+  if (dalilaUiRoot) {
+    dalilaRoots['dalila-ui'] = dalilaUiRoot;
+  }
   const indexHtmlPath = path.join(rootDir, 'index.html');
 
   ensureFileExists(indexHtmlPath, 'index.html');
@@ -2465,7 +2678,7 @@ export async function buildProject(projectDir = process.cwd()) {
   try {
     fs.rmSync(vendorDir, { recursive: true, force: true });
     rewritePackagedModuleSpecifiers(buildConfig);
-    const copiedSourceAssetPaths = copyPackagedSourceAssets(rootDir, buildConfig);
+    const copiedSourceAssetPaths = copyPackagedSourceAssets(rootDir, buildConfig, dalilaRoots);
     const dalilaImportEntries = buildDalilaImportEntries(rootDir);
     const copiedPackages = new Set();
     const pages = collectHtmlEntryPoints(
@@ -2474,7 +2687,7 @@ export async function buildProject(projectDir = process.cwd()) {
       buildConfig,
       copiedPackages,
       dalilaImportEntries,
-      dalilaRoot
+      dalilaRoots
     );
     const reachableModuleUrls = new Set(
       pages.flatMap((page) => [...page.reachableModuleUrls, ...page.preservedModuleUrls])
@@ -2488,18 +2701,15 @@ export async function buildProject(projectDir = process.cwd()) {
       copiedSourceAssetPaths,
       preserveCompiledJavaScript
     );
-    copyReachableDalilaModules(reachableModuleUrls, distDir, dalilaRoot);
+    copyReachableDalilaModules(reachableModuleUrls, distDir, dalilaRoots);
     for (const page of pages) {
       const selectedDalilaEntries = pickDalilaImportEntries(
         dalilaImportEntries,
         page.usedDalilaSpecifiers,
         page.requiresFullDalilaImportMap
       );
-      copyDalilaImportEntryTargets(selectedDalilaEntries, distDir, dalilaRoot, buildConfig.ts);
+      copyDalilaImportEntryTargets(selectedDalilaEntries, distDir, dalilaRoots, buildConfig.ts);
     }
-    copyDirectoryContents(path.join(rootDir, 'public'), path.join(distDir, 'public'));
-    copyTopLevelStaticDirs(rootDir, distDir, buildConfig);
-    copyTopLevelStaticFiles(rootDir, distDir);
     writePackagedHtmlEntryPoints(pages, buildConfig, dalilaImportEntries);
 
     return {

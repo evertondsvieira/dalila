@@ -110,8 +110,9 @@ function resolveCreateScopeArgs(
   options: CreateScopeOptions | undefined;
 } {
   if (parentOrOptions === undefined || parentOrOptions === null || isScopeLike(parentOrOptions)) {
+    const parentOverride = parentOrOptions as Scope | null | undefined;
     return {
-      parentOverride: parentOrOptions,
+      parentOverride,
       options: maybeOptions,
     };
   }

@@ -211,6 +211,427 @@ test('create-dalila build packaging does not require dompurify when app removed 
   });
 });
 
+test('create-dalila build packaging rewrites dalila-ui CSS imports into vendored assets', async () => {
+  const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
+  const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);
+
+  await withTempDir(async (rootDir) => {
+    write(
+      rootDir,
+      'index.html',
+      [
+        '<!DOCTYPE html>',
+        '<html lang="en">',
+        '<head>',
+        '  <meta charset="UTF-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        '  <title>App</title>',
+        '  <link rel="stylesheet" href="/src/style.css">',
+        '</head>',
+        '<body>',
+        '  <div id="app" d-loading></div>',
+        '  <script type="module" src="/src/main.ts"></script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n')
+    );
+    write(rootDir, 'src/style.css', '@import "dalila-ui/dalila/dalila.css";\nbody { color: rebeccapurple; }\n');
+    write(rootDir, 'dist/src/main.js', 'console.log("ok");\n');
+    write(
+      rootDir,
+      'node_modules/dalila/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila',
+          version: '0.0.0-test',
+          type: 'module',
+          exports: {
+            '.': { default: './dist/index.js' },
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila/dist/index.js', 'export {};\n');
+    write(
+      rootDir,
+      'node_modules/dalila-ui/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila-ui',
+          version: '0.0.0-test',
+          type: 'module',
+          main: './dist/index.js',
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila-ui/dist/index.js', 'export {};\n');
+    write(rootDir, 'node_modules/dalila-ui/src/dalila/dalila.css', '@import "../button/button.css";\n');
+    write(rootDir, 'node_modules/dalila-ui/src/button/button.css', '.d-btn { display: inline-flex; }\n');
+
+    await buildProject(rootDir);
+
+    const builtCss = fs.readFileSync(path.join(rootDir, 'dist', 'src', 'style.css'), 'utf8');
+    assert.match(builtCss, /@import "\/vendor\/dalila-ui\/src\/dalila\/dalila\.css"/);
+    assert.ok(fs.existsSync(path.join(rootDir, 'dist', 'vendor', 'dalila-ui', 'src', 'dalila', 'dalila.css')));
+    assert.ok(fs.existsSync(path.join(rootDir, 'dist', 'vendor', 'dalila-ui', 'src', 'button', 'button.css')));
+  });
+});
+
+test('create-dalila build packaging preserves legacy dalila UI CSS imports without a separate dalila-ui install', async () => {
+  const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
+  const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);
+
+  await withTempDir(async (rootDir) => {
+    write(
+      rootDir,
+      'index.html',
+      [
+        '<!DOCTYPE html>',
+        '<html lang="en">',
+        '<head>',
+        '  <meta charset="UTF-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        '  <title>App</title>',
+        '  <link rel="stylesheet" href="/src/style.css">',
+        '</head>',
+        '<body>',
+        '  <div id="app" d-loading></div>',
+        '  <script type="module" src="/src/main.ts"></script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n')
+    );
+    write(rootDir, 'src/style.css', '@import "dalila/components/ui/dalila/dalila.css";\nbody { color: teal; }\n');
+    write(rootDir, 'dist/src/main.js', 'console.log("ok");\n');
+    write(
+      rootDir,
+      'node_modules/dalila/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila',
+          version: '0.0.0-test',
+          type: 'module',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './components/ui/*/*.css': './packages/dalila-ui/src/*/*.css',
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila/dist/index.js', 'export {};\n');
+    write(rootDir, 'node_modules/dalila/packages/dalila-ui/src/dalila/dalila.css', '@import "../button/button.css";\n');
+    write(rootDir, 'node_modules/dalila/packages/dalila-ui/src/button/button.css', '.d-btn { display: inline-flex; }\n');
+
+    await buildProject(rootDir);
+
+    const builtCss = fs.readFileSync(path.join(rootDir, 'dist', 'src', 'style.css'), 'utf8');
+    assert.match(builtCss, /@import "\/vendor\/dalila-ui\/src\/dalila\/dalila\.css"/);
+    assert.ok(fs.existsSync(path.join(rootDir, 'dist', 'vendor', 'dalila-ui', 'src', 'dalila', 'dalila.css')));
+    assert.ok(fs.existsSync(path.join(rootDir, 'dist', 'vendor', 'dalila-ui', 'src', 'button', 'button.css')));
+  });
+});
+
+test('create-dalila build packaging preserves legacy dalila UI JS imports without a separate dalila-ui install', async () => {
+  const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
+  const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);
+
+  await withTempDir(async (rootDir) => {
+    write(
+      rootDir,
+      'index.html',
+      [
+        '<!DOCTYPE html>',
+        '<html lang="en">',
+        '<head>',
+        '  <meta charset="UTF-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        '  <title>App</title>',
+        '</head>',
+        '<body>',
+        '  <div id="app" d-loading></div>',
+        '  <script type="module" src="/src/main.ts"></script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n')
+    );
+    write(
+      rootDir,
+      'dist/src/main.js',
+      [
+        "import { createDialog } from 'dalila/components/ui/dialog';",
+        'console.log(createDialog);',
+      ].join('\n')
+    );
+    write(
+      rootDir,
+      'node_modules/dalila/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila',
+          version: '0.0.0-test',
+          type: 'module',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './components/ui/dialog': { default: './packages/dalila-ui/dist/dialog/index.js' },
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila/dist/index.js', 'export {};\n');
+    write(rootDir, 'node_modules/dalila/packages/dalila-ui/dist/dialog/index.js', 'export const createDialog = () => ({ open: false });\n');
+
+    await buildProject(rootDir);
+
+    const builtHtml = fs.readFileSync(path.join(rootDir, 'dist', 'index.html'), 'utf8');
+    assert.match(builtHtml, /"dalila\/components\/ui\/dialog"\s*:\s*"\/vendor\/dalila-compat-ui\/dialog\/index\.js"/);
+    assert.ok(fs.existsSync(path.join(rootDir, 'dist', 'vendor', 'dalila-compat-ui', 'dialog', 'index.js')));
+  });
+});
+
+test('create-dalila build packaging keeps legacy dalila UI JS imports bound to the compatibility copy when dalila-ui is also installed', async () => {
+  const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
+  const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);
+
+  await withTempDir(async (rootDir) => {
+    write(
+      rootDir,
+      'index.html',
+      [
+        '<!DOCTYPE html>',
+        '<html lang="en">',
+        '<head>',
+        '  <meta charset="UTF-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        '  <title>App</title>',
+        '</head>',
+        '<body>',
+        '  <div id="app" d-loading></div>',
+        '  <script type="module" src="/src/main.ts"></script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n')
+    );
+    write(
+      rootDir,
+      'dist/src/main.js',
+      [
+        "import { createDialog } from 'dalila/components/ui/dialog';",
+        'console.log(createDialog);',
+      ].join('\n')
+    );
+    write(
+      rootDir,
+      'node_modules/dalila/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila',
+          version: '0.0.0-test',
+          type: 'module',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './components/ui/dialog': { default: './packages/dalila-ui/dist/dialog/index.js' },
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila/dist/index.js', 'export {};\n');
+    write(
+      rootDir,
+      'node_modules/dalila/packages/dalila-ui/dist/dialog/index.js',
+      'export const createDialog = () => "compat-copy";\n'
+    );
+    write(
+      rootDir,
+      'node_modules/dalila-ui/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila-ui',
+          version: '0.0.0-test',
+          type: 'module',
+          exports: {
+            './dialog': { default: './dist/dialog/index.js' },
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(
+      rootDir,
+      'node_modules/dalila-ui/dist/dialog/index.js',
+      'export const createDialog = () => "installed-copy";\n'
+    );
+
+    await buildProject(rootDir);
+
+    const builtHtml = fs.readFileSync(path.join(rootDir, 'dist', 'index.html'), 'utf8');
+    const compatDialog = fs.readFileSync(
+      path.join(rootDir, 'dist', 'vendor', 'dalila-compat-ui', 'dialog', 'index.js'),
+      'utf8'
+    );
+
+    assert.match(builtHtml, /"dalila\/components\/ui\/dialog"\s*:\s*"\/vendor\/dalila-compat-ui\/dialog\/index\.js"/);
+    assert.match(compatDialog, /compat-copy/);
+    assert.doesNotMatch(compatDialog, /installed-copy/);
+  });
+});
+
+test('create-dalila build packaging rewrites package CSS imports in public assets', async () => {
+  const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
+  const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);
+
+  await withTempDir(async (rootDir) => {
+    write(
+      rootDir,
+      'index.html',
+      [
+        '<!DOCTYPE html>',
+        '<html lang="en">',
+        '<head>',
+        '  <meta charset="UTF-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        '  <title>App</title>',
+        '  <link rel="stylesheet" href="/public/theme.css">',
+        '</head>',
+        '<body>',
+        '  <div id="app" d-loading></div>',
+        '  <script type="module" src="/src/main.ts"></script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n')
+    );
+    write(rootDir, 'public/theme.css', '@import "dalila-ui/dalila/dalila.css";\nbody { color: navy; }\n');
+    write(rootDir, 'dist/src/main.js', 'console.log("ok");\n');
+    write(
+      rootDir,
+      'node_modules/dalila/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila',
+          version: '0.0.0-test',
+          type: 'module',
+          exports: {
+            '.': { default: './dist/index.js' },
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila/dist/index.js', 'export {};\n');
+    write(
+      rootDir,
+      'node_modules/dalila-ui/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila-ui',
+          version: '0.0.0-test',
+          type: 'module',
+          main: './dist/index.js',
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila-ui/dist/index.js', 'export {};\n');
+    write(rootDir, 'node_modules/dalila-ui/src/dalila/dalila.css', '@import "../button/button.css";\n');
+    write(rootDir, 'node_modules/dalila-ui/src/button/button.css', '.d-btn { display: inline-flex; }\n');
+
+    await buildProject(rootDir);
+
+    const publicCss = fs.readFileSync(path.join(rootDir, 'dist', 'public', 'theme.css'), 'utf8');
+    assert.match(publicCss, /@import "\/vendor\/dalila-ui\/src\/dalila\/dalila\.css"/);
+    assert.ok(fs.existsSync(path.join(rootDir, 'dist', 'vendor', 'dalila-ui', 'src', 'dalila', 'dalila.css')));
+    assert.ok(fs.existsSync(path.join(rootDir, 'dist', 'vendor', 'dalila-ui', 'src', 'button', 'button.css')));
+  });
+});
+
+test('create-dalila build packaging prefers installed dalila-ui CSS sources over the compatibility copy', async () => {
+  const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
+  const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);
+
+  await withTempDir(async (rootDir) => {
+    write(
+      rootDir,
+      'index.html',
+      [
+        '<!DOCTYPE html>',
+        '<html lang="en">',
+        '<head>',
+        '  <meta charset="UTF-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        '  <title>App</title>',
+        '  <link rel="stylesheet" href="/src/style.css">',
+        '</head>',
+        '<body>',
+        '  <div id="app" d-loading></div>',
+        '  <script type="module" src="/src/main.ts"></script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n')
+    );
+    write(rootDir, 'src/style.css', '@import "dalila-ui/dalila/dalila.css";\n');
+    write(rootDir, 'dist/src/main.js', 'console.log("ok");\n');
+    write(
+      rootDir,
+      'node_modules/dalila/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila',
+          version: '0.0.0-test',
+          type: 'module',
+          exports: {
+            '.': { default: './dist/index.js' },
+            './components/ui/*/*.css': './packages/dalila-ui/src/*/*.css',
+          },
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila/dist/index.js', 'export {};\n');
+    write(rootDir, 'node_modules/dalila/packages/dalila-ui/src/dalila/dalila.css', '/* compat-copy */\n');
+    write(
+      rootDir,
+      'node_modules/dalila-ui/package.json',
+      JSON.stringify(
+        {
+          name: 'dalila-ui',
+          version: '0.0.0-test',
+          type: 'module',
+          main: './dist/index.js',
+        },
+        null,
+        2
+      )
+    );
+    write(rootDir, 'node_modules/dalila-ui/dist/index.js', 'export {};\n');
+    write(rootDir, 'node_modules/dalila-ui/src/dalila/dalila.css', '/* installed-copy */\n');
+
+    await buildProject(rootDir);
+
+    const vendoredCss = fs.readFileSync(path.join(rootDir, 'dist', 'vendor', 'dalila-ui', 'src', 'dalila', 'dalila.css'), 'utf8');
+    assert.match(vendoredCss, /installed-copy/);
+    assert.doesNotMatch(vendoredCss, /compat-copy/);
+  });
+});
+
 test('create-dalila build packaging rewrites local source aliases and custom entry output', async () => {
   const templateDir = path.join(process.cwd(), 'create-dalila', 'template');
   const { buildProject } = await import(pathToFileURL(path.join(templateDir, 'build.mjs')).href);

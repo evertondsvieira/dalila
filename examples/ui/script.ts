@@ -10,7 +10,7 @@ import {
   createCalendar,
   createPopover,
   mountUI,
-} from '../../dist/components/ui/index.js';
+} from '../../packages/dalila-ui/dist/index.js';
 
 const dialog = createDialog();
 const drawer = createDrawer();

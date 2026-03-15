@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import * as core from "../dist/core/index.js";
 import * as form from "../dist/form/index.js";
 import * as router from "../dist/router/index.js";
-import * as ui from "../dist/components/ui/index.js";
-import * as dialog from "../dist/components/ui/dialog/index.js";
+import * as ui from "../packages/dalila-ui/dist/index.js";
+import * as dialog from "../packages/dalila-ui/dist/dialog/index.js";
 
 test("core public surface does not expose watch test internals", () => {
   assert.equal("__resetWarningsForTests" in core, false);

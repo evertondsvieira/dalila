@@ -761,6 +761,12 @@ function runSanitizeHtml(html, bindingName, el, options) {
         return '';
     }
 }
+function isEvalFailure(result) {
+    return result.ok === false;
+}
+function isInterpolationParseFailure(result) {
+    return result.ok === false;
+}
 const DEFAULT_RUNTIME_SANITIZE_HTML_MARKER = Symbol.for('dalila.runtime.defaultSanitizeHtml');
 const DEFAULT_RUNTIME_DOMPURIFY_OPTIONS = Object.freeze({
     USE_PROFILES: { html: true },
@@ -1669,7 +1675,7 @@ function bindTextNodeFromPlan(node, plan, ctx) {
         let warnedParse = false;
         let warnedMissingIdentifier = false;
         const applyResult = (result) => {
-            if (!result.ok) {
+            if (isEvalFailure(result)) {
                 if (result.reason === 'parse') {
                     if (!warnedParse) {
                         warn(result.message);
@@ -1694,7 +1700,7 @@ function bindTextNodeFromPlan(node, plan, ctx) {
             textNode.data = result.value == null ? '' : String(result.value);
         };
         const parsed = resolveCompiledExpression(segment.compiled);
-        if (!parsed.ok) {
+        if (isInterpolationParseFailure(parsed)) {
             applyResult({ ok: false, reason: 'parse', message: parsed.message });
             frag.appendChild(textNode);
             continue;

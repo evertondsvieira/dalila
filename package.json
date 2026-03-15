@@ -127,65 +127,65 @@
       "default": "./dist/http/index.js"
     },
     "./components/ui": {
-      "types": "./dist/components/ui/index.d.ts",
-      "default": "./dist/components/ui/index.js"
+      "types": "./packages/dalila-ui/dist/index.d.ts",
+      "default": "./packages/dalila-ui/dist/index.js"
     },
     "./components/ui/dialog": {
-      "types": "./dist/components/ui/dialog/index.d.ts",
-      "default": "./dist/components/ui/dialog/index.js"
+      "types": "./packages/dalila-ui/dist/dialog/index.d.ts",
+      "default": "./packages/dalila-ui/dist/dialog/index.js"
     },
     "./components/ui/drawer": {
-      "types": "./dist/components/ui/drawer/index.d.ts",
-      "default": "./dist/components/ui/drawer/index.js"
+      "types": "./packages/dalila-ui/dist/drawer/index.d.ts",
+      "default": "./packages/dalila-ui/dist/drawer/index.js"
     },
     "./components/ui/popover": {
-      "types": "./dist/components/ui/popover/index.d.ts",
-      "default": "./dist/components/ui/popover/index.js"
+      "types": "./packages/dalila-ui/dist/popover/index.d.ts",
+      "default": "./packages/dalila-ui/dist/popover/index.js"
     },
     "./components/ui/dropdown": {
-      "types": "./dist/components/ui/dropdown/index.d.ts",
-      "default": "./dist/components/ui/dropdown/index.js"
+      "types": "./packages/dalila-ui/dist/dropdown/index.d.ts",
+      "default": "./packages/dalila-ui/dist/dropdown/index.js"
     },
     "./components/ui/combobox": {
-      "types": "./dist/components/ui/combobox/index.d.ts",
-      "default": "./dist/components/ui/combobox/index.js"
+      "types": "./packages/dalila-ui/dist/combobox/index.d.ts",
+      "default": "./packages/dalila-ui/dist/combobox/index.js"
     },
     "./components/ui/accordion": {
-      "types": "./dist/components/ui/accordion/index.d.ts",
-      "default": "./dist/components/ui/accordion/index.js"
+      "types": "./packages/dalila-ui/dist/accordion/index.d.ts",
+      "default": "./packages/dalila-ui/dist/accordion/index.js"
     },
     "./components/ui/tabs": {
-      "types": "./dist/components/ui/tabs/index.d.ts",
-      "default": "./dist/components/ui/tabs/index.js"
+      "types": "./packages/dalila-ui/dist/tabs/index.d.ts",
+      "default": "./packages/dalila-ui/dist/tabs/index.js"
     },
     "./components/ui/calendar": {
-      "types": "./dist/components/ui/calendar/index.d.ts",
-      "default": "./dist/components/ui/calendar/index.js"
+      "types": "./packages/dalila-ui/dist/calendar/index.d.ts",
+      "default": "./packages/dalila-ui/dist/calendar/index.js"
     },
     "./components/ui/toast": {
-      "types": "./dist/components/ui/toast/index.d.ts",
-      "default": "./dist/components/ui/toast/index.js"
+      "types": "./packages/dalila-ui/dist/toast/index.d.ts",
+      "default": "./packages/dalila-ui/dist/toast/index.js"
     },
     "./components/ui/dropzone": {
-      "types": "./dist/components/ui/dropzone/index.d.ts",
-      "default": "./dist/components/ui/dropzone/index.js"
+      "types": "./packages/dalila-ui/dist/dropzone/index.d.ts",
+      "default": "./packages/dalila-ui/dist/dropzone/index.js"
     },
     "./components/ui/runtime": {
-      "types": "./dist/components/ui/runtime.d.ts",
-      "default": "./dist/components/ui/runtime.js"
+      "types": "./packages/dalila-ui/dist/runtime.d.ts",
+      "default": "./packages/dalila-ui/dist/runtime.js"
     },
     "./components/ui/env": {
-      "types": "./dist/components/ui/env.d.ts",
-      "default": "./dist/components/ui/env.js"
+      "types": "./packages/dalila-ui/dist/env.d.ts",
+      "default": "./packages/dalila-ui/dist/env.js"
     },
-    "./components/ui/*/*.css": "./src/components/ui/*/*.css"
+    "./components/ui/*/*.css": "./packages/dalila-ui/src/*/*.css"
   },
   "sideEffects": [
-    "./src/components/ui/*/*.css"
+    "./packages/dalila-ui/src/*/*.css"
   ],
   "scripts": {
-    "build": "tsc && node scripts/ensure-cli-executable.cjs",
-    "dev": "tsc --watch",
+    "build": "tsc && tsc -p packages/dalila-ui/tsconfig.json && node scripts/ensure-cli-executable.cjs",
+    "dev": "node scripts/watch-dev.cjs",
     "serve": "node scripts/dev-server.cjs",
     "test:unit": "npm run build && node scripts/run-unit-tests.cjs",
     "test": "npm run test:unit --",
@@ -197,7 +197,7 @@
     "security:sbom": "npm sbom --sbom-format cyclonedx > sbom.cdx.json",
     "security:ci": "npm run security:audit && npm run security:sbom",
     "test:watch": "npm run build && node --watch --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist packages/dalila-ui/dist",
     "devtools:firefox:run": "npx web-ext run --source-dir devtools-extension --devtools",
     "devtools:firefox:build": "npx web-ext build --source-dir devtools-extension --artifacts-dir devtools-extension/dist --overwrite-dest"
   },
@@ -223,7 +223,8 @@
   },
   "files": [
     "dist",
-    "src/components/ui/*/*.css",
+    "packages/dalila-ui/dist",
+    "packages/dalila-ui/src/*/*.css",
     "scripts/dev-server.cjs",
     "README.md"
   ],

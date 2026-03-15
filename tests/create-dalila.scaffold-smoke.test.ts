@@ -145,7 +145,7 @@ test('create-dalila scaffold smoke covers build and multi-page dist packaging', 
   const createDalilaPath = path.join(repoRoot, 'create-dalila', 'index.js');
 
   await withTempDir(async (rootDir) => {
-    runCommand(process.execPath, [createDalilaPath, 'smoke-app'], rootDir);
+    runCommand(process.execPath, [createDalilaPath, '--ui', 'smoke-app'], rootDir);
 
     const appDir = path.join(rootDir, 'smoke-app');
     installLocalSmokeDependencies(appDir);
@@ -178,5 +178,31 @@ test('create-dalila scaffold smoke covers build and multi-page dist packaging', 
     assert.equal(fs.existsSync(path.join(vendorDalilaDir, 'core', 'query.js')), false);
     assert.equal(fs.existsSync(path.join(vendorDalilaDir, 'core', 'resource.js')), false);
     assert.equal(fs.existsSync(path.join(vendorDalilaDir, 'runtime', 'bind.d.ts')), false);
+  });
+});
+
+test('create-dalila scaffold supports generating a headless starter without dalila-ui', async () => {
+  const repoRoot = process.cwd();
+  const createDalilaPath = path.join(repoRoot, 'create-dalila', 'index.js');
+
+  await withTempDir(async (rootDir) => {
+    runCommand(process.execPath, [createDalilaPath, '--no-ui', 'headless-app'], rootDir);
+
+    const appDir = path.join(rootDir, 'headless-app');
+    const packageJson = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
+    const layoutHtml = fs.readFileSync(path.join(appDir, 'src', 'app', 'layout.html'), 'utf8');
+    const styleCss = fs.readFileSync(path.join(appDir, 'src', 'style.css'), 'utf8');
+
+    assert.equal(packageJson.dependencies['dalila-ui'], undefined);
+    assert.equal(fs.existsSync(path.join(appDir, 'src', 'components', 'ui')), false);
+    assert.match(layoutHtml, /<a d-link href="\/">Home<\/a>/);
+    assert.match(layoutHtml, /<a d-link href="\/about">About<\/a>/);
+    assert.doesNotMatch(styleCss, /components\/ui/);
+
+    installLocalSmokeDependencies(appDir);
+    runCommand('npm', ['run', 'build'], appDir);
+
+    const homeHtml = fs.readFileSync(path.join(appDir, 'dist', 'index.html'), 'utf8');
+    assert.doesNotMatch(homeHtml, /dalila-ui/);
   });
 });

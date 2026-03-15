@@ -1102,6 +1102,16 @@ type EvalResult =
   | { ok: true; value: unknown }
   | { ok: false; reason: 'parse' | 'missing_identifier'; message: string; identifier?: string };
 
+function isEvalFailure(result: EvalResult): result is Extract<EvalResult, { ok: false }> {
+  return result.ok === false;
+}
+
+function isInterpolationParseFailure(
+  result: ReturnType<typeof resolveCompiledExpression>
+): result is Extract<ReturnType<typeof resolveCompiledExpression>, { ok: false }> {
+  return result.ok === false;
+}
+
 type TransitionRegistry = Map<string, TransitionConfig>;
 
 interface DomPurifyLike {
@@ -2172,7 +2182,7 @@ function bindTextNodeFromPlan(
     let warnedParse = false;
     let warnedMissingIdentifier = false;
     const applyResult = (result: EvalResult): void => {
-      if (!result.ok) {
+      if (isEvalFailure(result)) {
         if (result.reason === 'parse') {
           if (!warnedParse) {
             warn(result.message);
@@ -2198,7 +2208,7 @@ function bindTextNodeFromPlan(
     };
 
     const parsed = resolveCompiledExpression(segment.compiled);
-    if (!parsed.ok) {
+    if (isInterpolationParseFailure(parsed)) {
       applyResult({ ok: false, reason: 'parse', message: parsed.message });
       frag.appendChild(textNode);
       continue;

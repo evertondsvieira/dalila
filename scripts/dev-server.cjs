@@ -504,8 +504,10 @@ function shouldInjectBindings(requestPath, htmlContent = '') {
   if (isDalilaRepo) {
     // Playground uses special full injection path.
     if (normalizedPath === '/examples/playground/index.html') return true;
-    // Any HTML entry with module scripts may import Dalila bare specifiers.
-    return /<script[^>]*type=["']module["'][^>]*>/i.test(htmlContent);
+    // Repo fixtures may bootstrap through module scripts or dynamic import()
+    // from classic scripts while still depending on Dalila bare specifiers.
+    return /<script[^>]*type=["']module["'][^>]*>/i.test(htmlContent)
+      || /\bimport\s*\(/.test(htmlContent);
   }
 
   // User project mode keeps root-only behavior.
@@ -588,7 +590,99 @@ function ensureTrailingSlash(urlPath) {
   return urlPath.endsWith('/') ? urlPath : `${urlPath}/`;
 }
 
-function createImportMapEntries(dalilaPath, sourceDirPath = '/src/') {
+function deriveDalilaUiPath(dalilaPath) {
+  return dalilaPath === '/dist'
+    ? '/packages/dalila-ui/dist'
+    : '/node_modules/dalila-ui/dist';
+}
+
+function deriveDalilaUiSourcePath(dalilaPath) {
+  return dalilaPath === '/dist'
+    ? '/packages/dalila-ui/src'
+    : '/node_modules/dalila-ui/src';
+}
+
+function resolveProjectDalilaUiPath(projectRoot, dalilaPath) {
+  if (dalilaPath === '/dist') {
+    return deriveDalilaUiPath(dalilaPath);
+  }
+
+  return fs.existsSync(path.join(projectRoot, 'node_modules', 'dalila-ui', 'package.json'))
+    ? deriveDalilaUiPath(dalilaPath)
+    : null;
+}
+
+function resolveProjectLegacyDalilaUiPath(projectRoot, dalilaPath) {
+  if (dalilaPath === '/dist') {
+    return deriveDalilaUiPath(dalilaPath);
+  }
+
+  const compatPath = path.join(projectRoot, 'node_modules', 'dalila', 'packages', 'dalila-ui', 'dist');
+  if (fs.existsSync(compatPath)) {
+    return '/node_modules/dalila/packages/dalila-ui/dist';
+  }
+
+  return resolveProjectDalilaUiPath(projectRoot, dalilaPath);
+}
+
+function resolveProjectDalilaUiSourcePath(projectRoot, dalilaPath) {
+  if (dalilaPath === '/dist') {
+    return deriveDalilaUiSourcePath(dalilaPath);
+  }
+
+  return fs.existsSync(path.join(projectRoot, 'node_modules', 'dalila-ui', 'package.json'))
+    ? deriveDalilaUiSourcePath(dalilaPath)
+    : null;
+}
+
+function resolveProjectLegacyDalilaUiSourcePath(projectRoot, dalilaPath) {
+  if (dalilaPath === '/dist') {
+    return deriveDalilaUiSourcePath(dalilaPath);
+  }
+
+  const compatPath = path.join(projectRoot, 'node_modules', 'dalila', 'packages', 'dalila-ui', 'src');
+  if (fs.existsSync(compatPath)) {
+    return '/node_modules/dalila/packages/dalila-ui/src';
+  }
+
+  return resolveProjectDalilaUiSourcePath(projectRoot, dalilaPath);
+}
+
+function rewriteCssPackageImports(source, options = {}) {
+  const dalilaUiSourcePath = options.dalilaUiSourcePath ?? null;
+  const legacyDalilaUiSourcePath = options.legacyDalilaUiSourcePath ?? dalilaUiSourcePath;
+  if (!dalilaUiSourcePath && !legacyDalilaUiSourcePath) {
+    return source;
+  }
+
+  return source.replace(
+    /@import\s+(?:url\(\s*)?(["'])([^"']+)\1(?:\s*\))?/g,
+    (fullMatch, quote, specifier) => {
+      if (specifier.startsWith('dalila-ui/') && dalilaUiSourcePath) {
+        return fullMatch.replace(
+          specifier,
+          `${dalilaUiSourcePath}/${specifier.slice('dalila-ui/'.length)}`
+        );
+      }
+
+      if (specifier.startsWith('dalila/components/ui/') && legacyDalilaUiSourcePath) {
+        return fullMatch.replace(
+          specifier,
+          `${legacyDalilaUiSourcePath}/${specifier.slice('dalila/components/ui/'.length)}`
+        );
+      }
+
+      return fullMatch;
+    }
+  );
+}
+
+function createImportMapEntries(
+  dalilaPath,
+  sourceDirPath = '/src/',
+  dalilaUiPath = deriveDalilaUiPath(dalilaPath),
+  legacyDalilaUiPath = dalilaUiPath
+) {
   return {
     'dalila': `${dalilaPath}/index.js`,
     'dalila/core': `${dalilaPath}/core/index.js`,
@@ -619,33 +713,65 @@ function createImportMapEntries(dalilaPath, sourceDirPath = '/src/') {
     'dalila/router': `${dalilaPath}/router/index.js`,
     'dalila/form': `${dalilaPath}/form/index.js`,
     'dalila/http': `${dalilaPath}/http/index.js`,
-    'dalila/components/ui': `${dalilaPath}/components/ui/index.js`,
-    'dalila/components/ui/dialog': `${dalilaPath}/components/ui/dialog/index.js`,
-    'dalila/components/ui/drawer': `${dalilaPath}/components/ui/drawer/index.js`,
-    'dalila/components/ui/dropdown': `${dalilaPath}/components/ui/dropdown/index.js`,
-    'dalila/components/ui/popover': `${dalilaPath}/components/ui/popover/index.js`,
-    'dalila/components/ui/combobox': `${dalilaPath}/components/ui/combobox/index.js`,
-    'dalila/components/ui/accordion': `${dalilaPath}/components/ui/accordion/index.js`,
-    'dalila/components/ui/tabs': `${dalilaPath}/components/ui/tabs/index.js`,
-    'dalila/components/ui/calendar': `${dalilaPath}/components/ui/calendar/index.js`,
-    'dalila/components/ui/toast': `${dalilaPath}/components/ui/toast/index.js`,
-    'dalila/components/ui/dropzone': `${dalilaPath}/components/ui/dropzone/index.js`,
-    'dalila/components/ui/runtime': `${dalilaPath}/components/ui/runtime.js`,
-    'dalila/components/ui/env': `${dalilaPath}/components/ui/env.js`,
+    ...(legacyDalilaUiPath
+      ? {
+        'dalila/components/ui': `${legacyDalilaUiPath}/index.js`,
+        'dalila/components/ui/dialog': `${legacyDalilaUiPath}/dialog/index.js`,
+        'dalila/components/ui/drawer': `${legacyDalilaUiPath}/drawer/index.js`,
+        'dalila/components/ui/dropdown': `${legacyDalilaUiPath}/dropdown/index.js`,
+        'dalila/components/ui/popover': `${legacyDalilaUiPath}/popover/index.js`,
+        'dalila/components/ui/combobox': `${legacyDalilaUiPath}/combobox/index.js`,
+        'dalila/components/ui/accordion': `${legacyDalilaUiPath}/accordion/index.js`,
+        'dalila/components/ui/tabs': `${legacyDalilaUiPath}/tabs/index.js`,
+        'dalila/components/ui/calendar': `${legacyDalilaUiPath}/calendar/index.js`,
+        'dalila/components/ui/toast': `${legacyDalilaUiPath}/toast/index.js`,
+        'dalila/components/ui/dropzone': `${legacyDalilaUiPath}/dropzone/index.js`,
+        'dalila/components/ui/runtime': `${legacyDalilaUiPath}/runtime.js`,
+        'dalila/components/ui/env': `${legacyDalilaUiPath}/env.js`,
+      }
+      : {}),
+    ...(dalilaUiPath
+      ? {
+        'dalila-ui': `${dalilaUiPath}/index.js`,
+        'dalila-ui/dialog': `${dalilaUiPath}/dialog/index.js`,
+        'dalila-ui/drawer': `${dalilaUiPath}/drawer/index.js`,
+        'dalila-ui/dropdown': `${dalilaUiPath}/dropdown/index.js`,
+        'dalila-ui/popover': `${dalilaUiPath}/popover/index.js`,
+        'dalila-ui/combobox': `${dalilaUiPath}/combobox/index.js`,
+        'dalila-ui/accordion': `${dalilaUiPath}/accordion/index.js`,
+        'dalila-ui/tabs': `${dalilaUiPath}/tabs/index.js`,
+        'dalila-ui/calendar': `${dalilaUiPath}/calendar/index.js`,
+        'dalila-ui/toast': `${dalilaUiPath}/toast/index.js`,
+        'dalila-ui/dropzone': `${dalilaUiPath}/dropzone/index.js`,
+        'dalila-ui/runtime': `${dalilaUiPath}/runtime.js`,
+        'dalila-ui/env': `${dalilaUiPath}/env.js`,
+      }
+      : {}),
     '@/': ensureTrailingSlash(sourceDirPath),
   };
 }
 
-function createImportMapScript(dalilaPath, sourceDirPath = '/src/') {
+function createImportMapScript(
+  dalilaPath,
+  sourceDirPath = '/src/',
+  dalilaUiPath = deriveDalilaUiPath(dalilaPath),
+  legacyDalilaUiPath = dalilaUiPath
+) {
   const payload = stringifyInlineScriptPayload(
-    { imports: createImportMapEntries(dalilaPath, sourceDirPath) },
+    { imports: createImportMapEntries(dalilaPath, sourceDirPath, dalilaUiPath, legacyDalilaUiPath) },
     4
   );
 
   return `  <script type="importmap">\n${payload}\n  </script>`;
 }
 
-function mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath = '/src/') {
+function mergeImportMapIntoHtml(
+  html,
+  dalilaPath,
+  sourceDirPath = '/src/',
+  dalilaUiPath = deriveDalilaUiPath(dalilaPath),
+  legacyDalilaUiPath = dalilaUiPath
+) {
   const importMapElement = findFirstHtmlScriptElementByType(html, 'importmap');
   if (!importMapElement) {
     return {
@@ -673,7 +799,7 @@ function mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath = '/src/') {
   const mergedImportMap = {
     ...importMap,
     imports: {
-      ...createImportMapEntries(dalilaPath, sourceDirPath),
+      ...createImportMapEntries(dalilaPath, sourceDirPath, dalilaUiPath, legacyDalilaUiPath),
       ...existingImports,
     },
   };
@@ -825,21 +951,41 @@ function buildProjectSourceDirPath(projectRoot) {
   return toProjectRequestPath(projectRoot, resolveProjectSourceDir(projectRoot));
 }
 
-function buildProjectHeadAdditions(projectRoot, dalilaPath) {
+function buildProjectHeadAdditions(
+  projectRoot,
+  dalilaPath,
+  dalilaUiPath = deriveDalilaUiPath(dalilaPath),
+  legacyDalilaUiPath = dalilaUiPath
+) {
   const sourceDir = resolveProjectSourceDir(projectRoot);
   return [
     `  <style>[d-loading]{visibility:hidden}</style>`,
     renderPreloadScriptTags(sourceDir),
-    createImportMapScript(dalilaPath, buildProjectSourceDirPath(projectRoot)),
+    createImportMapScript(
+      dalilaPath,
+      buildProjectSourceDirPath(projectRoot),
+      dalilaUiPath,
+      legacyDalilaUiPath
+    ),
   ].filter(Boolean);
 }
 
-function buildUserProjectHeadAdditions(projectRoot, dalilaPath) {
-  return buildProjectHeadAdditions(projectRoot, dalilaPath);
+function buildUserProjectHeadAdditions(
+  projectRoot,
+  dalilaPath,
+  dalilaUiPath = deriveDalilaUiPath(dalilaPath),
+  legacyDalilaUiPath = dalilaUiPath
+) {
+  return buildProjectHeadAdditions(projectRoot, dalilaPath, dalilaUiPath, legacyDalilaUiPath);
 }
 
-function buildRepoProjectHeadAdditions(projectRoot, dalilaPath) {
-  return buildProjectHeadAdditions(projectRoot, dalilaPath);
+function buildRepoProjectHeadAdditions(
+  projectRoot,
+  dalilaPath,
+  dalilaUiPath = deriveDalilaUiPath(dalilaPath),
+  legacyDalilaUiPath = dalilaUiPath
+) {
+  return buildProjectHeadAdditions(projectRoot, dalilaPath, dalilaUiPath, legacyDalilaUiPath);
 }
 
 // ============================================================================
@@ -889,11 +1035,19 @@ function injectBindings(html, options = {}) {
   const isPlaygroundPage = options.isPlaygroundPage === true;
   // Different paths for dalila repo vs user projects
   const dalilaPath = isDalilaRepo ? '/dist' : '/node_modules/dalila/dist';
+  const dalilaUiPath = resolveProjectDalilaUiPath(projectDir, dalilaPath);
+  const legacyDalilaUiPath = resolveProjectLegacyDalilaUiPath(projectDir, dalilaPath);
   const sourceDirPath = buildProjectSourceDirPath(projectDir);
-  const mergedImportMap = mergeImportMapIntoHtml(html, dalilaPath, sourceDirPath);
+  const mergedImportMap = mergeImportMapIntoHtml(
+    html,
+    dalilaPath,
+    sourceDirPath,
+    dalilaUiPath,
+    legacyDalilaUiPath
+  );
   const importMap = mergedImportMap.merged
     ? mergedImportMap.script
-    : createImportMapScript(dalilaPath, sourceDirPath);
+    : createImportMapScript(dalilaPath, sourceDirPath, dalilaUiPath, legacyDalilaUiPath);
 
   // For user projects, inject import map + HMR script
   if (!isDalilaRepo) {
@@ -1049,7 +1203,7 @@ function injectBindings(html, options = {}) {
     };
   </script>`;
 
-    const headAdditions = buildUserProjectHeadAdditions(projectDir, dalilaPath)
+    const headAdditions = buildUserProjectHeadAdditions(projectDir, dalilaPath, dalilaUiPath, legacyDalilaUiPath)
       .filter((fragment) => !mergedImportMap.merged || !/type=["']importmap["']/i.test(fragment));
     if (importMap) {
       headAdditions.push(importMap);
@@ -1503,6 +1657,19 @@ const server = http.createServer((req, res) => {
       }
     }
 
+    if (ext === '.css') {
+      const dalilaPath = isDalilaRepo ? '/dist' : '/node_modules/dalila/dist';
+      const dalilaUiSourcePath = resolveProjectDalilaUiSourcePath(projectDir, dalilaPath);
+      const legacyDalilaUiSourcePath = resolveProjectLegacyDalilaUiSourcePath(projectDir, dalilaPath);
+      const css = rewriteCssPackageImports(data.toString('utf8'), {
+        dalilaUiSourcePath,
+        legacyDalilaUiSourcePath,
+      });
+      writeResponseHead(res, 200, headers);
+      res.end(css);
+      return;
+    }
+
     writeResponseHead(res, 200, headers);
     res.end(data);
   });
@@ -1745,9 +1912,11 @@ module.exports = {
   resolvePath,
   getRequestPath,
   safeDecodeUrlPath,
+  shouldInjectBindings,
   createImportMapEntries,
   createImportMapScript,
   mergeImportMapIntoHtml,
+  rewriteCssPackageImports,
   detectPreloadScripts,
   buildUserProjectHeadAdditions,
   injectHeadFragments,

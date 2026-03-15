@@ -16,9 +16,17 @@ const devServer = require('../scripts/dev-server.cjs') as {
   };
   getRequestPath: (url: string) => string | null;
   safeDecodeUrlPath: (url: string) => string | null;
+  shouldInjectBindings: (requestPath: string, htmlContent?: string) => boolean;
   createImportMapEntries: (dalilaPath: string) => Record<string, string>;
   createImportMapScript: (dalilaPath: string, sourceDirPath?: string) => string;
   buildUserProjectHeadAdditions: (projectRoot: string, dalilaPath: string) => string[];
+  rewriteCssPackageImports: (
+    source: string,
+    options?: {
+      dalilaUiSourcePath?: string | null;
+      legacyDalilaUiSourcePath?: string | null;
+    }
+  ) => string;
   mergeImportMapIntoHtml: (
     html: string,
     dalilaPath: string,
@@ -76,6 +84,25 @@ test('dev-server: import map script escapes inline script breakout sequences', (
   assert.equal(script.includes('</script><script>alert(1)</script>'), false);
   assert.equal(script.includes('</script><img src=x onerror=alert(1)>'), false);
   assert.ok(script.includes('\\u003C'));
+  assert.match(script, /"dalila-ui"\s*:\s*"\/node_modules\/dalila-ui\/dist\/index\.js"/);
+});
+
+test('dev-server: repo fixtures using dynamic import still receive import map injection', () => {
+  const html = [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    '  <title>Fixture</title>',
+    '</head>',
+    '<body>',
+    '  <script>',
+    "    import('../../packages/dalila-ui/dist/dialog/index.js');",
+    '  </script>',
+    '</body>',
+    '</html>',
+  ].join('\n');
+
+  assert.equal(devServer.shouldInjectBindings('/examples/tests/ui-components.html', html), true);
 });
 
 test('dev-server: --dist resolves to the built dist root', () => {
@@ -87,7 +114,7 @@ test('dev-server: --dist resolves to the built dist root', () => {
   assert.equal(config.defaultEntry, '/index.html');
 });
 
-test('dev-server: user project head additions include preload scripts and UI helper entries', () => {
+test('dev-server: user project head additions include preload scripts and package helper entries', () => {
   withTempDir((rootDir) => {
     write(
       rootDir,
@@ -116,8 +143,10 @@ test('dev-server: user project head additions include preload scripts and UI hel
     assert.equal(entries['dalila/core/signal'], '/node_modules/dalila/dist/core/signal.js');
     assert.equal(entries['dalila/runtime/bind'], '/node_modules/dalila/dist/runtime/bind.js');
     assert.equal(entries['dalila/runtime/from-html'], '/node_modules/dalila/dist/runtime/fromHtml.js');
-    assert.equal(entries['dalila/components/ui/runtime'], '/node_modules/dalila/dist/components/ui/runtime.js');
-    assert.equal(entries['dalila/components/ui/env'], '/node_modules/dalila/dist/components/ui/env.js');
+    assert.equal(entries['dalila/components/ui/runtime'], '/node_modules/dalila-ui/dist/runtime.js');
+    assert.equal(entries['dalila/components/ui/env'], '/node_modules/dalila-ui/dist/env.js');
+    assert.equal(entries['dalila-ui/runtime'], '/node_modules/dalila-ui/dist/runtime.js');
+    assert.equal(entries['dalila-ui/env'], '/node_modules/dalila-ui/dist/env.js');
     assert.match(rendered, /app-theme/);
     assert.match(rendered, /"@\/"\s*:\s*"\/app\/"/);
     assert.match(rendered, /"dalila\/core\/signal"/);
@@ -125,7 +154,36 @@ test('dev-server: user project head additions include preload scripts and UI hel
     assert.match(rendered, /"dalila\/runtime\/from-html"/);
     assert.match(rendered, /"dalila\/components\/ui\/runtime"/);
     assert.match(rendered, /"dalila\/components\/ui\/env"/);
+    assert.match(rendered, /"dalila-ui\/runtime"/);
+    assert.match(rendered, /"dalila-ui\/env"/);
   });
+});
+
+test('dev-server: rewrites dalila-ui CSS package imports to served source paths', () => {
+  const css = [
+    '@import "dalila-ui/dalila/dalila.css";',
+    "@import 'dalila/components/ui/button/button.css';",
+    '@import "./local.css";',
+  ].join('\n');
+
+  const rewritten = devServer.rewriteCssPackageImports(css, {
+    dalilaUiSourcePath: '/node_modules/dalila-ui/src',
+    legacyDalilaUiSourcePath: '/node_modules/dalila/packages/dalila-ui/src',
+  });
+
+  assert.match(rewritten, /@import "\/node_modules\/dalila-ui\/src\/dalila\/dalila\.css"/);
+  assert.match(rewritten, /@import '\/node_modules\/dalila\/packages\/dalila-ui\/src\/button\/button\.css'/);
+  assert.match(rewritten, /@import "\.\/local\.css"/);
+});
+
+test('dev-server: falls back to the legacy compatibility source path when dalila-ui is not installed', () => {
+  const css = '@import "dalila-ui/dalila/dalila.css";';
+  const rewritten = devServer.rewriteCssPackageImports(css, {
+    dalilaUiSourcePath: null,
+    legacyDalilaUiSourcePath: '/node_modules/dalila/packages/dalila-ui/src',
+  });
+
+  assert.equal(rewritten, css);
 });
 
 test('dev-server: user project head additions resolve rootDir inherited through tsconfig extends', () => {
@@ -247,6 +305,7 @@ test('dev-server: merges dalila entries into an existing import map without drop
   assert.match(result.script, /"dompurify"\s*:\s*"\/node_modules\/dompurify\/dist\/purify\.es\.mjs"/);
   assert.match(result.script, /"dalila"\s*:\s*"\/node_modules\/dalila\/dist\/index\.js"/);
   assert.match(result.script, /"dalila\/runtime\/bind"\s*:\s*"\/node_modules\/dalila\/dist\/runtime\/bind\.js"/);
+  assert.match(result.script, /"dalila-ui"\s*:\s*"\/node_modules\/dalila-ui\/dist\/index\.js"/);
 });
 
 test('dev-server: malformed script attributes do not hang import map merging', () => {
@@ -287,6 +346,7 @@ test('dev-server: later valid import maps are still found after a malformed scri
   assert.equal(result.merged, true);
   assert.equal((result.html.match(/type="importmap"/g) || []).length, 0);
   assert.match(result.script, /"dompurify"\s*:\s*"\/node_modules\/dompurify\/dist\/purify\.es\.mjs"/);
+  assert.match(result.script, /"dalila-ui"\s*:\s*"\/node_modules\/dalila-ui\/dist\/index\.js"/);
 });
 
 test('dev-server: top-level asset directories outside src remain recursively watched', () => {

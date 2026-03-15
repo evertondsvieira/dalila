@@ -63,8 +63,9 @@ function registerChildScope(parent, child) {
 }
 function resolveCreateScopeArgs(parentOrOptions, maybeOptions) {
     if (parentOrOptions === undefined || parentOrOptions === null || isScopeLike(parentOrOptions)) {
+        const parentOverride = parentOrOptions;
         return {
-            parentOverride: parentOrOptions,
+            parentOverride,
             options: maybeOptions,
         };
     }

@@ -109,6 +109,7 @@ dalila/runtime/* → leaf runtime modules for tighter bundles
 dalila/context   → createContext(), provide(), inject()
 dalila/router    → createRouter(), file-based routes, preloading
 dalila/http      → createHttpClient()
+dalila-ui        → opinionated UI components and styles for Dalila
 ```
 
 ## Development

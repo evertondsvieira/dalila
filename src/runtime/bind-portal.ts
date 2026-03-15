@@ -4,6 +4,12 @@ type PortalExpressionResult =
   | { ok: true; value: unknown }
   | { ok: false; reason: 'parse' | 'missing_identifier'; message: string; identifier?: string };
 
+function isPortalExpressionFailure(
+  result: PortalExpressionResult
+): result is Extract<PortalExpressionResult, { ok: false }> {
+  return result.ok === false;
+}
+
 interface BindPortalDirectiveDeps {
   qsaIncludingRoot: (root: Element, selector: string) => Element[];
   parseExpression: (source: string) => unknown;
@@ -83,7 +89,7 @@ export function bindPortalDirective(
 
       if (expressionAst) {
         const result = deps.evalExpressionAst(expressionAst, ctx);
-        if (!result.ok) {
+        if (isPortalExpressionFailure(result)) {
           if (result.reason === 'missing_identifier') {
             deps.warn(`d-portal: ${result.message}`);
           } else {
